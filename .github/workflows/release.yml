@@ -1,0 +1,185 @@
+name: build-installer
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
+      SOURCE_DATE_EPOCH: "315532800"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.22.2 pefile
+
+      - name: Verify clean sources and release config
+        run: |
+          python tools/verify_release_setup.py
+          python tools/clean_metadata.py --selftest
+          python tools/clean_metadata.py --verify .
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' -replace '^v', '' } else { '0.0.0' }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Set version
+        run: python tools/set_version.py ${{ steps.ver.outputs.version }}
+
+      - name: Build executable
+        run: python -m PyInstaller --noconfirm --clean --log-level WARN Pinion.spec
+
+      - name: Clean build metadata and PE timestamps
+        shell: pwsh
+        run: |
+          python tools/clean_metadata.py clean dist/Pinion
+          python tools/clean_metadata.py --verify dist/Pinion
+          python tools/deep_scan_binary.py dist/Pinion
+          New-Item -ItemType Directory -Path installer -Force | Out-Null
+          Copy-Item dist/Pinion-standalone.exe installer/Pinion.exe
+          python tools/clean_metadata.py clean installer/Pinion.exe
+          python tools/clean_metadata.py --verify installer/Pinion.exe
+          python tools/deep_scan_binary.py installer/Pinion.exe
+
+      - name: Smoke selftest-core on built executable
+        shell: pwsh
+        run: |
+          foreach ($exe in @("dist\Pinion\Pinion.exe", "installer\Pinion.exe")) {
+            if (-not (Test-Path $exe)) { throw "missing $exe" }
+            Remove-Item selftest.log -Force -ErrorAction SilentlyContinue
+            $p = Start-Process -FilePath $exe -ArgumentList "--selftest-core","selftest.log" -Wait -PassThru
+            if (-not (Test-Path selftest.log)) { throw "$exe selftest did not create log (code $($p.ExitCode))" }
+            Get-Content selftest.log
+            if ($p.ExitCode -ne 0) { throw "$exe selftest exited with code $($p.ExitCode)" }
+            $log = Get-Content selftest.log -Raw
+            if ($log -notmatch 'SELFTEST_OK') { throw "$exe missing SELFTEST_OK token" }
+            Remove-Item selftest.log -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Verify executable FileVersion
+        shell: pwsh
+        run: |
+          $want = "${{ steps.ver.outputs.version }}"
+          foreach ($exe in @("dist\Pinion\Pinion.exe", "installer\Pinion.exe")) {
+            $vi = (Get-Item $exe).VersionInfo.FileVersion
+            "$exe FileVersion=$vi"
+            if ($vi -ne $want) { throw "$exe FileVersion=$vi != $want" }
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Find-ISCC {
+            foreach ($c in @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+              "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+              "$env:RUNNER_TEMP\InnoSetup6\ISCC.exe")) {
+              if (Test-Path $c) { return $c }
+            }
+            return $null
+          }
+          $iscc = Find-ISCC
+          if (-not $iscc) {
+            $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+            $sha = "9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732"
+            $exe = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
+            $dir = Join-Path $env:RUNNER_TEMP "InnoSetup6"
+            Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+            $got = (Get-FileHash $exe -Algorithm SHA256).Hash
+            if ($got -ne $sha) { throw "Inno Setup SHA256 mismatch: $got" }
+            $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList `
+              "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-","/NOICONS","/CURRENTUSER","/DIR=$dir"
+            if ($p.ExitCode -ne 0) { throw "Inno Setup install exited with code $($p.ExitCode)" }
+            $iscc = Find-ISCC
+          }
+          if (-not $iscc) { throw "ISCC.exe not found" }
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" Pinion.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Clean installer metadata
+        run: |
+          python tools/clean_metadata.py clean installer
+          python tools/clean_metadata.py --verify installer
+          python tools/deep_scan_binary.py installer
+
+      - name: Verify installer size
+        shell: pwsh
+        run: |
+          $f = "installer\Pinion-setup.exe"
+          if (-not (Test-Path $f)) { throw "missing $f" }
+          $mb = [math]::Round((Get-Item $f).Length / 1MB, 1)
+          if ($mb -lt 5) { throw "installer suspiciously small: $mb MB" }
+
+      - name: Build deterministic portable ZIP
+        run: |
+          python tools/build_portable_zip.py dist/Pinion dist/Pinion-portable.zip
+          python tools/clean_metadata.py --verify dist/Pinion-portable.zip
+          python tools/deep_scan_binary.py dist/Pinion-portable.zip
+
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        continue-on-error: true
+        with:
+          name: Pinion-release
+          path: |
+            installer/Pinion-setup.exe
+            installer/Pinion.exe
+            dist/Pinion-portable.zip
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Pinion ${{ steps.ver.outputs.version }}
+          make_latest: true
+          files: |
+            installer/Pinion-setup.exe
+            installer/Pinion.exe
+            dist/Pinion-portable.zip
+          body: |
+            **Windows 10/11, 64-bit.**
+            - **`Pinion.exe`**: одиночный переносной exe-файл без установки и архивов.
+            - **`Pinion-setup.exe`**: установщик в профиль пользователя без прав администратора.
+            - **`Pinion-portable.zip`**: портативный архив без установки.
+
+            Python и все библиотеки уже внутри, ставить отдельно ничего не требуется.
+            При первом запуске Windows может показать SmartScreen — нажмите **Подробнее** → **Выполнить в любом случае**.
+
+      - name: Remove previous releases
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+          }
+          $api = "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100"
+          $rels = Invoke-RestMethod -Uri $api -Headers $headers -Method Get
+          foreach ($r in $rels) {
+            if ($r.tag_name -ne '${{ github.ref_name }}') {
+              Write-Output "Deleting old release id=$($r.id) tag=$($r.tag_name)"
+              Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/$($r.id)" -Headers $headers -Method Delete
+            }
+          }

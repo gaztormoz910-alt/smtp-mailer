@@ -1,0 +1,7 @@
+customtkinter
+python-dotenv
+requests
+PySocks
+pywebview
+pythonnet
+pefile

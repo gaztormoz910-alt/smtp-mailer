@@ -1,0 +1,114 @@
+# -*- coding: utf-8 -*-
+import os
+import re
+import subprocess
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _detect_owner_repo() -> str:
+    env_repo = os.environ.get("GITHUB_REPOSITORY")
+    if env_repo:
+        return env_repo
+    try:
+        url = subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"], cwd=REPO
+        ).decode("utf-8", "replace").strip()
+        m = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$", url)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+    except Exception:
+        pass
+    return "pinion-mailer/pinion"
+
+OWNER_REPO = _detect_owner_repo()
+PERMLINK = f"https://github.com/{OWNER_REPO}/releases/latest/download/Pinion-setup.exe"
+
+SPEC = os.path.join(REPO, "Pinion.spec")
+ISS = os.path.join(REPO, "Pinion.iss")
+WF = os.path.join(REPO, ".github", "workflows", "release.yml")
+
+PLACEHOLDER_ANGLE = re.compile(r"<[A-Za-zА-Яа-я_][^>\n]{0,40}>")
+PLACEHOLDER_WORDS = ["подставь", "insert here", "todo", "СГЕНЕРИРУЙ", "точка входа",
+                     "<NAME>", "заглушк", "placeholder"]
+
+fails = []
+
+
+def readf(p):
+    with open(p, encoding="utf-8") as f:
+        return f.read()
+
+
+for path in (SPEC, ISS, WF):
+    if not os.path.exists(path):
+        fails.append(f"нет файла: {os.path.relpath(path, REPO)}")
+        continue
+    txt = readf(path)
+    m = PLACEHOLDER_ANGLE.search(txt)
+    if m:
+        fails.append(f"{os.path.relpath(path, REPO)}: осталась угловая заглушка {m.group(0)!r}")
+    low = txt.lower()
+    for w in PLACEHOLDER_WORDS:
+        if w.lower() in low:
+            fails.append(f"{os.path.relpath(path, REPO)}: заглушка/дозаполнение {w!r}")
+
+if os.path.exists(SPEC):
+    spec = readf(SPEC)
+    for needle, rel in [("main.py", "main.py"),
+                        ("assets/Pinion.ico", os.path.join("assets", "Pinion.ico")),
+                        ("webui/web", os.path.join("webui", "web")),
+                        ("version_info.txt", None)]:
+        if needle not in spec:
+            fails.append(f"Pinion.spec не ссылается на {needle}")
+        elif rel and not os.path.exists(os.path.join(REPO, rel)):
+            fails.append(f"Pinion.spec ссылается на несуществующий {rel}")
+    if "name='Pinion'" not in spec:
+        fails.append("Pinion.spec: имя сборки не 'Pinion'")
+
+if os.path.exists(ISS):
+    iss = readf(ISS)
+    if "OutputBaseFilename=Pinion-setup" not in iss:
+        fails.append("Pinion.iss: OutputBaseFilename не 'Pinion-setup' (или содержит версию)")
+    if re.search(r"OutputBaseFilename=.*\d", iss):
+        fails.append("Pinion.iss: в имени файла установщика есть цифра — постоянная ссылка сломается")
+    if not re.search(r"AppId=\{\{[0-9A-Fa-f-]{36}\}", iss):
+        fails.append("Pinion.iss: нет стабильного GUID в AppId")
+    if "{localappdata}\\Programs\\Pinion" not in iss:
+        fails.append("Pinion.iss: установка не в профиль пользователя")
+    if "PrivilegesRequired=lowest" not in iss:
+        fails.append("Pinion.iss: не PrivilegesRequired=lowest (потребует UAC)")
+    for needle in ("{app}\\logs", "{app}\\data"):
+        if needle not in iss:
+            fails.append(f"Pinion.iss: [UninstallDelete] не чистит {needle}")
+    if re.search(r"[A-Za-z]:\\\\|[A-Za-z]:\\", iss):
+        fails.append("Pinion.iss: найден абсолютный путь (буква диска) — CI не соберёт")
+
+if os.path.exists(WF):
+    wf = readf(WF)
+    for needle in ("Pinion.spec", "Pinion.iss", "tools/set_version.py",
+                   "installer/Pinion-setup.exe", "--selftest", "contents: write",
+                   "softprops/action-gh-release"):
+        if needle not in wf:
+            fails.append(f"release.yml: нет ожидаемого шага/строки {needle!r}")
+
+for rel in ("requirements.txt", "requirements-dev.txt"):
+    p = os.path.join(REPO, rel)
+    if os.path.exists(p):
+        b = open(p, "rb").read()
+        try:
+            b.decode("cp1252")
+        except Exception as ex:
+            fails.append(f"{rel}: не читается как cp1252 ({ex}) — pip на англ. Windows-раннере упадёт; сделай ASCII")
+
+if not OWNER_REPO:
+    fails.append("не задан owner/repo для постоянной ссылки")
+
+if fails:
+    print("!!! ПРОВАЛЫ КОНФИГА РЕЛИЗА:")
+    for f in fails:
+        print("  -", f)
+    sys.exit(1)
+print("permanent link:", PERMLINK)
+print("RELEASE_SETUP_OK")

@@ -1,0 +1,767 @@
+from __future__ import annotations
+
+import smtplib
+import socket
+import ssl
+import random
+import threading
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Callable
+
+import socks
+
+from core.storage import load_lines
+from core import blacklist as _bl
+
+
+class SmtpStatus(Enum):
+    UNTESTED = "Untested"
+    ALIVE = "Alive"
+    DEAD = "Dead"
+
+
+@dataclass
+class SmtpAccount:
+    host: str
+    port: int
+    email: str
+    password: str
+    username: str = ""
+    status: SmtpStatus = SmtpStatus.UNTESTED
+    sent_count: int = 0
+    last_error: str = ""
+    ping_ms: int = 0
+    connect_fails: int = 0
+    revive_attempts: int = 0
+    gave_up: bool = False
+    bound_proxy: Any = None
+    checked_via_proxy: str = ""
+    blacklist_clean: Any = None
+    blacklist_hits: Any = None
+    domain_blacklist_clean: Any = None
+    domain_blacklist_hits: Any = None
+    domain_is_freemail: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.username:
+            self.username = self.email
+
+    @property
+    def display_host(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    @property
+    def encryption(self) -> str:
+        if self.port == 465:
+            return "SSL"
+        if self.port == 587:
+            return "STARTTLS"
+        return "PLAIN"
+
+
+_SMTP_DELIMITERS = ['|', ';', ',', '\t']
+
+import re as _re
+
+def _parse_port(raw: str) -> int | None:
+    
+    raw = raw.strip()
+    if not raw:
+        return None
+    m = _re.match(r'^(\d+)', raw)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def parse_smtp_line(line: str) -> SmtpAccount | None:
+    line = line.strip()
+    if not line:
+        return None
+    bound_proxy = None
+    if "|>" in line:
+        acct_part, _sep, proxy_part = line.partition("|>")
+        from core.proxy_manager import parse_proxy_line
+        bound_proxy = parse_proxy_line(proxy_part.strip())
+        line = acct_part.strip()
+    acc = _parse_account_fields(line)
+    if acc is not None:
+        acc.bound_proxy = bound_proxy
+    return acc
+
+
+def _parse_account_fields(line: str) -> SmtpAccount | None:
+    line = line.strip()
+    if not line:
+        return None
+
+    for delim in _SMTP_DELIMITERS:
+        if delim not in line:
+            continue
+        parts = line.split(delim)
+        if len(parts) < 3:
+            continue
+
+        if len(parts) >= 5:
+            port = _parse_port(parts[1])
+            if port is not None:
+                host = parts[0].strip()
+                p2 = parts[2].strip()
+                p3 = parts[3].strip()
+                password = delim.join(parts[4:]).strip()
+                if '@' in p2 and '@' not in p3:
+                    email, user = p2, p3
+                elif '@' in p3 and '@' not in p2:
+                    user, email = p2, p3
+                else:
+                    user, email = p2, p3
+                if host and email and password:
+                    return SmtpAccount(
+                        host=host, port=port,
+                        email=email, password=password,
+                        username=user,
+                    )
+
+        if len(parts) >= 4:
+            port = _parse_port(parts[1])
+
+            if port is not None:
+                host = parts[0].strip()
+                email = parts[2].strip()
+                password = delim.join(parts[3:]).strip()
+
+                if host and email and password:
+                    return SmtpAccount(
+                        host=host, port=port,
+                        email=email, password=password,
+                        username=email,
+                    )
+
+        host_port = parts[0].strip()
+        email = parts[1].strip()
+        password = delim.join(parts[2:]).strip()
+
+        if ':' not in host_port:
+            continue
+        if '@' not in email and '@' in line:
+            continue
+
+        hp = host_port.rsplit(':', 1)
+        host = hp[0].strip()
+        port = _parse_port(hp[1])
+        if port is None:
+            continue
+
+        if host and email and password:
+            return SmtpAccount(
+                host=host, port=port,
+                email=email, password=password,
+                username=email,
+            )
+
+    parts = line.split(":", 4)
+    if len(parts) == 5:
+        host, port_str, p2, p3, password = parts
+        port = _parse_port(port_str)
+        if port is not None:
+            if '@' in p2 and '@' not in p3:
+                email, user = p2.strip(), p3.strip()
+            else:
+                user, email = p2.strip(), p3.strip()
+            return SmtpAccount(
+                host=host.strip(),
+                port=port,
+                email=email,
+                password=password.strip(),
+                username=user,
+            )
+    elif len(parts) == 4:
+        host, port_str, email, password = parts
+        port = _parse_port(port_str)
+        if port is None:
+            return None
+        return SmtpAccount(
+            host=host.strip(),
+            port=port,
+            email=email.strip(),
+            password=password.strip(),
+            username=email.strip(),
+        )
+    return None
+
+
+_PROXY_TYPE_MAP = {
+    "socks5": socks.SOCKS5,
+    "socks4": socks.SOCKS4,
+}
+
+
+def _make_proxy_sock(
+    proxy: Any,
+    dest_host: str,
+    dest_port: int,
+    timeout: int = 12,
+) -> socket.socket:
+    s = socks.socksocket()
+    s.set_proxy(
+        _PROXY_TYPE_MAP.get(proxy.protocol, socks.SOCKS5),
+        proxy.host,
+        proxy.port,
+        rdns=True,
+        username=proxy.username or None,
+        password=proxy.password or None,
+    )
+    s.settimeout(timeout)
+    s.connect((dest_host, dest_port))
+    return s
+
+
+_CONNECT_TIMEOUT = 15
+
+_UNVERIFIED_CTX: ssl.SSLContext | None = None
+
+def _get_ssl_ctx() -> ssl.SSLContext:
+    global _UNVERIFIED_CTX
+    if _UNVERIFIED_CTX is None:
+        _UNVERIFIED_CTX = ssl._create_unverified_context()
+    return _UNVERIFIED_CTX
+
+
+import string
+
+def _make_smart_ehlo(sender_email: str, target_host: str = "") -> str:
+    rnd = random.SystemRandom()
+    domain = sender_email.split("@")[-1] if "@" in sender_email else "localhost"
+    th_lower = (target_host or "").lower()
+
+    rnd_str = lambda n: "".join(rnd.choice(string.ascii_lowercase + string.digits) for _ in range(n))
+
+    if any(h in th_lower for h in ("office365", "outlook", "microsoft")) or domain.lower().endswith("onmicrosoft.com"):
+        outlook_templates = [
+            lambda: f"DESKTOP-{rnd_str(7).upper()}",
+            lambda: f"LAPTOP-{rnd_str(7).upper()}",
+            lambda: f"{rnd.choice(['EUR','AMS','DUB','FRA','LON','PAR'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+            lambda: f"PC-{rnd_str(6).upper()}",
+        ]
+        return rnd.choice(outlook_templates)()
+
+    _FREEMAIL_EHLO = {
+        'gmail.com': [
+            lambda: f"mail-{rnd.choice(['oi','lf','pg','qt','vs','wr','yb','ua','io','il'])}{rnd.randint(1,9)}-f{rnd.randint(100,255)}.google.com",
+            lambda: f"DESKTOP-{rnd_str(7).upper()}",
+        ],
+        'gmx.com': [lambda: f"mout.gmx.net"],
+        'gmx.net': [lambda: f"mout.gmx.net"],
+        'gmx.de': [lambda: f"mout.gmx.net"],
+        'web.de': [lambda: f"mout.web.de"],
+        'outlook.com': [
+            lambda: f"{rnd.choice(['EUR','AMS','DUB','FRA','LON','PAR'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+            lambda: f"DESKTOP-{rnd_str(7).upper()}",
+        ],
+        'hotmail.com': [
+            lambda: f"{rnd.choice(['EUR','AMS','DUB'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+            lambda: f"LAPTOP-{rnd_str(7).upper()}",
+        ],
+        'yahoo.com': [
+            lambda: f"sonic{rnd.randint(100,999)}-{rnd.randint(1,99)}.consmr.mail.{rnd.choice(['bf2','ne1','gq1'])}.yahoo.com",
+        ],
+        'icloud.com': [
+            lambda: f"st{rnd.randint(11,43)}-asmtp{rnd.randint(100,999)}.me.com",
+        ],
+        'zohomail.eu': [lambda: f"sender{rnd.randint(1,20)}.zoho.eu"],
+        'zohomail.com': [lambda: f"sender{rnd.randint(1,20)}.zoho.com"],
+    }
+
+    domain_lower = domain.lower()
+    if domain_lower in _FREEMAIL_EHLO:
+        return rnd.choice(_FREEMAIL_EHLO[domain_lower])()
+
+    templates = [
+        lambda: f"DESKTOP-{rnd_str(7).upper()}",
+        lambda: f"PC-{rnd_str(6).upper()}",
+        lambda: f"mail.{domain}",
+        lambda: f"smtp.{domain}",
+    ]
+    return rnd.choice(templates)()
+
+
+def smtp_keep_alive(conn: smtplib.SMTP) -> bool:
+    try:
+        code, _ = conn.noop()
+        return code == 250
+    except Exception:
+        return False
+
+
+def connect_smtp(
+    account: SmtpAccount,
+    proxy: Any | None = None,
+    timeout: int = _CONNECT_TIMEOUT,
+) -> smtplib.SMTP:
+
+    bound = getattr(account, "bound_proxy", None)
+    if bound is not None:
+        proxy = bound
+
+    host, port = account.host, account.port
+    fake_ehlo = _make_smart_ehlo(account.email, target_host=host)
+    raw_sock = _make_proxy_sock(proxy, host, port, timeout) if proxy else None
+
+    if port == 465:
+        if raw_sock:
+            ctx = _get_ssl_ctx()
+            ssl_sock = ctx.wrap_socket(raw_sock, server_hostname=host)
+            smtp = smtplib.SMTP_SSL(timeout=timeout, local_hostname=fake_ehlo)
+            smtp.sock = ssl_sock
+            smtp.file = smtp.sock.makefile("rb")
+            smtp._host = host
+            code, _ = smtp.getreply()
+            if code != 220:
+                raise smtplib.SMTPConnectError(code, b"Bad greeting")
+        else:
+            ctx = _get_ssl_ctx()
+            smtp = smtplib.SMTP_SSL(host, port, timeout=timeout, local_hostname=fake_ehlo, context=ctx)
+        smtp.ehlo()
+
+    elif port == 587:
+        if raw_sock:
+            smtp = smtplib.SMTP(timeout=timeout, local_hostname=fake_ehlo)
+            smtp.sock = raw_sock
+            smtp.file = smtp.sock.makefile("rb")
+            smtp._host = host
+            code, _ = smtp.getreply()
+            if code != 220:
+                raise smtplib.SMTPConnectError(code, b"Bad greeting")
+        else:
+            smtp = smtplib.SMTP(host, port, timeout=timeout, local_hostname=fake_ehlo)
+        smtp.ehlo()
+        ctx = _get_ssl_ctx()
+        try:
+            smtp.starttls(context=ctx)
+            smtp.ehlo()
+        except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError) as e:
+            raise smtplib.SMTPConnectError(587, f"STARTTLS failed: {e}".encode())
+
+    else:
+        if raw_sock:
+            smtp = smtplib.SMTP(timeout=timeout, local_hostname=fake_ehlo)
+            smtp.sock = raw_sock
+            smtp.file = smtp.sock.makefile("rb")
+            smtp._host = host
+            code, _ = smtp.getreply()
+            if code != 220:
+                raise smtplib.SMTPConnectError(code, b"Bad greeting")
+        else:
+            smtp = smtplib.SMTP(host, port, timeout=timeout, local_hostname=fake_ehlo)
+        smtp.ehlo()
+        try:
+            ctx = _get_ssl_ctx()
+            smtp.starttls(context=ctx)
+            smtp.ehlo()
+        except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError):
+            pass
+
+    login_user = getattr(account, "username", "") or account.email
+    try:
+        smtp.login(login_user, account.password)
+    except smtplib.SMTPAuthenticationError as auth_err:
+        local_user = login_user.split("@")[0] if "@" in login_user else ""
+        from core.blacklist import is_freemail
+        domain = login_user.split("@")[-1] if "@" in login_user else ""
+        if local_user and local_user != login_user and not is_freemail(domain):
+            try:
+                smtp.login(local_user, account.password)
+                account.username = local_user
+            except Exception:
+                raise auth_err
+        else:
+            raise auth_err
+    return smtp
+
+
+class SmtpManager:
+
+    def __init__(self) -> None:
+        self._accounts: list[SmtpAccount] = []
+        self._lock = threading.Lock()
+        self._rotation_idx: int = 0
+
+
+    @property
+    def accounts(self) -> list[SmtpAccount]:
+        with self._lock:
+            return list(self._accounts)
+
+    def slice(self, offset: int, limit: int) -> list[SmtpAccount]:
+        if offset < 0:
+            offset = 0
+        with self._lock:
+            return self._accounts[offset:offset + limit]
+
+    @property
+    def count_total(self) -> int:
+        with self._lock:
+            return len(self._accounts)
+
+    @property
+    def count_alive(self) -> int:
+        with self._lock:
+            return sum(1 for a in self._accounts if a.status == SmtpStatus.ALIVE)
+
+    @property
+    def count_dead(self) -> int:
+        with self._lock:
+            return sum(1 for a in self._accounts if a.status == SmtpStatus.DEAD)
+
+
+    def counts(self) -> tuple[int, int, int]:
+        with self._lock:
+            total = len(self._accounts)
+            alive = dead = 0
+            for a in self._accounts:
+                if a.status == SmtpStatus.ALIVE:
+                    alive += 1
+                elif a.status == SmtpStatus.DEAD:
+                    dead += 1
+            return total, alive, dead
+
+    def clear(self) -> None:
+        with self._lock:
+            self._accounts.clear()
+
+    def reset_all(self) -> None:
+        with self._lock:
+            for acc in self._accounts:
+                acc.status = SmtpStatus.UNTESTED
+                acc.last_error = ""
+                acc.ping_ms = 0
+                acc.checked_via_proxy = ""
+            self._rotation_idx = 0
+
+    def load_from_file(self, filepath: str) -> int:
+        lines = load_lines(filepath)
+        added = 0
+        with self._lock:
+            for line in lines:
+                acc = parse_smtp_line(line)
+                if acc:
+                    self._accounts.append(acc)
+                    added += 1
+        return added
+
+
+    def remove_dead(self) -> int:
+        with self._lock:
+            before = len(self._accounts)
+            self._accounts = [
+                a for a in self._accounts if a.status != SmtpStatus.DEAD
+            ]
+            self._rotation_idx = 0
+            return before - len(self._accounts)
+
+    def remove_untested(self) -> int:
+        with self._lock:
+            before = len(self._accounts)
+            self._accounts = [
+                a for a in self._accounts if a.status != SmtpStatus.UNTESTED
+            ]
+            self._rotation_idx = 0
+            return before - len(self._accounts)
+
+
+    def _apply_blacklist(self, account: SmtpAccount) -> None:
+        try:
+            domain = account.email.split("@")[-1].lower() if "@" in account.email else ""
+            account.domain_is_freemail = _bl.is_freemail(domain)
+            if domain and not account.domain_is_freemail:
+                clean, hits = _bl.check_domain(domain)
+                account.domain_blacklist_clean = clean
+                account.domain_blacklist_hits = hits or None
+            else:
+                account.domain_blacklist_clean = True
+                account.domain_blacklist_hits = None
+        except Exception:
+            account.domain_blacklist_clean = None
+        try:
+            ip = _bl.resolve_host_ip(account.host)
+            if ip:
+                clean, hits = _bl.check_ip(ip)
+                account.blacklist_clean = clean
+                account.blacklist_hits = hits or None
+            else:
+                account.blacklist_clean = None
+        except Exception:
+            account.blacklist_clean = None
+
+    def check_single(
+        self,
+        account: SmtpAccount,
+        proxy: Any | None = None,
+        timeout: int | None = None,
+    ) -> bool:
+
+
+        max_attempts = 2
+        conn_timeout = int(timeout) if timeout else _CONNECT_TIMEOUT
+        for attempt in range(max_attempts):
+            try:
+                _eff_proxy = getattr(account, "bound_proxy", None) or proxy
+                account.checked_via_proxy = (
+                    f"{_eff_proxy.host}:{_eff_proxy.port}" if _eff_proxy else "прямое соединение"
+                )
+                t0 = time.time()
+                smtp = connect_smtp(account, proxy=proxy, timeout=conn_timeout)
+                smtp.quit()
+                ping_ms = int((time.time() - t0) * 1000)
+                if not getattr(account, "ping_ms", 0) or ping_ms < account.ping_ms:
+                    account.ping_ms = ping_ms
+                
+                account.status = SmtpStatus.ALIVE
+                account.last_error = ""
+                self._apply_blacklist(account)
+                return True
+
+            except smtplib.SMTPAuthenticationError as exc:
+                msg = exc.smtp_error
+                if isinstance(msg, bytes):
+                    msg = msg.decode(errors="replace")
+                msg_lower = msg.lower()
+
+                if any(w in msg_lower for w in ("locked", "disabled", "suspended",
+                                                  "deactivated", "compromised", "terminated")):
+                    account.status = SmtpStatus.DEAD
+                    account.last_error = f"🔒 Аккаунт заблокирован: {msg}"
+                    return False
+
+                if "web browser" in msg_lower or "5.7.9" in msg_lower:
+                    account.last_error = f"🔑 Требуется пароль приложения (Gmail 5.7.9): {msg}"
+                elif "authentication unsuccessful" in msg_lower or "5.7.3" in msg_lower:
+                    account.last_error = f"🛡️ Ошибка авторизации (5.7.3): неверный пароль, отключён Basic-Auth или включен 2FA"
+                elif "basic auth" in msg_lower or "disabled for" in msg_lower:
+                    account.last_error = f"🛡️ Basic-Auth отключён администратором: {msg}"
+                elif any(w in msg_lower for w in ("too many", "rate", "throttl")):
+                    account.last_error = f"⏱️ Троттлинг почтовика — повтор через другой прокси: {msg}"
+                else:
+                    account.last_error = f"⚠️ Ошибка авторизации: {msg}"
+                account.status = SmtpStatus.UNTESTED
+                return False
+
+            except smtplib.SMTPConnectError as exc:
+                code = getattr(exc, "smtp_code", 0)
+                err = str(exc)
+                err_lower = err.lower()
+                
+                if "starttls" in err_lower or "tls" in err_lower:
+                    account.last_error = f"🔐 TLS Failure: {err}"
+                    if attempt < max_attempts - 1:
+                        time.sleep(1)
+                        continue
+                    account.status = SmtpStatus.UNTESTED
+                    return False
+                
+                account.last_error = f"Connect error ({code}): {err}"
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+                    continue
+                account.status = SmtpStatus.UNTESTED
+                return False
+
+            except smtplib.SMTPException as exc:
+                code = getattr(exc, "smtp_code", 0)
+                err = str(exc)
+                err_lower = err.lower()
+                
+                if code and code >= 500:
+                    if any(w in err_lower for w in ("blocked", "banned", "blacklisted",
+                                                      "denied", "rejected")):
+                        account.last_error = f"🛡️ IP заблокирован сервером ({code}) — не пароль: {err}"
+                    elif any(w in err_lower for w in ("relay", "not allowed")):
+                        account.last_error = f"⛔ Relay запрещён с нашего IP ({code}): {err}"
+                    else:
+                        account.last_error = f"5xx на подключении ({code}) — вероятно репутация IP: {err}"
+                    account.status = SmtpStatus.UNTESTED
+                    return False
+
+                if any(w in err_lower for w in ("too many", "rate", "throttl")):
+                    account.last_error = f"⏱️ Rate Limited: {err}"
+                elif "try again" in err_lower or "temporary" in err_lower:
+                    account.last_error = f"⏳ Temp error (retry): {err}"
+                else:
+                    account.last_error = f"Temp error: {err}"
+                    
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+                    continue
+                account.status = SmtpStatus.UNTESTED
+                return False
+
+            except (OSError, socks.ProxyError, socket.timeout, TimeoutError) as exc:
+                err_str = str(exc).lower()
+                
+                if isinstance(exc, socks.ProxyError) or "proxy" in err_str:
+                    account.last_error = f"🌐 Proxy error: {exc}"
+                elif isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in err_str:
+                    account.last_error = f"⏰ Timeout: {exc}"
+                elif "connection refused" in err_str:
+                    account.last_error = f"🚫 Connection refused: {exc}"
+                elif "ttl expired" in err_str or "unreachable" in err_str:
+                    account.last_error = f"🌐 Network unreachable: {exc}"
+                elif "unexpectedly closed" in err_str or "eof" in err_str:
+                    account.last_error = f"💔 Connection dropped: {exc}"
+                else:
+                    account.last_error = f"Connection error: {exc}"
+                    
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+                    continue
+                account.status = SmtpStatus.UNTESTED
+                return False
+
+            except Exception as exc:
+                account.last_error = f"Unexpected error: {exc}"
+                account.status = SmtpStatus.UNTESTED
+                return False
+        return False
+
+    _HOST_MAX_CONCURRENT = 3
+
+    def check_all(
+        self,
+        proxy_getter: Callable[[], Any] | None = None,
+        max_workers: int = 30,
+        on_progress: Callable[[int, int, SmtpAccount], None] | None = None,
+        on_done: Callable[[], None] | None = None,
+        timeout: int | None = None,
+        soft_retries: int = 0,
+        only_untested: bool = False,
+    ) -> None:
+
+
+        def _worker() -> None:
+            with self._lock:
+                targets = [a for a in self._accounts
+                           if not only_untested or a.status == SmtpStatus.UNTESTED]
+            total = len(targets)
+            if not total:
+                if on_done:
+                    on_done()
+                return
+
+            host_semaphores: dict[str, threading.Semaphore] = defaultdict(
+                lambda: threading.Semaphore(self._HOST_MAX_CONCURRENT)
+            )
+
+            checked = 0
+
+            def _do(acc: SmtpAccount) -> SmtpAccount:
+                sem = host_semaphores[acc.host]
+                sem.acquire()
+                try:
+                    import random
+                    time.sleep(random.uniform(0.15, 0.35))
+                    attempts = 1 + max(0, soft_retries) if proxy_getter else 1
+                    for retry_idx in range(attempts):
+                        px = proxy_getter() if proxy_getter else None
+                        ok = self.check_single(acc, proxy=px, timeout=timeout)
+                        if ok or acc.status == SmtpStatus.DEAD:
+                            break
+                        if retry_idx < attempts - 1:
+                            time.sleep(0.5)
+                finally:
+                    sem.release()
+                return acc
+
+            workers = max(1, min(max_workers, total)) if max_workers else total
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_do, a): a for a in targets}
+                for fut in as_completed(futures):
+                    acc = futures[fut]
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        if isinstance(e, (OSError, socks.ProxyError, socket.timeout, TimeoutError)):
+                            acc.last_error = f"Unexpected network error: {e}"
+                            acc.status = SmtpStatus.UNTESTED
+                        else:
+                            acc.last_error = f"Unexpected error: {e}"
+                            acc.status = SmtpStatus.UNTESTED
+                    checked += 1
+                    if on_progress:
+                        on_progress(checked, total, acc)
+
+            if on_done:
+                on_done()
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+
+    def get_next(self) -> SmtpAccount | None:
+        with self._lock:
+            total = len(self._accounts)
+            if not total:
+                return None
+            for _ in range(total):
+                idx = self._rotation_idx % total
+                self._rotation_idx = idx + 1
+                a = self._accounts[idx]
+                if a.status == SmtpStatus.ALIVE:
+                    return a
+            return None
+
+    CONNECT_FAIL_LIMIT = 5
+    MAX_REVIVE_ATTEMPTS = 2
+
+    def report_connect_result(self, account: SmtpAccount, ok: bool) -> None:
+        with self._lock:
+            if ok:
+                account.connect_fails = 0
+                return
+            account.connect_fails += 1
+            if account.connect_fails >= self.CONNECT_FAIL_LIMIT and account.status == SmtpStatus.ALIVE:
+                account.status = SmtpStatus.DEAD
+                if not account.last_error:
+                    account.last_error = f"🔌 {self.CONNECT_FAIL_LIMIT} неудач коннекта в рассылке"
+
+    def mark_hard_dead(self, account: SmtpAccount, reason: str = "") -> None:
+        with self._lock:
+            account.status = SmtpStatus.DEAD
+            account.gave_up = True
+            if reason:
+                account.last_error = reason
+
+    def revive_candidates(self) -> list[SmtpAccount]:
+        with self._lock:
+            return [a for a in self._accounts
+                    if a.status == SmtpStatus.DEAD and not a.gave_up]
+
+    def apply_revive(self, account: SmtpAccount, ok: bool) -> None:
+        with self._lock:
+            if ok:
+                account.status = SmtpStatus.ALIVE
+                account.connect_fails = 0
+                account.revive_attempts = 0
+                account.last_error = ""
+            else:
+                account.revive_attempts += 1
+                if account.revive_attempts >= self.MAX_REVIVE_ATTEMPTS:
+                    account.gave_up = True
+
+    def liveness(self, account: SmtpAccount, proxy: Any | None = None,
+                 timeout: int | None = None) -> bool:
+        conn_timeout = int(timeout) if timeout else _CONNECT_TIMEOUT
+        try:
+            smtp = connect_smtp(account, proxy=proxy, timeout=conn_timeout)
+            try:
+                smtp.quit()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False

@@ -1,0 +1,990 @@
+from __future__ import annotations
+
+import html as _html
+import re
+import threading
+import time
+from pathlib import Path
+from random import SystemRandom
+from typing import Any
+
+import webview
+
+from core.content import (
+    ContentManager,
+    render as render_body, is_html as is_html_body, html_to_plain_text,
+    plain_to_html, validate_template, find_content_issues, count_combinations,
+)
+from core.proxy_manager import ProxyManager, ProxyStatus, set_user_smtp_targets
+from core.smtp_manager import SmtpManager, SmtpStatus
+from core.stats import SendStats
+from core.logger import JsonLogger
+from core.queue_manager import (
+    load_recipients as _load_recipients, build_queue, Recipient,
+)
+from core.sender import (
+    CampaignSender, send_test as _send_test,
+    load_queue_state, clear_queue_state,
+)
+from core.presets import save_preset as _save_preset, load_preset as _load_preset, PRESETS_DIR
+
+try:
+    from webui.letter_score import score_letter as _score_letter
+except ImportError:
+    from letter_score import score_letter as _score_letter
+
+from core.appenv import resource_path as _res, app_version as _app_version, APP_NAME as _APP_NAME
+WEB_DIR = _res("webui/web")
+_rnd = SystemRandom()
+
+_FILE_TYPES = ("Данные (*.txt;*.csv;*.html)", "Все файлы (*.*)")
+
+_PROXY_TOKEN = {ProxyStatus.ALIVE: "alive", ProxyStatus.DEAD: "dead", ProxyStatus.UNTESTED: "untested"}
+_SMTP_TOKEN = {SmtpStatus.ALIVE: "alive", SmtpStatus.DEAD: "dead", SmtpStatus.UNTESTED: "untested"}
+
+
+def _split_emails(raw: str) -> list[str]:
+    if not raw:
+        return []
+    return [e.strip() for e in re.split(r"[,\s;]+", raw) if e.strip() and "@" in e]
+
+
+def _to_int(v: Any, default: int = 0) -> int:
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        m = re.search(r"-?\d+", str(v if v is not None else ""))
+        return int(m.group()) if m else default
+
+
+def _to_float(v: Any, default: float = 0.0) -> float:
+    s = str(v if v is not None else "").strip().replace(",", ".")
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        m = re.search(r"-?\d+(?:\.\d+)?", s)
+        return float(m.group()) if m else default
+
+
+def _clamp(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, v))
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    n = abs(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
+        return few
+    return many
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_DOCTYPE_RE = re.compile(r"<!doctype[^>]*>", re.I)
+
+
+def _body_title(b: str) -> str:
+    if not b:
+        return ""
+    t = _DOCTYPE_RE.sub(" ", b)
+    t = _TAG_RE.sub(" ", t)
+    t = " ".join(t.split())
+    return t
+
+
+def _fmt_big(n: int) -> str:
+    if n < 0:
+        n = 0
+    if n < 10_000_000:
+        return f"{n:,}".replace(",", " ")
+    s = str(n)
+    exp = len(s) - 1
+    mant = s[0] + ("." + s[1:3] if len(s) > 1 else "")
+    return f"≈ {mant}·10^{exp}"
+
+
+_SPIN_INNER_RE = re.compile(r"\{([^{}|]*)\|[^{}]*\}")
+_MACRO2_RE = re.compile(r"\{\{[^}]*\}\}")
+_LINK2_RE = re.compile(r"\[\[[^\]]*\]\]")
+
+
+def _short_body_label(b: str) -> str:
+    t = _DOCTYPE_RE.sub(" ", b)
+    t = _TAG_RE.sub(" ", t)
+    for _ in range(60):
+        new = _SPIN_INNER_RE.sub(lambda m: m.group(1), t)
+        if new == t:
+            break
+        t = new
+    t = _MACRO2_RE.sub("", t)
+    t = _LINK2_RE.sub("", t)
+    t = re.sub(r"[{}|]", " ", t)
+    return " ".join(t.split())
+
+
+def _senders(n: int) -> str:
+    return f"{n} " + _plural(n, "отправитель", "отправителя", "отправителей")
+
+
+def _emails(n: int) -> str:
+    return f"{n} " + _plural(n, "письмо", "письма", "писем")
+
+
+def _verb(n: int) -> str:
+    return "разошлёт" if (n % 10 == 1 and n % 100 != 11) else "разошлют"
+
+
+_PAGE = 200
+
+
+def _win(total: int, offset: Any, limit: Any) -> tuple[int, int]:
+    off = max(0, min(int(offset or 0), total))
+    lim = int(limit) if limit else _PAGE
+    if lim <= 0:
+        lim = _PAGE
+    return off, lim
+
+
+class Api:
+    def __init__(self) -> None:
+        self.proxy_mgr = ProxyManager()
+        self.smtp_mgr = SmtpManager()
+        self.content_mgr = ContentManager()
+        self.stats = SendStats()
+        self.logger = JsonLogger()
+        self._recipients: list[Recipient] = []
+
+        self._chk: dict[str, dict] = {
+            "proxies": {"running": False, "done": 0, "total": 0},
+            "smtp": {"running": False, "done": 0, "total": 0},
+        }
+        self._chk_lock = threading.Lock()
+
+        self._counts_cache: dict[str, dict | None] = {"proxies": None, "smtp": None}
+        self._counts_ts: dict[str, float] = {"proxies": 0.0, "smtp": 0.0}
+        self._counts_lock = threading.Lock()
+
+        self._sender: CampaignSender | None = None
+        self._log: list[str] = []
+        self._log_lock = threading.Lock()
+
+        self._cfg: dict[str, Any] = {
+            "cc": [], "bcc": [], "cc_pct": 0, "bcc_pct": 0,
+            "control": [], "control_every_n": 0,
+        }
+
+    def ping(self) -> dict:
+        return {"ok": True, "app": "Pinion"}
+
+    def status(self) -> dict:
+        return {
+            "subjects": self.content_mgr.subject_count,
+            "bodies": self.content_mgr.body_count,
+            "senders": self.content_mgr.sender_name_count,
+            "links": sum(len(v) for v in self.content_mgr.link_pools.values()),
+            "recipients": len(self._recipients),
+            "proxies": self._proxy_counts(),
+            "smtp": self._smtp_counts(),
+        }
+
+    def load_subjects(self, paths: list[str]) -> dict:
+        added = sum(self.content_mgr.load_subjects(p) for p in paths)
+        return {"added": added, "total": self.content_mgr.subject_count,
+                "issues": find_content_issues(self.content_mgr.subjects, is_subject=True)}
+
+    def clear_subjects(self) -> dict:
+        self.content_mgr.clear_subjects()
+        return {"total": 0}
+
+    def load_bodies(self, paths: list[str]) -> dict:
+        added = sum(self.content_mgr.load_bodies(p) for p in paths)
+        return {"added": added, "total": self.content_mgr.body_count,
+                "issues": find_content_issues(self.content_mgr.bodies, is_subject=False)}
+
+    def content_issues(self) -> dict:
+        return {
+            "subjects": find_content_issues(self.content_mgr.subjects, is_subject=True),
+            "bodies": find_content_issues(self.content_mgr.bodies, is_subject=False),
+        }
+
+    def clear_bodies(self) -> dict:
+        self.content_mgr.clear_bodies()
+        return {"total": 0}
+
+    def load_senders(self, paths: list[str]) -> dict:
+        added = sum(self.content_mgr.load_sender_names(p) for p in paths)
+        return {"added": added, "total": self.content_mgr.sender_name_count}
+
+    def clear_senders(self) -> dict:
+        self.content_mgr.clear_sender_names()
+        return {"total": 0}
+
+    def load_links(self, paths: list[str]) -> dict:
+        files = []
+        for p in paths:
+            key, count, _mode = self.content_mgr.load_links_file(p)
+            macro = f"[[LINK{key}]]" if key else "[[LINK]]"
+            files.append({"file": Path(p).name, "macro": macro, "count": count})
+        total = sum(len(v) for v in self.content_mgr.link_pools.values())
+        return {"files": files, "total": total, "mode": self.content_mgr.link_mode}
+
+    def clear_links(self) -> dict:
+        self.content_mgr.clear_links()
+        return {"files": [], "total": 0}
+
+    def _page_links(self, offset: Any = 0, limit: Any = _PAGE) -> dict:
+        pools = self.content_mgr.link_pools
+        order = sorted(pools.keys(), key=lambda k: int(k) if k.isdigit() else 0)
+        total = sum(len(pools[k]) for k in order)
+        off, lim = _win(total, offset, limit)
+        out: list[str] = []
+        idx, start, end = 0, off, off + lim
+        for k in order:
+            urls = pools[k]
+            n = len(urls)
+            if idx + n <= start:
+                idx += n
+                continue
+            if idx >= end:
+                break
+            a = max(start, idx) - idx
+            b = min(end, idx + n) - idx
+            out.extend(urls[a:b])
+            idx += n
+        legend = " · ".join(
+            f"{('[[LINK' + k + ']]') if k else '[[LINK]]'} ({len(pools[k])})" for k in order)
+        return {"kind": "links", "total": total, "offset": off, "limit": lim,
+                "text": "\n".join(out) or "(пусто)", "legend": legend}
+
+    def page_content(self, kind: str, offset: Any = 0, limit: Any = _PAGE) -> dict:
+        cm = self.content_mgr
+        if kind == "links":
+            return self._page_links(offset, limit)
+        if kind == "subjects":
+            total = cm.subject_count
+            off, lim = _win(total, offset, limit)
+            text = "\n".join(cm.slice_lines("subjects", off, lim))
+        elif kind == "senders":
+            total = cm.sender_name_count
+            off, lim = _win(total, offset, limit)
+            text = "\n".join(cm.slice_lines("senders", off, lim))
+        elif kind == "bodies":
+            total = cm.body_count
+            off, lim = _win(total, offset, limit)
+            chunks = []
+            for j, b in enumerate(cm.slice_lines("bodies", off, lim)):
+                n = off + j + 1
+                head = _body_title(b)[:80]
+                chunks.append(f"▼ Тело #{n}" + (f" — {head}" if head else "") + "\n" + b.strip())
+            text = ("\n" + "─" * 48 + "\n").join(chunks)
+        else:
+            total, off, lim, text = 0, 0, _PAGE, ""
+        return {"kind": kind, "total": total, "offset": off, "limit": lim,
+                "text": text or "(пусто)"}
+
+    def set_consistent_links(self, value: bool) -> dict:
+        self.content_mgr.consistent_links = bool(value)
+        return {"ok": True}
+
+    def set_email_only(self, value: bool) -> dict:
+        self.content_mgr.email_only = bool(value)
+        return {"ok": True}
+
+    def _counts(self, kind: str) -> dict:
+        mgr = self.proxy_mgr if kind == "proxies" else self.smtp_mgr
+        with self._chk_lock:
+            running = self._chk[kind]["running"]
+        with self._counts_lock:
+            cached = self._counts_cache.get(kind)
+            fresh_enough = cached is not None and not (
+                running and time.time() - self._counts_ts.get(kind, 0.0) > 1.0)
+            if fresh_enough:
+                return dict(cached)
+        if kind == "proxies":
+            total, alive, dead, clean, dirty = mgr.counts_full()
+            c = {"total": total, "alive": alive, "dead": dead, "clean": clean, "dirty": dirty}
+        else:
+            total, alive, dead = mgr.counts()
+            c = {"total": total, "alive": alive, "dead": dead}
+        with self._counts_lock:
+            self._counts_cache[kind] = c
+            self._counts_ts[kind] = time.time()
+        return dict(c)
+
+    def _dirty_counts(self, kind: str) -> None:
+        with self._counts_lock:
+            self._counts_cache[kind] = None
+
+    def _proxy_item(self, p) -> dict:
+        return {
+            "addr": f"{p.host}:{p.port}",
+            "proto": p.protocol,
+            "status": _PROXY_TOKEN.get(p.status, "untested"),
+            "ping": p.ping_ms,
+            "country": p.country or "",
+            "exit_ip": getattr(p, "exit_ip", ""),
+            "blacklist": p.blacklist_clean,
+            "score": p.score,
+            "error": getattr(p, "last_error", ""),
+        }
+
+    def _proxy_counts(self) -> dict:
+        return self._counts("proxies")
+
+    def page_proxies(self, offset: Any = 0, limit: Any = _PAGE) -> dict:
+        total = self.proxy_mgr.count_total
+        off, lim = _win(total, offset, limit)
+        items = [self._proxy_item(p) for p in self.proxy_mgr.slice(off, lim)]
+        with self._chk_lock:
+            chk = dict(self._chk.get("proxies", {}))
+        return {**self._proxy_counts(), "offset": off, "limit": lim, "items": items,
+                "running": chk.get("running", False), "done": chk.get("done", 0),
+                "check_total": chk.get("total", 0)}
+
+    def load_proxies(self, paths: list[str]) -> dict:
+        added = sum(self.proxy_mgr.load_from_file(p) for p in paths)
+        self._dirty_counts("proxies")
+        return {"added": added, **self._proxy_counts()}
+
+    def load_proxies_url(self, url: str) -> dict:
+        added = self.proxy_mgr.load_from_url(url)
+        self._dirty_counts("proxies")
+        return {"added": added, **self._proxy_counts()}
+
+    def clear_proxies(self) -> dict:
+        self.proxy_mgr.clear()
+        self._dirty_counts("proxies")
+        return self._proxy_counts()
+
+    def remove_dead_proxies(self) -> dict:
+        removed = self.proxy_mgr.remove_dead()
+        self._dirty_counts("proxies")
+        return {"removed": removed, **self._proxy_counts()}
+
+    def remove_untested_proxies(self) -> dict:
+        removed = self.proxy_mgr.remove_untested()
+        self._dirty_counts("proxies")
+        return {"removed": removed, **self._proxy_counts()}
+
+    def remove_blacklisted_proxies(self) -> dict:
+        removed = self.proxy_mgr.remove_blacklisted()
+        self._dirty_counts("proxies")
+        return {"removed": removed, **self._proxy_counts()}
+
+    def check_proxies(self, threads: Any = None, timeout: Any = None, only_untested: Any = False) -> dict:
+        only_untested = bool(only_untested)
+        with self._chk_lock:
+            if self._chk["proxies"]["running"]:
+                return {"busy": True}
+            if only_untested:
+                _t, _a, _d, _c, _dd = self.proxy_mgr.counts_full()
+                total = _t - _a - _d
+            else:
+                total = self.proxy_mgr.count_total
+            if total == 0:
+                return {"empty": True}
+            self._chk["proxies"] = {"running": True, "done": 0, "total": total}
+        workers = _clamp(_to_int(threads, 30) or 30, 1, 2000)
+        _t = _to_float(timeout, 0.0)
+        to = _t if _t > 0 else None
+        if not only_untested:
+            self.proxy_mgr.reset_all()
+        self._dirty_counts("proxies")
+        set_user_smtp_targets(self.smtp_mgr.accounts)
+
+        def on_prog(done: int, total: int, entry) -> None:
+            with self._chk_lock:
+                self._chk["proxies"]["done"] = done
+                self._chk["proxies"]["total"] = total
+
+        def on_done() -> None:
+            self._dirty_counts("proxies")
+            with self._chk_lock:
+                self._chk["proxies"]["running"] = False
+
+        self.proxy_mgr.check_all(max_workers=workers, on_progress=on_prog,
+                                on_done=on_done, timeout=to, only_untested=only_untested)
+        return {"started": True, "total": total, "threads": workers, "timeout": to or 10}
+
+    def _smtp_item(self, a) -> dict:
+        return {
+            "host": f"{a.host}:{a.port}",
+            "email": a.email,
+            "username": getattr(a, "username", "") or a.email,
+            "enc": a.encryption,
+            "status": _SMTP_TOKEN.get(a.status, "untested"),
+            "ping": a.ping_ms,
+            "error": a.last_error or "",
+            "bound_proxy": bool(getattr(a, "bound_proxy", None)),
+            "proxy": getattr(a, "checked_via_proxy", ""),
+            "blacklist": getattr(a, "blacklist_clean", None),
+            "domain_blacklist": getattr(a, "domain_blacklist_clean", None),
+            "domain_freemail": getattr(a, "domain_is_freemail", False),
+            "bl_zones": (list(getattr(a, "blacklist_hits", None) or [])
+                         + list(getattr(a, "domain_blacklist_hits", None) or [])),
+        }
+
+    def _smtp_counts(self) -> dict:
+        return self._counts("smtp")
+
+    def page_smtp(self, offset: Any = 0, limit: Any = _PAGE) -> dict:
+        total = self.smtp_mgr.count_total
+        off, lim = _win(total, offset, limit)
+        items = [self._smtp_item(a) for a in self.smtp_mgr.slice(off, lim)]
+        with self._chk_lock:
+            chk = dict(self._chk.get("smtp", {}))
+        return {**self._smtp_counts(), "offset": off, "limit": lim, "items": items,
+                "running": chk.get("running", False), "done": chk.get("done", 0),
+                "check_total": chk.get("total", 0)}
+
+    def load_smtp(self, paths: list[str]) -> dict:
+        added = sum(self.smtp_mgr.load_from_file(p) for p in paths)
+        self._dirty_counts("smtp")
+        return {"added": added, **self._smtp_counts()}
+
+    def clear_smtp(self) -> dict:
+        self.smtp_mgr.clear()
+        self._dirty_counts("smtp")
+        return self._smtp_counts()
+
+    def remove_dead_smtp(self) -> dict:
+        removed = self.smtp_mgr.remove_dead()
+        self._dirty_counts("smtp")
+        return {"removed": removed, **self._smtp_counts()}
+
+    def remove_untested_smtp(self) -> dict:
+        removed = self.smtp_mgr.remove_untested()
+        self._dirty_counts("smtp")
+        return {"removed": removed, **self._smtp_counts()}
+
+    def check_smtp(self, threads: Any = None, timeout: Any = None, only_untested: Any = False) -> dict:
+        only_untested = bool(only_untested)
+        with self._chk_lock:
+            if self._chk["smtp"]["running"]:
+                return {"busy": True}
+            if only_untested:
+                _tt, _aa, _dd = self.smtp_mgr.counts()
+                total = _tt - _aa - _dd
+            else:
+                total = self.smtp_mgr.count_total
+            if total == 0:
+                return {"empty": True}
+            self._chk["smtp"] = {"running": True, "done": 0, "total": total}
+        workers = _clamp(_to_int(threads, 30) or 30, 1, 2000)
+        _t = _to_int(timeout, 0)
+        to = _t if _t > 0 else None
+        if not only_untested:
+            self.smtp_mgr.reset_all()
+        self._dirty_counts("smtp")
+
+        def on_prog(done: int, total: int, _entry) -> None:
+            with self._chk_lock:
+                self._chk["smtp"]["done"] = done
+                self._chk["smtp"]["total"] = total
+
+        def on_done() -> None:
+            self._dirty_counts("smtp")
+            with self._chk_lock:
+                self._chk["smtp"]["running"] = False
+
+        getter = self.proxy_mgr.get_next if self.proxy_mgr.count_alive else None
+        self.smtp_mgr.check_all(proxy_getter=getter, max_workers=workers,
+                               on_progress=on_prog, on_done=on_done, timeout=to,
+                               soft_retries=2 if getter else 0, only_untested=only_untested)
+        return {"started": True, "total": total, "threads": workers, "timeout": to or 15}
+
+    def check_progress(self, kind: str) -> dict:
+        with self._chk_lock:
+            st = dict(self._chk.get(kind, {"running": False, "done": 0, "total": 0}))
+        counts = self._proxy_counts() if kind == "proxies" else self._smtp_counts()
+        st.update(counts)
+        return st
+
+    def load_recipients(self, paths: list[str]) -> dict:
+        recs: list[Recipient] = []
+        for p in paths:
+            recs.extend(_load_recipients(p))
+        self._recipients = recs
+        return {"total": len(recs), "added": len(recs)}
+
+    def page_recipients(self, offset: Any = 0, limit: Any = _PAGE) -> dict:
+        total = len(self._recipients)
+        off, lim = _win(total, offset, limit)
+        rows = [{"email": r.email, "name": r.name}
+                for r in self._recipients[off:off + lim]]
+        return {"total": total, "offset": off, "limit": lim, "rows": rows}
+
+    def clear_recipients(self) -> dict:
+        self._recipients = []
+        return {"total": 0}
+
+    def export_proxies_raw(self) -> dict:
+        lines: list[str] = []
+        for p in self.proxy_mgr.proxies:
+            if p.username:
+                lines.append(f"{p.host}:{p.port}:{p.username}:{p.password}")
+            else:
+                lines.append(f"{p.host}:{p.port}")
+        return {"text": "\n".join(lines), "count": len(lines)}
+
+    def export_smtp_raw(self) -> dict:
+        lines: list[str] = []
+        for a in self.smtp_mgr.accounts:
+            line = f"{a.host}:{a.port}:{a.email}:{a.password}"
+            bp = getattr(a, "bound_proxy", None)
+            if bp is not None:
+                if bp.username:
+                    line += f"|>{bp.host}:{bp.port}:{bp.username}:{bp.password}"
+                else:
+                    line += f"|>{bp.host}:{bp.port}"
+            lines.append(line)
+        return {"text": "\n".join(lines), "count": len(lines)}
+
+    def copy_to_clipboard(self, text: str = "") -> dict:
+        text = "" if text is None else str(text)
+        try:
+            import ctypes
+            from ctypes import wintypes
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+            u = ctypes.windll.user32
+            k = ctypes.windll.kernel32
+            k.GlobalAlloc.restype = wintypes.HGLOBAL
+            k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            k.GlobalLock.restype = wintypes.LPVOID
+            k.GlobalLock.argtypes = [wintypes.HGLOBAL]
+            k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+            u.OpenClipboard.argtypes = [wintypes.HWND]
+            u.SetClipboardData.restype = wintypes.HANDLE
+            u.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+            data = text.encode("utf-16-le") + b"\x00\x00"
+            opened = False
+            for _ in range(20):
+                if u.OpenClipboard(None):
+                    opened = True
+                    break
+                time.sleep(0.01)
+            if not opened:
+                return {"ok": False, "error": "clipboard busy"}
+            try:
+                u.EmptyClipboard()
+                handle = k.GlobalAlloc(GMEM_MOVEABLE, len(data))
+                ptr = k.GlobalLock(handle)
+                ctypes.memmove(ptr, data, len(data))
+                k.GlobalUnlock(handle)
+                u.SetClipboardData(CF_UNICODETEXT, handle)
+            finally:
+                u.CloseClipboard()
+            return {"ok": True, "len": len(text)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def preview_email(self, opts: dict | None = None) -> dict:
+        opts = opts or {}
+        name = (opts.get("name") or "").strip()
+        email = (opts.get("email") or "").strip()
+        no_recipients = False
+        if not name and not email:
+            if self._recipients:
+                rec = _rnd.choice(self._recipients)
+                name, email = (rec.name or ""), (rec.email or "")
+            else:
+                no_recipients = True
+        if not email:
+            email = "recipient@example.com"
+
+        sender_name = self.content_mgr.get_random_sender_name()
+        variables = {"email": email, "name": name, "senderName": sender_name}
+
+        if self.smtp_mgr.count_alive:
+            from_email = self.smtp_mgr.get_next().email
+        elif self.smtp_mgr.count_total:
+            from_email = self.smtp_mgr.accounts[0].email
+        else:
+            from_email = "sender@example.com"
+
+        link_cache = {} if self.content_mgr.consistent_links else None
+
+        try:
+            subject = self.content_mgr.get_random_subject(variables, link_cache=link_cache) \
+                or "(темы не загружены)"
+        except ValueError as exc:
+            subject = f"(ошибка тем: {exc})"
+
+        bodies = self.content_mgr.bodies
+        body_src = ""
+        if not bodies:
+            body, is_html_flag = "Тела писем ещё не загружены — загрузите их во вкладке «Контент».", False
+        else:
+            idx = opts.get("index", -1)
+            template = bodies[idx] if isinstance(idx, int) and 0 <= idx < len(bodies) \
+                else _rnd.choice(bodies)
+            body_src = template
+            pools = self.content_mgr.link_pools or None
+            try:
+                body = render_body(template, variables, pools, link_cache,
+                                   link_mode=self.content_mgr.link_mode)
+                is_html_flag = is_html_body(body)
+            except ValueError as exc:
+                body, is_html_flag = f"(ошибка ссылок: {exc})", False
+
+        if is_html_flag:
+            body_html = body
+            text = html_to_plain_text(body)
+        else:
+            text = body
+            body_html = plain_to_html(body)
+
+        preheader = " ".join(text.split())[:120]
+        metrics = {
+            "html_size": len(body_html.encode("utf-8")),
+            "text_len": len(text.strip()),
+            "links": len(re.findall(r"href\s*=", body_html, re.I)) if is_html_flag
+                     else len(re.findall(r"https?://", text)),
+            "images": len(re.findall(r"<img\b", body_html, re.I)),
+        }
+        subject_issue = validate_template(subject)
+        body_issue = validate_template(body_src) if body_src else []
+        try:
+            combos = _fmt_big(count_combinations(
+                body_src, self.content_mgr.link_pools or None, self.content_mgr.link_mode,
+                consistent_links=self.content_mgr.consistent_links)
+            ) if body_src else ""
+        except Exception:
+            combos = ""
+        try:
+            score = _score_letter(subject, text, html=body_html,
+                                  is_html=is_html_flag, vertical="dating") if bodies else None
+        except Exception as exc:
+            score = {"error": str(exc)}
+        return {
+            "from_name": sender_name, "from_email": from_email,
+            "subject": subject, "preheader": preheader,
+            "html": body_html, "text": text, "is_html": is_html_flag,
+            "format": "HTML" if is_html_flag else "Обычный текст",
+            "metrics": metrics,
+            "bodies": len(bodies), "subjects": self.content_mgr.subject_count,
+            "subject_issue": subject_issue, "body_issue": body_issue,
+            "score": score,
+            "combinations": combos,
+            "no_recipients": no_recipients,
+        }
+
+    def combinations(self) -> dict:
+        cm = self.content_mgr
+        pools = cm.link_pools or None
+        mode = cm.link_mode
+        consistent = cm.consistent_links
+        body_total = 0
+        for b in cm.bodies:
+            try:
+                body_total += count_combinations(b, pools, mode, consistent_links=consistent)
+            except Exception:
+                body_total += 1
+        subj_total = 0
+        for s in cm.subjects:
+            try:
+                subj_total += count_combinations(s, pools, mode, consistent_links=consistent)
+            except Exception:
+                subj_total += 1
+        senders = cm.sender_name_count
+        grand = body_total * (subj_total or 1) * (senders or 1)
+        return {
+            "bodies": cm.body_count, "subjects": cm.subject_count, "senders": senders,
+            "body_total": _fmt_big(body_total),
+            "subject_total": _fmt_big(subj_total),
+            "grand_total": _fmt_big(grand),
+        }
+
+    def score_variants(self, n: Any = 30) -> dict:
+        n = _clamp(_to_int(n, 30), 1, 200)
+        cm = self.content_mgr
+        if not cm.subjects or not cm.bodies:
+            return {"available": False, "reason": "нужны и темы, и тела"}
+        if self._recipients:
+            _rec = _rnd.choice(self._recipients)
+            _name, _email = (_rec.name or ""), (_rec.email or "recipient@example.com")
+        else:
+            _name, _email = "", "recipient@example.com"
+        variables = {"email": _email, "name": _name,
+                     "senderName": cm.get_random_sender_name() or ""}
+        pools = cm.link_pools or None
+        overalls: list[int] = []
+        worst = None
+        for _ in range(n):
+            lc = {} if cm.consistent_links else None
+            try:
+                subj = cm.get_random_subject(dict(variables), link_cache=lc)
+                tmpl = _rnd.choice(cm.bodies)
+                body = render_body(tmpl, dict(variables), pools, lc, link_mode=cm.link_mode)
+            except ValueError:
+                continue
+            ishtml = is_html_body(body)
+            text = html_to_plain_text(body) if ishtml else body
+            sc = _score_letter(subj, text, html=(body if ishtml else ""),
+                               is_html=ishtml, vertical="dating")
+            overalls.append(sc["overall"])
+            if worst is None or sc["overall"] < worst["overall"]:
+                fails = []
+                for grp in ("openrate", "clickability", "deliverability"):
+                    fails += [c["text"] for c in sc["checks"][grp] if not c["ok"]]
+                worst = {"overall": sc["overall"], "grade": sc["grade"],
+                         "subject": subj, "anchor": sc.get("anchor", ""),
+                         "fails": fails[:6]}
+        if not overalls:
+            return {"available": False, "reason": "не удалось раскрыть шаблоны"}
+        overalls.sort()
+        mid = overalls[len(overalls) // 2]
+        return {"available": True, "count": len(overalls),
+                "min": overalls[0], "median": mid, "max": overalls[-1],
+                "worst": worst}
+
+    def body_titles(self) -> dict:
+        titles = []
+        for i, b in enumerate(self.content_mgr.bodies):
+            short = _short_body_label(b)[:42]
+            label = f"#{i + 1}" + (f": {short}" if short else "")
+            titles.append({"index": i, "title": label})
+        return {"items": titles}
+
+    def plan(self) -> dict:
+        accs_alive = [a for a in self.smtp_mgr.accounts if a.status == SmtpStatus.ALIVE]
+        alive = len(accs_alive)
+        total = len(self._recipients)
+        rows: list[dict] = []
+        threads, per_conn = alive, 0
+
+        if alive == 0:
+            text = "Нет живых SMTP-аккаунтов. Загрузите и проверьте их во вкладке «Настройки»."
+        elif total == 0:
+            text = "Нет получателей. Загрузите базу во вкладке «Кампания»."
+        elif alive >= total:
+            per_conn = 1
+            for i, a in enumerate(accs_alive):
+                rows.append({"email": a.email, "count": 1 if i < total else 0})
+            rest = alive - total
+            text = (f"{_senders(total)} отправят по 1 письму"
+                    + (f", а {_senders(rest)} останутся без нагрузки." if rest else "."))
+        else:
+            base, rem = divmod(total, alive)
+            per_conn = -(-total // alive)
+            for i, a in enumerate(accs_alive):
+                rows.append({"email": a.email, "count": base + (1 if i < rem else 0)})
+            if rem == 0:
+                if alive == 1:
+                    text = f"1 отправитель разошлёт все {_emails(total)}."
+                else:
+                    text = f"{_senders(alive)} разошлют ровно по {_emails(base)}."
+            else:
+                g1 = f"{_senders(rem)} {_verb(rem)} по {_emails(base + 1)}"
+                g2 = f"{_senders(alive - rem)} {_verb(alive - rem)} по {_emails(base)}"
+                text = f"{g1}, а {g2}."
+        return {"alive": alive, "total": total, "rows": rows, "text": text,
+                "threads": threads, "per_conn": per_conn}
+
+    def set_campaign_config(self, cfg: dict | None = None) -> dict:
+        cfg = cfg or {}
+        self._cfg = {
+            "cc": _split_emails(cfg.get("cc", "")),
+            "bcc": _split_emails(cfg.get("bcc", "")),
+            "cc_pct": _clamp(_to_int(cfg.get("cc_pct"), 0), 0, 100),
+            "bcc_pct": _clamp(_to_int(cfg.get("bcc_pct"), 0), 0, 100),
+            "control": _split_emails(cfg.get("control", "")),
+            "control_every_n": max(0, _to_int(cfg.get("control_every_n"), 0)),
+        }
+        return {"ok": True, "cc": len(self._cfg["cc"]), "bcc": len(self._cfg["bcc"]),
+                "control": len(self._cfg["control"])}
+
+    @staticmethod
+    def _safe_preset_name(name: Any) -> str:
+        s = re.sub(r"[^\w \-\(\)]+", "_", str(name or "").strip(), flags=re.UNICODE)
+        return s[:60] or "preset"
+
+    def list_campaign_presets(self) -> dict:
+        try:
+            items = sorted(p.stem for p in PRESETS_DIR.glob("*.json"))
+        except Exception:
+            items = []
+        return {"items": items}
+
+    def save_campaign_preset(self, name: Any = "") -> dict:
+        safe = self._safe_preset_name(name)
+        data = {
+            "cc": ", ".join(self._cfg["cc"]),
+            "bcc": ", ".join(self._cfg["bcc"]),
+            "cc_pct": self._cfg["cc_pct"],
+            "bcc_pct": self._cfg["bcc_pct"],
+            "control": ", ".join(self._cfg["control"]),
+            "control_every_n": self._cfg["control_every_n"],
+            "consistent_links": bool(self.content_mgr.consistent_links),
+            "email_only": bool(self.content_mgr.email_only),
+        }
+        try:
+            _save_preset(str(PRESETS_DIR / f"{safe}.json"), data)
+        except Exception as exc:
+            return {"error": str(exc)}
+        return {"ok": True, "name": safe, **self.list_campaign_presets()}
+
+    def load_campaign_preset(self, name: Any = "") -> dict:
+        safe = self._safe_preset_name(name)
+        try:
+            data = _load_preset(str(PRESETS_DIR / f"{safe}.json"))
+        except Exception as exc:
+            return {"error": str(exc)}
+        self.set_campaign_config(data)
+        self.content_mgr.consistent_links = bool(data.get("consistent_links"))
+        self.content_mgr.email_only = bool(data.get("email_only"))
+        return {
+            "ok": True, "name": safe,
+            "cc": data.get("cc", ""), "bcc": data.get("bcc", ""),
+            "cc_pct": self._cfg["cc_pct"], "bcc_pct": self._cfg["bcc_pct"],
+            "control": data.get("control", ""),
+            "control_every_n": self._cfg["control_every_n"],
+            "consistent_links": bool(self.content_mgr.consistent_links),
+            "email_only": bool(self.content_mgr.email_only),
+        }
+
+    def send_test(self, email: str) -> dict:
+        if not email or "@" not in email:
+            return {"ok": False, "info": "Укажите корректный email"}
+        ok, info = _send_test(email, self.content_mgr, self.smtp_mgr,
+                              self.proxy_mgr, self.logger)
+        return {"ok": ok, "info": info}
+
+    def _log_push(self, msg: str) -> None:
+        with self._log_lock:
+            self._log.append(time.strftime("%H:%M:%S ") + msg)
+            if len(self._log) > 500:
+                del self._log[:-500]
+
+    def start_campaign(self, params: dict | None = None) -> dict:
+        params = params or {}
+        if self._sender and self._sender.running:
+            return {"error": "Рассылка уже идёт"}
+        if not self._recipients:
+            return {"error": "Нет получателей — загрузите базу во вкладке «Кампания»"}
+        if not self.content_mgr.bodies:
+            return {"error": "Нет текстов писем — загрузите тела во вкладке «Контент»"}
+        if not self.content_mgr.subjects:
+            return {"error": "Нет тем — загрузите темы во вкладке «Контент»"}
+        if self.smtp_mgr.count_alive == 0:
+            return {"error": "Нет живых SMTP — загрузите и проверьте аккаунты во вкладке «Настройки»"}
+        if self.proxy_mgr.count_alive == 0:
+            return {"error": "Нет живых прокси — загрузите и проверьте прокси во вкладке «Настройки»"}
+
+        cfg = self._cfg
+        queue = build_queue(self._recipients, control_emails=cfg["control"],
+                            control_every_n=cfg["control_every_n"])
+
+        with self._log_lock:
+            self._log.clear()
+
+        self._sender = CampaignSender(
+            queue, self.content_mgr, self.smtp_mgr, self.proxy_mgr,
+            self.stats, self.logger,
+            cc_addrs=cfg["cc"], bcc_addrs=cfg["bcc"],
+            cc_percent=cfg["cc_pct"], bcc_percent=cfg["bcc_pct"],
+            on_status=self._log_push,
+        )
+        a = max(0.0, _to_float(params.get("delay_min"), 2.0))
+        b = max(0.0, _to_float(params.get("delay_max"), 8.0))
+        if b < a:
+            a, b = b, a
+        base = (a + b) / 2.0
+        jit = (b - a) / 2.0
+        alive = self.smtp_mgr.count_alive
+        cap = min(alive, 50) if alive else 50
+        th_in = _to_int(params.get("threads"), 0)
+        max_threads = cap if th_in <= 0 else min(th_in, cap)
+        per_acc = -(-len(queue) // alive)
+        bind_proxy = bool(params.get("bind_proxy"))
+        self._sender.start(
+            delay=base,
+            jitter=jit,
+            max_threads=max_threads,
+            max_per_conn=0,
+            max_per_acc=per_acc,
+            bind_proxy=bind_proxy,
+        )
+        return {"started": True, "queued": len(queue), "per_acc": per_acc,
+                "threads": max_threads, "alive": alive, "bind_proxy": bind_proxy}
+
+    def pause_campaign(self) -> dict:
+        if self._sender:
+            self._sender.pause()
+        return {"ok": True}
+
+    def resume_campaign(self) -> dict:
+        if self._sender:
+            self._sender.resume()
+        return {"ok": True}
+
+    def stop_campaign(self) -> dict:
+        if self._sender:
+            self._sender.stop()
+            self.stats.mark_stopped()
+        return {"ok": True}
+
+    def campaign_state(self) -> dict:
+        snap = self.stats.snapshot
+        with self._log_lock:
+            log = list(self._log[-200:])
+        running = bool(self._sender and self._sender.running)
+        paused = bool(self._sender and self._sender.paused)
+        return {"snapshot": snap, "log": log, "running": running, "paused": paused,
+                "recipients": len(self._recipients),
+                "alive_smtp": self.smtp_mgr.count_alive,
+                "can_start": len(self._recipients) > 0 and self.smtp_mgr.count_alive > 0 and self.proxy_mgr.count_alive > 0}
+
+    def queue_state(self) -> dict:
+        data = load_queue_state()
+        if not data:
+            return {"exists": False}
+        return {"exists": True, "remaining": len(data["remaining"]),
+                "sent": data.get("sent_count", 0), "total": data.get("total", 0),
+                "saved_at": data.get("saved_at", "")}
+
+    def resume_from_state(self, params: dict | None = None) -> dict:
+        data = load_queue_state()
+        if not data:
+            return {"error": "Нет сохранённого состояния"}
+        self._recipients = list(data["remaining"])
+        return self.start_campaign(params)
+
+    def clear_state(self) -> dict:
+        clear_queue_state()
+        return {"ok": True}
+
+    def pick_and_load(self, kind: str) -> dict:
+        loader = getattr(self, f"load_{kind}", None)
+        if loader is None:
+            return {"error": f"unknown kind: {kind}"}
+        win = webview.active_window()
+        if win is None:
+            return {"error": "no window"}
+        paths = win.create_file_dialog(
+            webview.FileDialog.OPEN, allow_multiple=True, file_types=_FILE_TYPES)
+        if not paths:
+            return {"cancelled": True}
+        try:
+            return loader(list(paths))
+        except Exception as exc:
+            return {"error": str(exc)}
+
+
+def main() -> None:
+    api = Api()
+    webview.create_window(
+        f"{_APP_NAME} {_app_version()}",
+        str(WEB_DIR / "index.html"),
+        js_api=api,
+        width=1400,
+        height=880,
+        min_size=(1100, 720),
+        background_color="#0a0a0a",
+    )
+    webview.start()
+
+
+if __name__ == "__main__":
+    main()
