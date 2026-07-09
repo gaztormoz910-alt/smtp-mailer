@@ -84,7 +84,9 @@ class ContentTab:
     def _build_subjects(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col, pad_right=(r == 0 and col == 0))
         ctk.CTkLabel(f, text="📝  Темы (Subjects)", font=(FONT_FAMILY, 13, "bold"),
-                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 4))
+                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        ctk.CTkLabel(f, text=".txt · одна тема на строку · макросы: {{name}} {{email}} [[LINK]]",
+                     font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w").pack(fill="x", padx=14, pady=(0, 2))
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
@@ -106,7 +108,9 @@ class ContentTab:
     def _build_bodies(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col)
         ctk.CTkLabel(f, text="📄  Тексты писем", font=(FONT_FAMILY, 13, "bold"),
-                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 4))
+                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        ctk.CTkLabel(f, text=".txt/.html · разделитель: ===END=== · макросы: {{name}} {{email}} [[LINK]]",
+                     font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w").pack(fill="x", padx=14, pady=(0, 2))
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
@@ -128,7 +132,9 @@ class ContentTab:
     def _build_links(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col, pad_right=True)
         ctk.CTkLabel(f, text="🔗  Ссылки", font=(FONT_FAMILY, 13, "bold"),
-                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 4))
+                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        ctk.CTkLabel(f, text=".txt · один URL на строку · links.txt→[[LINK]]  links1.txt→[[LINK1]]",
+                     font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w").pack(fill="x", padx=14, pady=(0, 2))
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
@@ -161,7 +167,9 @@ class ContentTab:
     def _build_senders(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col)
         ctk.CTkLabel(f, text="👤  Имена отправителей", font=(FONT_FAMILY, 13, "bold"),
-                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 4))
+                     text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 2))
+        ctk.CTkLabel(f, text=".txt · одно имя на строку",
+                     font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w").pack(fill="x", padx=14, pady=(0, 2))
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))

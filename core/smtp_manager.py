@@ -10,6 +10,8 @@ import smtplib
 import socket
 import ssl
 import threading
+import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import Enum
@@ -107,7 +109,7 @@ def _make_proxy_sock(
 
 # ── Подключение к SMTP ───────────────────────────────────
 
-_CONNECT_TIMEOUT = 12
+_CONNECT_TIMEOUT = 30
 
 
 def connect_smtp(
@@ -251,36 +253,49 @@ class SmtpManager:
         """Тест-логин одного аккаунта.  Обновляет ``status`` и ``last_error``.
 
         5xx → Dead (перма-бан / неверный пароль).
-        4xx / сетевая ошибка → остаётся в ротации.
+        4xx / сетевая ошибка → повторная попытка через 5 секунд.
+        Если и вторая попытка провалилась — остаётся в ротации (Untested).
         """
-        try:
-            smtp = connect_smtp(account, proxy=proxy)
-            smtp.quit()
-            account.status = SmtpStatus.ALIVE
-            account.last_error = ""
-            return True
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                smtp = connect_smtp(account, proxy=proxy)
+                smtp.quit()
+                account.status = SmtpStatus.ALIVE
+                account.last_error = ""
+                return True
 
-        except smtplib.SMTPAuthenticationError as exc:
-            account.status = SmtpStatus.DEAD
-            msg = exc.smtp_error
-            if isinstance(msg, bytes):
-                msg = msg.decode(errors="replace")
-            account.last_error = f"Auth failed: {msg}"
-            return False
-
-        except smtplib.SMTPException as exc:
-            code = getattr(exc, "smtp_code", 0)
-            err = str(exc)
-            if code and code >= 500:
+            except smtplib.SMTPAuthenticationError as exc:
                 account.status = SmtpStatus.DEAD
-                account.last_error = f"Permanent ({code}): {err}"
-            else:
-                account.last_error = f"Temp error: {err}"
-            return False
+                msg = exc.smtp_error
+                if isinstance(msg, bytes):
+                    msg = msg.decode(errors="replace")
+                account.last_error = f"Auth failed: {msg}"
+                return False
 
-        except (OSError, socks.ProxyError) as exc:
-            account.last_error = f"Connection error: {exc}"
-            return False
+            except smtplib.SMTPException as exc:
+                code = getattr(exc, "smtp_code", 0)
+                err = str(exc)
+                if code and code >= 500:
+                    account.status = SmtpStatus.DEAD
+                    account.last_error = f"Permanent ({code}): {err}"
+                    return False
+                # Временная ошибка (4xx) — попробуем ещё раз
+                account.last_error = f"Temp error: {err}"
+                if attempt < max_attempts - 1:
+                    time.sleep(5)
+                    continue
+                return False
+
+            except (OSError, socks.ProxyError) as exc:
+                account.last_error = f"Connection error: {exc}"
+                if attempt < max_attempts - 1:
+                    time.sleep(5)
+                    continue
+                return False
+        return False
+
+    _HOST_MAX_CONCURRENT = 3   # макс. одновременных соединений к одному хосту
 
     def check_all(
         self,
@@ -292,6 +307,8 @@ class SmtpManager:
         """Проверяет все аккаунты параллельно (фоновый поток).
 
         ``proxy_getter`` — вызываемый объект, возвращающий прокси или None.
+        Per-host throttling: не более ``_HOST_MAX_CONCURRENT`` одновременных
+        соединений к одному SMTP-хосту (защита от 421 Too many connections).
         """
 
         def _worker() -> None:
@@ -303,11 +320,21 @@ class SmtpManager:
                     on_done()
                 return
 
+            # Семафоры для ограничения параллельных соединений к одному хосту
+            host_semaphores: dict[str, threading.Semaphore] = defaultdict(
+                lambda: threading.Semaphore(self._HOST_MAX_CONCURRENT)
+            )
+
             checked = 0
 
             def _do(acc: SmtpAccount) -> SmtpAccount:
-                px = proxy_getter() if proxy_getter else None
-                self.check_single(acc, proxy=px)
+                sem = host_semaphores[acc.host]
+                sem.acquire()
+                try:
+                    px = proxy_getter() if proxy_getter else None
+                    self.check_single(acc, proxy=px)
+                finally:
+                    sem.release()
                 return acc
 
             with ThreadPoolExecutor(max_workers=min(max_workers, total)) as pool:

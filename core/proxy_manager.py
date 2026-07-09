@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
 
-import requests
+import socks
 
 from core.storage import load_lines, load_lines_from_url
 
@@ -108,25 +109,70 @@ def parse_proxy_line(line: str) -> ProxyEntry | None:
 
 # ── Проверка одного прокси ────────────────────────────────
 
-_CHECK_URLS = [
-    "https://api.ipify.org?format=json",
-    "http://httpbin.org/ip",
+# TCP/SMTP тест: проверяем, может ли прокси установить TCP-соединение
+# на SMTP-порт и получить приветственное сообщение (код 220).
+# Это ровно тот же путь, что используется при реальной рассылке.
+# Пробуем несколько серверов: если хотя бы один ответил 220 — прокси живой.
+_SMTP_CHECK_TARGETS = [
+    ("mail.gmx.com", 587),
+    ("smtp.mail.yahoo.com", 587),
+    ("smtp-mail.outlook.com", 587),
 ]
-_CHECK_TIMEOUT = 7
+_CHECK_TIMEOUT = 10
+_CHECK_RETRIES = 1       # 1 повторная попытка перед вердиктом Dead
+_RETRY_PAUSE = 2         # секунд между попытками
+
+_PROXY_TYPE_MAP = {
+    "socks5": socks.SOCKS5,
+    "socks4": socks.SOCKS4,
+    "http":   socks.HTTP,
+}
+
+
+def _smtp_tcp_test(proxy: ProxyEntry) -> bool:
+    """Пытается установить TCP-соединение через прокси на SMTP-порт.
+
+    Пробует несколько SMTP-серверов. Возвращает ``True`` если
+    хотя бы один ответил приветствием (код 220).
+    """
+    for host, port in _SMTP_CHECK_TARGETS:
+        s = socks.socksocket()
+        try:
+            s.set_proxy(
+                _PROXY_TYPE_MAP.get(proxy.protocol, socks.HTTP),
+                proxy.host,
+                proxy.port,
+                username=proxy.username or None,
+                password=proxy.password or None,
+            )
+            s.settimeout(_CHECK_TIMEOUT)
+            s.connect((host, port))
+            # Читаем приветственное сообщение SMTP-сервера
+            banner = s.recv(1024)
+            # Код 220 = сервер готов к работе
+            if banner[:3] == b"220":
+                return True
+        except Exception:
+            continue
+        finally:
+            try:
+                s.close()
+            except Exception:
+                pass
+    return False
 
 
 def _check_single(proxy: ProxyEntry) -> ProxyEntry:
-    """Проверяет прокси GET-запросом через него. Ставит статус Alive/Dead."""
-    proxies_dict = {"http": proxy.url, "https": proxy.url}
+    """Проверяет прокси TCP-соединением на SMTP-порт. Ставит статус Alive/Dead.
 
-    for url in _CHECK_URLS:
-        try:
-            resp = requests.get(url, proxies=proxies_dict, timeout=_CHECK_TIMEOUT)
-            if resp.status_code == 200:
-                proxy.status = ProxyStatus.ALIVE
-                return proxy
-        except Exception:
-            continue
+    При неудаче делает 1 повторную попытку через 2 секунды.
+    """
+    for attempt in range(_CHECK_RETRIES + 1):
+        if _smtp_tcp_test(proxy):
+            proxy.status = ProxyStatus.ALIVE
+            return proxy
+        if attempt < _CHECK_RETRIES:
+            time.sleep(_RETRY_PAUSE)
 
     proxy.status = ProxyStatus.DEAD
     return proxy

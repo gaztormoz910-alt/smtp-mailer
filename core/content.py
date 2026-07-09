@@ -244,8 +244,8 @@ class ContentManager:
         template = random.choice(self._bodies)
         pools = self._link_pools if self._link_pools else None
         rendered = render(template, variables, pools, link_cache)
-        rendered = html_to_plain_text(rendered)
-        return (rendered, False)
+        is_html_body = is_html(rendered)
+        return (rendered, is_html_body)
 
     # ══════════════════════════════════════════════════════
     #  LINKS

@@ -73,7 +73,11 @@ class CampaignTab:
         ctk.CTkLabel(
             frame, text="📋  База получателей",
             font=(FONT_FAMILY, 14, "bold"), text_color=COLOR_TEXT, anchor="w",
-        ).pack(fill="x", padx=14, pady=(10, 4))
+        ).pack(fill="x", padx=14, pady=(10, 2))
+        ctk.CTkLabel(
+            frame, text=".txt (email по одному на строку) или .csv (колонки: email, name)",
+            font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w",
+        ).pack(fill="x", padx=16, pady=(0, 2))
 
         row = ctk.CTkFrame(frame, fg_color="transparent")
         row.pack(fill="x", padx=14, pady=(0, 4))

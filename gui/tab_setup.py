@@ -80,7 +80,11 @@ class SetupTab:
         ctk.CTkLabel(
             self.proxy_frame, text="⚡  Настройки прокси",
             font=(FONT_FAMILY, 15, "bold"), text_color=COLOR_TEXT, anchor="w",
-        ).pack(fill="x", padx=16, pady=(14, 8))
+        ).pack(fill="x", padx=16, pady=(14, 4))
+        ctk.CTkLabel(
+            self.proxy_frame, text=".txt · формат: protocol://host:port или host:port",
+            font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w",
+        ).pack(fill="x", padx=18, pady=(0, 4))
 
         # ── Строка 1: файл + URL ─────────────────────
         row1 = ctk.CTkFrame(self.proxy_frame, fg_color="transparent")
@@ -244,6 +248,7 @@ class SetupTab:
             return
         self._proxy_checking = True
         self._px_set_state("disabled")
+        self.btn_px_dead.configure(state="normal")
         self.btn_px_check.configure(text="0 %", state="disabled")
 
         last_pct = -1
@@ -286,6 +291,7 @@ class SetupTab:
         self.proxy_mgr.check_all(on_progress=on_prog, on_done=on_done)
 
     def _on_px_remove_dead(self) -> None:
+        self.btn_px_dead.configure(state="disabled")
         n = self.proxy_mgr.remove_dead()
         self._px_page = 0
         self._px_refresh()
@@ -298,7 +304,7 @@ class SetupTab:
         self.px_action.configure(text="🧹  Очищено", text_color=COLOR_TEXT_DIM)
 
     def _on_px_copy(self) -> None:
-        text = "\n".join(str(p) for p in self.proxy_mgr.proxies)
+        text = "\n".join(p.url for p in self.proxy_mgr.proxies)
         if text:
             self.parent.clipboard_clear()
             self.parent.clipboard_append(text)
@@ -407,7 +413,11 @@ class SetupTab:
         ctk.CTkLabel(
             self.smtp_frame, text="📧  Настройки SMTP",
             font=(FONT_FAMILY, 15, "bold"), text_color=COLOR_TEXT, anchor="w",
-        ).pack(fill="x", padx=16, pady=(14, 8))
+        ).pack(fill="x", padx=16, pady=(14, 4))
+        ctk.CTkLabel(
+            self.smtp_frame, text=".txt · формат: host:port:email:password",
+            font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w",
+        ).pack(fill="x", padx=18, pady=(0, 4))
 
         # ── Кнопки ───────────────────────────────────
         row1 = ctk.CTkFrame(self.smtp_frame, fg_color="transparent")
@@ -519,6 +529,7 @@ class SetupTab:
             return
         self._smtp_checking = True
         self._sm_set_state("disabled")
+        self.btn_sm_dead.configure(state="normal")
         self.btn_sm_check.configure(text="0 %", state="disabled")
 
         def proxy_getter():
@@ -563,6 +574,7 @@ class SetupTab:
 
         self.smtp_mgr.check_all(
             proxy_getter=proxy_getter,
+            max_workers=15,
             on_progress=on_prog,
             on_done=on_done,
         )
@@ -583,15 +595,19 @@ class SetupTab:
             else:
                 self.logger.auth_error(f"SMTP login fail: {acc.email}: {acc.last_error}",
                                        source="smtp", host=acc.display_host)
-            self.parent.after(0, lambda: (
-                self._sm_update_card(acc),
-                self._sm_update_stats(),
-                card["test_btn"].configure(state="normal", text="Тест"),
-            ))
+            
+            def _ui_update():
+                self._sm_update_card(acc)
+                self._sm_update_stats()
+                if card["test_btn"].winfo_exists():
+                    card["test_btn"].configure(state="normal", text="Тест")
+            
+            self.parent.after(0, _ui_update)
 
         threading.Thread(target=_do, daemon=True).start()
 
     def _on_sm_remove_dead(self) -> None:
+        self.btn_sm_dead.configure(state="disabled")
         n = self.smtp_mgr.remove_dead()
         self._sm_page = 0
         self._sm_refresh()
@@ -604,7 +620,16 @@ class SetupTab:
         self.sm_action.configure(text="🧹  Очищено", text_color=COLOR_TEXT_DIM)
 
     def _on_sm_copy(self) -> None:
-        text = "\n".join(str(a) for a in self.smtp_mgr.accounts)
+        lines = []
+        for a in self.smtp_mgr.accounts:
+            line = f"{a.host}:{a.port}:{a.email}:{a.password}"
+            if a.status.name != "UNTESTED" or a.last_error:
+                line += f" | {a.status.value}"
+                if a.last_error:
+                    err = a.last_error.replace('\n', ' ').replace('\r', '')
+                    line += f" | {err}"
+            lines.append(line)
+        text = "\n".join(lines)
         if text:
             self.parent.clipboard_clear()
             self.parent.clipboard_append(text)
