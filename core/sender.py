@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import random
 import threading
@@ -73,7 +74,23 @@ def build_message(
         msg.attach(MIMEText(plain_body, "plain", "utf-8"))
         msg.attach(MIMEText(body, "html", "utf-8"))
     else:
-        msg = MIMEText(body, "plain", "utf-8")
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        
+        # Автоматически создаём HTML-версию с кликабельными ссылками
+        import re
+        html_body = html.escape(body).replace("\n", "<br>\n")
+        
+        # 1. Поддержка Markdown-ссылок: [Текст ссылки](URL) -> <a href="URL">Текст ссылки</a>
+        html_body = re.sub(r'\[([^\]]+)\]\((https?://[^\s<)]+)\)', r'<a href="\2">\1</a>', html_body)
+        
+        # 2. Оборачиваем остальные сырые ссылки в <a> (но не трогаем те, что уже внутри <a>)
+        parts = re.split(r'(<a\s[^>]+>.*?</a>)', html_body)
+        for i in range(0, len(parts), 2):
+            parts[i] = re.sub(r'(https?://[^\s<]+)', r'<a href="\1">\1</a>', parts[i])
+        html_body = "".join(parts)
+        
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     if sender_name:
         msg["From"] = formataddr((sender_name, from_email))
@@ -133,7 +150,7 @@ def send_test(
 
     variables = {
         "email": to_email,
-        "name": to_email.split("@")[0],
+        "name": "Тестовый_Пользователь",
         "senderName": "",
     }
 
@@ -204,7 +221,7 @@ def generate_preview(
 
     variables = {
         "email": to_sample,
-        "name": to_sample.split("@")[0],
+        "name": "Тестовый_Пользователь",
         "senderName": sender_name,
     }
 

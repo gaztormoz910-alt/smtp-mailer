@@ -303,8 +303,7 @@ class SendTab:
             bcc_addrs=bcc_addrs,
             cc_percent=cc_pct,
             bcc_percent=bcc_pct,
-            on_status=lambda t: self.parent.after(0, lambda: self.campaign_status.configure(
-                text=t, text_color=COLOR_ACCENT)),
+            on_status=lambda t: self.parent.after(0, lambda: self._append_log(t)),
             on_finished=lambda: self.parent.after(0, self._on_campaign_done),
         )
         self._campaign.start(delay=delay, jitter=jitter)
@@ -443,6 +442,13 @@ class SendTab:
         self.preview_box.configure(state="normal")
         self.preview_box.delete("1.0", "end")
         self.preview_box.insert("1.0", text)
+        self.preview_box.configure(state="disabled")
+
+    def _append_log(self, text: str) -> None:
+        self.campaign_status.configure(text=text, text_color=COLOR_ACCENT)
+        self.preview_box.configure(state="normal")
+        self.preview_box.insert("end", f"\n{text}")
+        self.preview_box.see("end")
         self.preview_box.configure(state="disabled")
 
     def _copy_preview(self) -> None:
