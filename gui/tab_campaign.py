@@ -40,7 +40,7 @@ class CampaignTab:
         self._recipients: list[Recipient] = []
         self._recipients_file: str = ""
         self._db_page = 0
-        self._items_per_page = 200
+        self._items_per_page = 40
 
         self._build_layout()
 
@@ -82,20 +82,22 @@ class CampaignTab:
         row = ctk.CTkFrame(frame, fg_color="transparent")
         row.pack(fill="x", padx=14, pady=(0, 4))
 
-        ctk.CTkButton(
+        self.btn_db_load = ctk.CTkButton(
             row, text="📁  Загрузить получателей", width=155, height=28,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             text_color=COLOR_ACCENT, font=(FONT_FAMILY, 12, "bold"),
             border_color=COLOR_ACCENT, border_width=1, corner_radius=8,
             command=self._on_load,
-        ).pack(side="left", padx=(0, 6))
+        )
+        self.btn_db_load.pack(side="left", padx=(0, 6))
 
-        ctk.CTkButton(
+        self.btn_db_clear = ctk.CTkButton(
             row, text="Очистить", width=50, height=28,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             text_color=COLOR_TEXT_DIM, font=(FONT_FAMILY, 11),
             corner_radius=8, command=self._on_clear,
-        ).pack(side="left", padx=(0, 8))
+        )
+        self.btn_db_clear.pack(side="left", padx=(0, 8))
 
         self.count_label = ctk.CTkLabel(
             row, text="0 получателей", font=(FONT_MONO, 11),
@@ -114,12 +116,14 @@ class CampaignTab:
         self.preview_list = ctk.CTkScrollableFrame(
             frame, fg_color=COLOR_BG, corner_radius=8,
             border_color=COLOR_BORDER, border_width=1,
+            scrollbar_fg_color="transparent",
+            scrollbar_button_color=COLOR_BORDER,
+            scrollbar_button_hover_color=COLOR_TEXT_DIM
         )
         self.preview_list.pack(fill="both", expand=True, padx=14, pady=(1, 4))
 
         # ── Пагинация БД ─────────────────────────────
         self.db_page_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        self.db_page_frame.pack(fill="x", padx=14, pady=(0, 4))
 
         self.btn_db_prev = ctk.CTkButton(
             self.db_page_frame, text="< Назад", width=70, height=24,
@@ -257,13 +261,14 @@ class CampaignTab:
 
         r3 = ctk.CTkFrame(frame, fg_color="transparent")
         r3.pack(fill="x", padx=12, pady=(4, 8))
-        ctk.CTkButton(
+        self.btn_queue = ctk.CTkButton(
             r3, text="🔄 Создать очередь", width=120, height=26,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             text_color=COLOR_WARN, font=(FONT_FAMILY, 11, "bold"),
             border_color=COLOR_WARN, border_width=1, corner_radius=8,
             command=self._on_build_queue,
-        ).pack(side="left", padx=(0, 8))
+        )
+        self.btn_queue.pack(side="left", padx=(0, 8))
 
         self.queue_label = ctk.CTkLabel(
             r3, text="", font=(FONT_FAMILY, 10),
@@ -283,21 +288,23 @@ class CampaignTab:
             font=(FONT_FAMILY, 13, "bold"), text_color=COLOR_TEXT, anchor="w",
         ).pack(fill="x", padx=12, pady=(10, 8))
 
-        ctk.CTkButton(
+        self.btn_preset_save = ctk.CTkButton(
             frame, text="💾  Сохранить пресет", width=150, height=32,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             text_color=COLOR_ACCENT, font=(FONT_FAMILY, 13, "bold"),
             border_color=COLOR_ACCENT, border_width=1, corner_radius=8,
             command=self._on_save_preset,
-        ).pack(padx=12, pady=(0, 6))
+        )
+        self.btn_preset_save.pack(padx=12, pady=(0, 6))
 
-        ctk.CTkButton(
+        self.btn_preset_load = ctk.CTkButton(
             frame, text="📂  Загрузить пресет", width=150, height=32,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             text_color=COLOR_WARN, font=(FONT_FAMILY, 13, "bold"),
             border_color=COLOR_WARN, border_width=1, corner_radius=8,
             command=self._on_load_preset,
-        ).pack(padx=12, pady=(0, 6))
+        )
+        self.btn_preset_load.pack(padx=12, pady=(0, 6))
 
         self.preset_label = ctk.CTkLabel(
             frame, text="", font=(FONT_FAMILY, 10),
@@ -310,35 +317,40 @@ class CampaignTab:
     # ══════════════════════════════════════════════════════
 
     def _on_load(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Выберите файл получателей",
+        paths = filedialog.askopenfilenames(
+            title="Выберите файлы получателей",
             filetypes=[("CSV / TXT", "*.csv *.txt"), ("All", "*.*")],
         )
-        if not path:
+        if not paths:
             return
-        self._load_file(path)
-
-    def _load_file(self, path: str) -> None:
+        
         def _do() -> None:
             try:
-                recs = load_recipients(path)
-                self.logger.info(f"Loaded {len(recs)} recipients",
-                                 source="campaign", file=str(path))
-                self.parent.after(0, lambda: self._load_done(recs, path))
+                all_recs = []
+                for p in paths:
+                    all_recs.extend(load_recipients(p))
+                self.logger.info(f"Loaded {len(all_recs)} recipients from {len(paths)} files",
+                                 source="campaign")
+                disp_path = f"{len(paths)} файлов" if len(paths) > 1 else Path(paths[0]).name
+                self.parent.after(0, lambda: self._load_done(all_recs, disp_path))
             except Exception as e:
                 self.parent.after(0, lambda: self.action_label.configure(
                     text=f"✗  {e}", text_color=COLOR_ERROR))
         threading.Thread(target=_do, daemon=True).start()
 
     def _load_done(self, recs: list[Recipient], path: str) -> None:
-        self._recipients = recs
-        self._recipients_file = path
-        self.count_label.configure(text=f"{len(recs)} получателей")
+        self._recipients.extend(recs)
+        # Keep track of all loaded files in a list if needed, or just append the name to _recipients_file
+        if self._recipients_file:
+            self._recipients_file += f"; {path}"
+        else:
+            self._recipients_file = path
+        self.count_label.configure(text=f"{len(self._recipients)} получателей")
         self._db_page = 0
         self._refresh_preview()
         clear_queue_state()
         self.action_label.configure(
-            text=f"✓  {len(recs)} из {Path(path).name}",
+            text=f"✓  Добавлено {len(recs)} из {Path(path).name} (Всего: {len(self._recipients)})",
             text_color=COLOR_ACCENT)
         self._on_build_queue()
 
@@ -410,7 +422,7 @@ class CampaignTab:
         rfile = data.get("recipients_file", "")
         if rfile:
             if Path(rfile).exists():
-                self._load_file(rfile)
+                self._load_done(load_recipients(rfile), Path(rfile).name)
             else:
                 warnings.append(f"Recipients file not found: {rfile}")
 
@@ -489,7 +501,33 @@ class CampaignTab:
         return addrs, pct
 
     # ══════════════════════════════════════════════════════
-    #  UI HELPERS
+    #  UI LOCKING
+    # ══════════════════════════════════════════════════════
+
+    def set_ui_locked(self, locked: bool) -> None:
+        state = "disabled" if locked else "normal"
+        self.btn_db_load.configure(state=state)
+        self.btn_db_clear.configure(state=state)
+        
+        # Disable pagination unless we have pages and are not locked
+        self.btn_db_prev.configure(state="disabled" if (locked or self._db_page <= 0) else "normal")
+        total_pages = max(1, (len(self._recipients) + self._items_per_page - 1) // self._items_per_page)
+        self.btn_db_next.configure(state="disabled" if (locked or self._db_page >= total_pages - 1) else "normal")
+        
+        self.cc_entry.configure(state=state)
+        self.cc_pct.configure(state=state)
+        self.bcc_entry.configure(state=state)
+        self.bcc_pct.configure(state=state)
+        
+        self.inject_n_entry.configure(state=state)
+        self.ctrl_emails_entry.configure(state=state)
+        self.btn_queue.configure(state=state)
+        
+        self.btn_preset_save.configure(state=state)
+        self.btn_preset_load.configure(state=state)
+
+    # ══════════════════════════════════════════════════════
+    #  HANDLERS
     # ══════════════════════════════════════════════════════
 
     def _db_page_prev(self) -> None:
@@ -520,10 +558,18 @@ class CampaignTab:
                          text_color=COLOR_TEXT_DIM, anchor="w").pack(side="left")
                          
         total_pages = max(1, (len(self._recipients) + self._items_per_page - 1) // self._items_per_page)
+        
+        if total_pages <= 1:
+            self.db_page_frame.pack_forget()
+        else:
+            self.db_page_frame.pack(fill="x", padx=14, pady=(0, 4), before=self.action_label)
+            
         self.lbl_db_page.configure(text=f"Стр. {self._db_page + 1} из {total_pages}")
         
         self.btn_db_prev.configure(state="normal" if self._db_page > 0 else "disabled")
         self.btn_db_next.configure(state="normal" if self._db_page < total_pages - 1 else "disabled")
+        
+        self.preview_list._parent_canvas.yview_moveto(0)
 
     @staticmethod
     def _int(entry: ctk.CTkEntry, default: int) -> int:

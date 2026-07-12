@@ -15,11 +15,13 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import queue
+
 LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
 
 class JsonLogger:
-    """Singleton JSON-lines логгер — один файл на день."""
+    """Singleton JSON-lines логгер — один файл на день (Асинхронный)."""
 
     _instance: JsonLogger | None = None
     _init_lock = threading.Lock()
@@ -39,6 +41,44 @@ class JsonLogger:
         self._initialized = True
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         self._write_lock = threading.Lock()
+        self._queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
+        self._writer_thread.start()
+
+    def _writer_loop(self) -> None:
+        """Фоновый поток для записи логов пачками раз в секунду."""
+        while not self._stop_event.is_set():
+            self._flush_queue(timeout=1.0)
+            
+    def _flush_queue(self, timeout: float = 1.0) -> None:
+        entries_by_file = {}
+        try:
+            # Ждем первую запись до timeout
+            item = self._queue.get(timeout=timeout)
+            path, line = item
+            entries_by_file.setdefault(path, []).append(line)
+            self._queue.task_done()
+            
+            # Быстро забираем всё остальное, что накопилось
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                    path, line = item
+                    entries_by_file.setdefault(path, []).append(line)
+                    self._queue.task_done()
+                except queue.Empty:
+                    break
+                    
+            # Сбрасываем пачками
+            for path, lines in entries_by_file.items():
+                try:
+                    with path.open("a", encoding="utf-8") as fh:
+                        fh.write("\n".join(lines) + "\n")
+                except Exception:
+                    pass
+        except queue.Empty:
+            pass
 
     # ── internal ──────────────────────────────────────────
 
@@ -56,9 +96,7 @@ class JsonLogger:
         }
         entry.update(extra)
         line = json.dumps(entry, ensure_ascii=False)
-        with self._write_lock:
-            with self._log_path().open("a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+        self._queue.put((self._log_path(), line))
 
     # ── convenience shortcuts ─────────────────────────────
 
@@ -116,9 +154,7 @@ class JsonLogger:
             entry["had_bcc"] = True
 
         line = json.dumps(entry, ensure_ascii=False)
-        with self._write_lock:
-            with self._send_log_path().open("a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+        self._queue.put((self._send_log_path(), line))
 
     # ── экспорт ───────────────────────────────────────────
 

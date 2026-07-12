@@ -29,6 +29,7 @@ from gui.tab_content import ContentTab
 from gui.tab_campaign import CampaignTab
 from gui.tab_send import SendTab
 from gui.tab_stats import StatsTab
+from gui.tab_plan import PlanTab
 
 
 class App(ctk.CTk):
@@ -49,22 +50,7 @@ class App(ctk.CTk):
         self.content_mgr = ContentManager()
         self.stats = SendStats()
 
-        # ── Заголовок ─────────────────────────────────────────
-        header = ctk.CTkLabel(
-            self,
-            text="CHARLY  MAILER",
-            font=(FONT_FAMILY, 22, "bold"),
-            text_color=COLOR_ACCENT,
-        )
-        header.pack(pady=(18, 4))
-
-        subtitle = ctk.CTkLabel(
-            self,
-            text="SMTP  MASS  MAILING  TOOL",
-            font=(FONT_FAMILY, 11),
-            text_color=COLOR_TEXT_DIM,
-        )
-        subtitle.pack(pady=(0, 10))
+        # ── Заголовок удален ──────────────────────────────────
 
         # ── Табы ──────────────────────────────────────────────
         self.tabview = ctk.CTkTabview(
@@ -85,7 +71,7 @@ class App(ctk.CTk):
         self.tabview.pack(fill="both", expand=True, padx=16, pady=(0, 16))
 
         # Порядок вкладок фиксированный — не менять
-        tab_names = ["Настройки", "Контент", "Кампания", "Отправка", "Статистика"]
+        tab_names = ["Настройки", "Контент", "Кампания", "План", "Отправка", "Статистика"]
         for name in tab_names:
             self.tabview.add(name)
 
@@ -117,6 +103,13 @@ class App(ctk.CTk):
             stats=self.stats,
         )
 
+        self.tab_plan = PlanTab(
+            self.tabview.tab("План"),
+            smtp_mgr=self.smtp_mgr,
+            send_tab=self.tab_send,
+        )
+        self.tab_send.plan_tab = self.tab_plan
+
         # ── Связь Campaign → Send (после создания обоих) ──────
         self.tab_campaign.on_queue_ready = self.tab_send.set_recipients
 
@@ -132,6 +125,18 @@ class App(ctk.CTk):
                 btn.configure(text_color=COLOR_BG)
             else:
                 btn.configure(text_color=COLOR_TEXT)
+
+    # ══════════════════════════════════════════════════════
+    #  UI LOCKING
+    # ══════════════════════════════════════════════════════
+
+    def set_ui_locked(self, locked: bool) -> None:
+        """Блокирует или разблокирует весь UI во время рассылки."""
+        self.tab_setup.set_ui_locked(locked)
+        self.tab_content.set_ui_locked(locked)
+        self.tab_campaign.set_ui_locked(locked)
+        self.tab_plan.set_ui_locked(locked)
+        self.tab_send.set_ui_locked(locked)
 
     # ══════════════════════════════════════════════════════
     #  PRESETS — gather / apply  (вызывается из CampaignTab)

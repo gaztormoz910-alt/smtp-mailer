@@ -133,28 +133,62 @@ class SendTab:
         ctk.CTkLabel(delay_row, text="Задержка:", font=(FONT_FAMILY, 12),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
         self.delay_entry = ctk.CTkEntry(
-            delay_row, width=50, height=28, placeholder_text="5",
+            delay_row, width=50, height=28, placeholder_text="1",
             font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
             text_color=COLOR_TEXT, border_color=COLOR_BORDER,
             corner_radius=6, justify="center",
         )
         self.delay_entry.pack(side="left", padx=(0, 4))
-        self.delay_entry.insert(0, "5")
+        self.delay_entry.insert(0, "1.0")
         ctk.CTkLabel(delay_row, text="сек", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 16))
 
         ctk.CTkLabel(delay_row, text="±Разброс:", font=(FONT_FAMILY, 12),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
         self.jitter_entry = ctk.CTkEntry(
-            delay_row, width=50, height=28, placeholder_text="2",
+            delay_row, width=50, height=28, placeholder_text="0.5",
             font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
             text_color=COLOR_TEXT, border_color=COLOR_BORDER,
             corner_radius=6, justify="center",
         )
         self.jitter_entry.pack(side="left", padx=(0, 4))
-        self.jitter_entry.insert(0, "2")
+        self.jitter_entry.insert(0, "0.5")
         ctk.CTkLabel(delay_row, text="сек", font=(FONT_FAMILY, 11),
-                     text_color=COLOR_TEXT_DIM).pack(side="left")
+                     text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 16))
+
+        # ── Потоки и Пулинг ──
+        pooling_row = ctk.CTkFrame(frame, fg_color="transparent")
+        pooling_row.pack(fill="x", padx=14, pady=(0, 8))
+
+        ctk.CTkLabel(pooling_row, text="Макс. потоков (0 = все):", font=(FONT_FAMILY, 12),
+                     text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
+        self.threads_entry = ctk.CTkEntry(
+            pooling_row, width=50, height=28, placeholder_text="0",
+            font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
+            text_color=COLOR_TEXT, border_color=COLOR_BORDER,
+            corner_radius=6, justify="center",
+        )
+        self.threads_entry.pack(side="left", padx=(0, 16))
+        self.threads_entry.insert(0, "0")
+        
+        ctk.CTkLabel(pooling_row, text="Писем/коннект (0 = ♾️):", font=(FONT_FAMILY, 12),
+                     text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
+        self.conn_limit_entry = ctk.CTkEntry(
+            pooling_row, width=50, height=28, placeholder_text="50",
+            font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
+            text_color=COLOR_TEXT, border_color=COLOR_BORDER,
+            corner_radius=6, justify="center",
+        )
+        self.conn_limit_entry.pack(side="left", padx=(0, 4))
+        self.conn_limit_entry.insert(0, "50")
+
+        self.btn_auto_limit = ctk.CTkButton(
+            pooling_row, text="⚖️ Распределить поровну", width=160, height=26,
+            fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
+            text_color=COLOR_ACCENT, font=(FONT_FAMILY, 11),
+            corner_radius=6, command=self._on_auto_limit
+        )
+        self.btn_auto_limit.pack(side="left", padx=(8, 0))
 
         # ── Кнопки ──
         btn_row = ctk.CTkFrame(frame, fg_color="transparent")
@@ -234,10 +268,53 @@ class SendTab:
         self.preview_box.pack(fill="both", expand=True, padx=14, pady=(0, 12))
 
     # ══════════════════════════════════════════════════════
+    #  UI LOCKING
+    # ══════════════════════════════════════════════════════
+
+    def set_ui_locked(self, locked: bool) -> None:
+        state = "disabled" if locked else "normal"
+        self.test_email_entry.configure(state=state)
+        self.btn_test.configure(state=state)
+        
+        self.delay_entry.configure(state=state)
+        self.jitter_entry.configure(state=state)
+        self.threads_entry.configure(state=state)
+        self.conn_limit_entry.configure(state=state)
+        self.btn_auto_limit.configure(state=state)
+        
+        self.btn_preview.configure(state=state)
+        self.btn_start.configure(state=state)
+
+    def _get_app(self):
+        w = self.parent
+        while w:
+            if hasattr(w, "set_ui_locked"):
+                return w
+            w = getattr(w, "master", None)
+        return None
+
+    # ══════════════════════════════════════════════════════
     #  ОБРАБОТЧИКИ
     # ══════════════════════════════════════════════════════
 
     # ── Test ──────────────────────────────────────────────
+
+    def _on_auto_limit(self) -> None:
+        """Автоматически вычисляет и подставляет оптимальный лимит для равномерного распределения."""
+        alive = self.smtp_mgr.count_alive
+        recs = len(self._recipients)
+        if alive > 0 and recs > 0:
+            import math
+            optimal = math.ceil(recs / alive)
+            def _set_entry(entry: ctk.CTkEntry, text: str) -> None:
+                entry.delete(0, "end")
+                entry.insert(0, text)
+            _set_entry(self.conn_limit_entry, str(optimal))
+            _set_entry(self.threads_entry, str(alive))
+            
+            # Обновляем UI во вкладке План
+            if hasattr(self, 'plan_tab') and self.plan_tab:
+                self.plan_tab.refresh_plan()
 
     def _on_test_send(self) -> None:
         to = self.test_email_entry.get().strip()
@@ -306,7 +383,19 @@ class SendTab:
             on_status=lambda t: self.parent.after(0, lambda: self._append_log(t)),
             on_finished=lambda: self.parent.after(0, self._on_campaign_done),
         )
-        self._campaign.start(delay=delay, jitter=jitter)
+        
+        max_threads = int(self._float(self.threads_entry, 0))
+        max_per_conn = int(self._float(self.conn_limit_entry, 50))
+        
+        app = self._get_app()
+        alive = app.smtp_mgr.count_alive if app else 1
+        if alive < 1:
+            alive = 1
+        import math
+        max_per_acc = math.ceil(len(self._recipients) / alive)
+        
+        self._campaign.start(delay=delay, jitter=jitter, max_threads=max_threads, 
+                             max_per_conn=max_per_conn, max_per_acc=max_per_acc)
 
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
@@ -319,6 +408,10 @@ class SendTab:
             text_color=COLOR_ACCENT)
         self._set_preview(f"Кампания начата: {len(self._recipients)} получателей\n"
                           f"Delay: {delay}s ±{jitter}s{cc_info}{bcc_info}")
+        
+        app = self._get_app()
+        if app:
+            app.set_ui_locked(True)
 
     # ── Stop ─────────────────────────────────────────────
 
@@ -329,6 +422,10 @@ class SendTab:
         self.btn_pause.configure(state="disabled")
         self.btn_start.configure(state="normal")
         self.campaign_status.configure(text="■  Остановлено", text_color=COLOR_ERROR)
+        
+        app = self._get_app()
+        if app:
+            app.set_ui_locked(False)
 
     # ── Pause / Resume ───────────────────────────────────
 
@@ -339,10 +436,16 @@ class SendTab:
             self._campaign.resume()
             self.btn_pause.configure(text="⏸  ПАУЗА", text_color=COLOR_WARN)
             self.campaign_status.configure(text="▶  Возобновлено", text_color=COLOR_ACCENT)
+            app = self._get_app()
+            if app:
+                app.set_ui_locked(True)
         else:
             self._campaign.pause()
             self.btn_pause.configure(text="▶  ПРОДОЛЖИТЬ", text_color=COLOR_ACCENT)
             self.campaign_status.configure(text="⏸  На паузе", text_color=COLOR_WARN)
+            app = self._get_app()
+            if app:
+                app.set_ui_locked(False)
 
     # ── Campaign done callback ───────────────────────────
 
@@ -355,6 +458,10 @@ class SendTab:
             text=f"✓  Завершено — Отправлено: {snap['sent']}  Ошибок: {snap['errors']}",
             text_color=COLOR_ACCENT)
         clear_queue_state()
+        
+        app = self._get_app()
+        if app:
+            app.set_ui_locked(False)
 
     # ── Resume state check ───────────────────────────────
 

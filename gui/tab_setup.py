@@ -46,7 +46,7 @@ class SetupTab:
         self._smtp_checking = False
         self._px_page = 0
         self._sm_page = 0
-        self._items_per_page = 200
+        self._items_per_page = 40
 
         self._build_layout()
 
@@ -108,13 +108,14 @@ class SetupTab:
         row2.pack(fill="x", padx=16, pady=(0, 5))
 
         self.px_auto_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
+        self.px_auto_cb = ctk.CTkCheckBox(
             row2, text="Авто-обновление", variable=self.px_auto_var,
             font=(FONT_FAMILY, 11), text_color=COLOR_TEXT_DIM,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             checkmark_color=COLOR_ACCENT, border_color=COLOR_BORDER,
             corner_radius=4, width=20, command=self._on_px_auto_toggle,
-        ).pack(side="left")
+        )
+        self.px_auto_cb.pack(side="left")
 
         self.px_auto_min = ctk.CTkEntry(
             row2, width=40, height=26, placeholder_text="10",
@@ -166,12 +167,14 @@ class SetupTab:
         self.px_list = ctk.CTkScrollableFrame(
             self.proxy_frame, fg_color=COLOR_BG, corner_radius=8,
             border_color=COLOR_BORDER, border_width=1,
+            scrollbar_fg_color="transparent",
+            scrollbar_button_color=COLOR_BORDER,
+            scrollbar_button_hover_color=COLOR_TEXT_DIM
         )
         self.px_list.pack(fill="both", expand=True, padx=16, pady=(0, 14))
 
         # ── Пагинация прокси ─────────────────────────
         self.px_page_frame = ctk.CTkFrame(self.proxy_frame, fg_color="transparent")
-        self.px_page_frame.pack(fill="x", padx=16, pady=(0, 14))
 
         self.btn_px_prev = ctk.CTkButton(
             self.px_page_frame, text="< Назад", width=70, height=24,
@@ -193,21 +196,25 @@ class SetupTab:
     # ── Proxy handlers ───────────────────────────────────
 
     def _on_px_load_file(self) -> None:
-        path = filedialog.askopenfilename(
+        paths = filedialog.askopenfilenames(
             title="Выберите список прокси",
             filetypes=[("Текст / CSV", "*.txt *.csv"), ("Все файлы", "*.*")],
         )
-        if not path:
+        if not paths:
             return
         self._px_set_state("disabled")
 
         def _do() -> None:
             try:
-                count = self.proxy_mgr.load_from_file(path)
-                self._proxy_file = path
-                self.logger.info(f"Loaded {count} proxies from file",
-                                 source="proxy", file=str(path))
-                self.parent.after(0, lambda: self._px_load_done(count, Path(path).name))
+                total_count = 0
+                for path in paths:
+                    total_count += self.proxy_mgr.load_from_file(path)
+                self._proxy_file = "; ".join(Path(p).name for p in paths)
+                self.logger.info(f"Loaded {total_count} proxies from files",
+                                 source="proxy")
+                
+                disp_name = f"{len(paths)} файлов" if len(paths) > 1 else Path(paths[0]).name
+                self.parent.after(0, lambda: self._px_load_done(total_count, disp_name))
             except Exception as e:
                 self.parent.after(0, lambda: self._px_load_err(str(e)))
 
@@ -235,8 +242,17 @@ class SetupTab:
         self._px_set_state("normal")
         self._px_page = 0
         self._px_refresh()
-        self.px_action.configure(text=f"✓  Загружено {count} из {source}",
-                                 text_color=COLOR_ACCENT)
+        
+        # Проверяем, были ли HTTP прокси которые мы перевели в SOCKS5
+        http_replaced = sum(1 for p in self.proxy_mgr.proxies if p.protocol == "socks5" and getattr(p, "_was_http", False))
+        
+        if http_replaced > 0:
+            self.px_action.configure(
+                text=f"⚠ Загружено {count} (в т.ч. {http_replaced} HTTP переведено в SOCKS5)",
+                text_color=COLOR_WARN)
+        else:
+            self.px_action.configure(text=f"✓  Загружено {count} из {source}",
+                                     text_color=COLOR_ACCENT)
 
     def _px_load_err(self, msg: str) -> None:
         self._px_set_state("normal")
@@ -247,6 +263,8 @@ class SetupTab:
         if self._proxy_checking or self.proxy_mgr.count_total == 0:
             return
         self._proxy_checking = True
+        self.proxy_mgr.reset_all()
+        self._px_refresh()
         self._px_set_state("disabled")
         self.btn_px_dead.configure(state="normal")
         self.btn_px_check.configure(text="0 %", state="disabled")
@@ -368,10 +386,17 @@ class SetupTab:
             self._proxy_label_map[id(proxy)] = lbl
             
         total_pages = max(1, (self.proxy_mgr.count_total + self._items_per_page - 1) // self._items_per_page)
+        
+        if total_pages <= 1:
+            self.px_page_frame.pack_forget()
+        else:
+            self.px_page_frame.pack(fill="x", padx=16, pady=(0, 14))
+            
         self.lbl_px_page.configure(text=f"Стр. {self._px_page + 1} из {total_pages}")
         self.btn_px_prev.configure(state="normal" if self._px_page > 0 else "disabled")
         self.btn_px_next.configure(state="normal" if self._px_page < total_pages - 1 else "disabled")
         
+        self.px_list._parent_canvas.yview_moveto(0)
         self._px_update_stats()
 
     def _px_update_stats(self) -> None:
@@ -382,7 +407,19 @@ class SetupTab:
 
     @staticmethod
     def _px_row(p) -> str:
-        return f" [{p.protocol.upper():6s}] {p.host}:{p.port:<6}  {p.status.value}"
+        server_info = f"  ✓ {p.passed_server}" if getattr(p, "passed_server", "") else ""
+        geo = ""
+        ping = ""
+        if p.status.name == "ALIVE":
+            geo_code = getattr(p, "country", "")
+            if geo_code:
+                from core.countries import COUNTRIES_RU
+                geo_name = COUNTRIES_RU.get(geo_code.upper(), geo_code)
+                geo = f" [{geo_name}]"
+            else:
+                geo = " [?]"
+            ping = f" {p.ping_ms}ms" if getattr(p, "ping_ms", 0) else ""
+        return f" [{p.protocol.upper():6s}] {p.host}:{p.port:<6}  {p.status.value}{ping}{geo}{server_info}"
 
     @staticmethod
     def _px_color(status: ProxyStatus) -> str:
@@ -466,12 +503,14 @@ class SetupTab:
         self.sm_list = ctk.CTkScrollableFrame(
             self.smtp_frame, fg_color=COLOR_BG, corner_radius=8,
             border_color=COLOR_BORDER, border_width=1,
+            scrollbar_fg_color="transparent",
+            scrollbar_button_color=COLOR_BORDER,
+            scrollbar_button_hover_color=COLOR_TEXT_DIM
         )
         self.sm_list.pack(fill="both", expand=True, padx=16, pady=(0, 14))
 
         # ── Пагинация SMTP ───────────────────────────
         self.sm_page_frame = ctk.CTkFrame(self.smtp_frame, fg_color="transparent")
-        self.sm_page_frame.pack(fill="x", padx=16, pady=(0, 14))
 
         self.btn_sm_prev = ctk.CTkButton(
             self.sm_page_frame, text="< Назад", width=70, height=24,
@@ -493,21 +532,24 @@ class SetupTab:
     # ── SMTP handlers ────────────────────────────────────
 
     def _on_sm_load_file(self) -> None:
-        path = filedialog.askopenfilename(
+        paths = filedialog.askopenfilenames(
             title="Выберите файл SMTP аккаунтов",
             filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
         )
-        if not path:
+        if not paths:
             return
         self._sm_set_state("disabled")
 
         def _do() -> None:
             try:
-                count = self.smtp_mgr.load_from_file(path)
-                self._smtp_file = path
-                self.logger.info(f"Loaded {count} SMTP accounts",
-                                 source="smtp", file=str(path))
-                self.parent.after(0, lambda: self._sm_load_done(count, Path(path).name))
+                total_count = 0
+                for path in paths:
+                    total_count += self.smtp_mgr.load_from_file(path)
+                self._smtp_file = "; ".join(Path(p).name for p in paths)
+                self.logger.info(f"Loaded {total_count} SMTP accounts from {len(paths)} files",
+                                 source="smtp")
+                disp_name = f"{len(paths)} файлов" if len(paths) > 1 else Path(paths[0]).name
+                self.parent.after(0, lambda: self._sm_load_done(total_count, disp_name))
             except Exception as e:
                 self.parent.after(0, lambda: self._sm_load_err(str(e)))
 
@@ -517,6 +559,11 @@ class SetupTab:
         self._sm_set_state("normal")
         self._sm_page = 0
         self._sm_refresh()
+        
+        # Устанавливаем уникальные SMTP хосты как цели для проверки прокси
+        from core.proxy_manager import set_user_smtp_targets
+        set_user_smtp_targets(self.smtp_mgr.accounts)
+        
         self.sm_action.configure(text=f"✓  Loaded {count} from {name}",
                                  text_color=COLOR_ACCENT)
 
@@ -528,6 +575,8 @@ class SetupTab:
         if self._smtp_checking or self.smtp_mgr.count_total == 0:
             return
         self._smtp_checking = True
+        self.smtp_mgr.reset_all()
+        self._sm_refresh()
         self._sm_set_state("disabled")
         self.btn_sm_dead.configure(state="normal")
         self.btn_sm_check.configure(text="0 %", state="disabled")
@@ -661,10 +710,17 @@ class SetupTab:
             self._sm_create_card(acc)
             
         total_pages = max(1, (self.smtp_mgr.count_total + self._items_per_page - 1) // self._items_per_page)
+        
+        if total_pages <= 1:
+            self.sm_page_frame.pack_forget()
+        else:
+            self.sm_page_frame.pack(fill="x", padx=16, pady=(0, 14))
+            
         self.lbl_sm_page.configure(text=f"Стр. {self._sm_page + 1} из {total_pages}")
         self.btn_sm_prev.configure(state="normal" if self._sm_page > 0 else "disabled")
         self.btn_sm_next.configure(state="normal" if self._sm_page < total_pages - 1 else "disabled")
         
+        self.sm_list._parent_canvas.yview_moveto(0)
         self._sm_update_stats()
 
     def _sm_create_card(self, acc: SmtpAccount) -> None:
@@ -696,8 +752,9 @@ class SetupTab:
         mid = ctk.CTkFrame(card, fg_color="transparent")
         mid.pack(fill="x", padx=10, pady=1)
 
+        ping_str = f" {acc.ping_ms}ms" if getattr(acc, "ping_ms", 0) else ""
         host_lbl = ctk.CTkLabel(
-            mid, text=f"{acc.display_host}  [{acc.encryption}]",
+            mid, text=f"{acc.display_host}  [{acc.encryption}]{ping_str}",
             font=(FONT_MONO, 11), text_color=COLOR_TEXT_DIM, anchor="w",
         )
         host_lbl.pack(side="left")
@@ -746,6 +803,8 @@ class SetupTab:
         data["status_lbl"].configure(text=f"●  {acc.status.value}", text_color=color)
         data["sent_lbl"].configure(text=f"Отправлено: {acc.sent_count}")
         data["error_lbl"].configure(text=acc.last_error or "")
+        ping_str = f" {acc.ping_ms}ms" if getattr(acc, "ping_ms", 0) else ""
+        data["host_lbl"].configure(text=f"{acc.display_host}  [{acc.encryption}]{ping_str}")
 
     def _sm_update_stats(self) -> None:
         t = self.smtp_mgr.count_total
@@ -768,7 +827,35 @@ class SetupTab:
             self.btn_sm_check.configure(state="normal")
 
     # ══════════════════════════════════════════════════════
-    #  ОБЩИЕ УТИЛИТЫ
+    #  UI LOCKING
+    # ══════════════════════════════════════════════════════
+    def set_ui_locked(self, locked: bool) -> None:
+        px_state = "disabled" if (locked or self._proxy_checking) else "normal"
+        self.btn_px_file.configure(state=px_state)
+        self.px_url_entry.configure(state=px_state)
+        self.btn_px_url.configure(state=px_state)
+        self.btn_px_check.configure(state=px_state)
+        self.btn_px_dead.configure(state=px_state)
+        self.btn_px_clear.configure(state=px_state)
+        self.btn_px_copy.configure(state=px_state)
+        self.btn_px_prev.configure(state="disabled" if (locked or self._proxy_checking or self._px_page <= 0) else "normal")
+        total_pages = max(1, (self.proxy_mgr.count_total + self._items_per_page - 1) // self._items_per_page)
+        self.btn_px_next.configure(state="disabled" if (locked or self._proxy_checking or self._px_page >= total_pages - 1) else "normal")
+        self.px_auto_cb.configure(state=px_state)
+        self.px_auto_min.configure(state=px_state)
+
+        sm_state = "disabled" if (locked or self._smtp_checking) else "normal"
+        self.btn_sm_file.configure(state=sm_state)
+        self.btn_sm_check.configure(state=sm_state)
+        self.btn_sm_dead.configure(state=sm_state)
+        self.btn_sm_clear.configure(state=sm_state)
+        self.btn_sm_copy.configure(state=sm_state)
+        self.btn_sm_prev.configure(state="disabled" if (locked or self._smtp_checking or self._sm_page <= 0) else "normal")
+        total_sm_pages = max(1, (self.smtp_mgr.count_total + self._items_per_page - 1) // self._items_per_page)
+        self.btn_sm_next.configure(state="disabled" if (locked or self._smtp_checking or self._sm_page >= total_sm_pages - 1) else "normal")
+
+    # ══════════════════════════════════════════════════════
+    #  ПРОКСИ (Логика)
     # ══════════════════════════════════════════════════════
 
     @staticmethod
