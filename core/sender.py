@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import html
 import json
+import queue
 import random
 import threading
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate, make_msgid
+from collections import defaultdict
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,22 +30,100 @@ from core.stats import SendStats
 STATE_DIR = Path(__file__).resolve().parent.parent / "data"
 STATE_FILE = STATE_DIR / "queue-state.json"
 
+import re
+_STRIP_TAGS_RE = re.compile(r'<[^>]+>')
+_WHITESPACE_RE = re.compile(r'\s+')
+_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^\s<)]+)\)')
+_A_TAG_SPLIT_RE = re.compile(r'(<a\s[^>]+>.*?</a>)', re.IGNORECASE)
+_RAW_URL_RE = re.compile(r'(https?://[^\s<]+)')
+
+def interleave_by_domain(recipients: list[Recipient]) -> list[Recipient]:
+    """Группирует получателей по домену и перемешивает их (Round-Robin),
+    чтобы одинаковые домены не шли подряд."""
+    by_domain = defaultdict(list)
+    for r in recipients:
+        domain = r.email.split("@")[-1].lower() if "@" in r.email else "unknown"
+        by_domain[domain].append(r)
+        
+    # Сортируем списки доменов по убыванию длины для более равномерного распределения
+    sorted_lists = sorted(by_domain.values(), key=len, reverse=True)
+    
+    # Zip longest берет по одному элементу из каждого списка доменов по очереди
+    interleaved = []
+    for group in zip_longest(*sorted_lists):
+        for r in group:
+            if r is not None:
+                interleaved.append(r)
+    return interleaved
+
+def split_evenly(items: list[Recipient], n: int) -> list[list[Recipient]]:
+    """Делит список получателей на N примерно равных частей."""
+    if n <= 0:
+        return [items]
+    k, m = divmod(len(items), n)
+    return [items[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n)]
+
 
 # ── X-Mailer ротация (имитация реальных клиентов) ─────────
+
+import string
+import time as time_module
 
 _MAILERS = [
     "Microsoft Outlook 16.0",
     "Mozilla Thunderbird 115.0",
     "Apple Mail (2.3774.200.91)",
-    "Mozilla/5.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Postbox 7.0.61",
     "The Bat! 11.3",
     "eM Client 9.2",
+    "Evolution 3.44.4",
+    "KMail/5.20.3",
+    "Pegasus Mail/4.73",
+    "Foxmail 7.2.20.273",
 ]
 
+_ZERO_WIDTH = ["\u200B", "\u200C", "\u200D", "\uFEFF"]
 
-# ── MIME-сообщение ────────────────────────────────────────
+def inject_zero_width(text: str) -> str:
+    """Вставляет невидимые символы между словами/буквами."""
+    if not text:
+        return text
+    rnd = random.SystemRandom()
+    words = text.split()
+    for i in range(len(words)):
+        if len(words[i]) > 3 and rnd.random() < 0.3:
+            insert_pos = rnd.randint(1, len(words[i]) - 1)
+            char = rnd.choice(_ZERO_WIDTH)
+            words[i] = words[i][:insert_pos] + char + words[i][insert_pos:]
+    return " ".join(words)
 
+def generate_invisible_block() -> str:
+    """Генерирует скрытый div со случайным текстом."""
+    rnd = random.SystemRandom()
+    styles = [
+        "display:none;",
+        "height:0;width:0;overflow:hidden;",
+        "font-size:0px;color:#ffffff;",
+        "opacity:0;position:absolute;left:-9999px;",
+        "visibility:hidden;height:1px;",
+    ]
+    style = rnd.choice(styles)
+    # Генерируем случайный набор слов (простой фейк)
+    words = ["hello", "world", "project", "test", "update", "info", "data", "report", "check", "system"]
+    fake_text = " ".join(rnd.choice(words) for _ in range(rnd.randint(5, 15)))
+    return f'<div style="{style}">{fake_text}</div>'
+
+def get_random_boundary() -> str:
+    """Генерирует уникальный boundary для MIME."""
+    rnd = random.SystemRandom()
+    if rnd.random() < 0.5:
+        # Стиль 1: ----=_Part_X_Y
+        return f"----=_Part_{rnd.randint(1000,9999)}_{rnd.randint(100000,999999)}"
+    else:
+        # Стиль 2: ============_X==
+        chars = "".join(rnd.choice(string.ascii_letters + string.digits) for _ in range(16))
+        return f"==============_{chars}=="
 
 def build_message(
     from_email: str,
@@ -52,61 +133,83 @@ def build_message(
     is_html: bool,
     sender_name: str = "",
     cc_addrs: list[str] | None = None,
-) -> MIMEMultipart:
-    """Формирует MIMEMultipart с антиспам-заголовками.
+    plain_text_only: bool = False,
+) -> Any:
+    """Формирует MIME с тотальной уникализацией."""
+    rnd = random.SystemRandom()
 
-    ``formataddr`` корректно энкодит кириллицу и спецсимволы
-    в имени отправителя по RFC 2047.
+    # 1. Мутация текста (Zero-width chars)
+    if rnd.random() < 0.7:
+        body = inject_zero_width(body)
+        subject = inject_zero_width(subject)
 
-    **CC** попадает в заголовки.
-    **BCC** категорически запрещено добавлять в заголовки —
-    адреса BCC передаются только в конверт (``sendmail to_addrs``).
-
-    ``Message-ID`` генерируется с доменом отправителя (SPF/DKIM trust).
-    ``X-Mailer`` рандомизируется, чтобы не палить массовую рассылку.
-    """
-    if is_html:
-        msg = MIMEMultipart("alternative")
-        # Для HTML писем обязательно нужна plain-text альтернатива (иначе спам-фильтры банят)
-        import re
-        plain_body = re.sub(r'<[^>]+>', ' ', body) # Простая очистка от тегов
-        plain_body = re.sub(r'\s+', ' ', plain_body).strip()
-        msg.attach(MIMEText(plain_body, "plain", "utf-8"))
-        msg.attach(MIMEText(body, "html", "utf-8"))
+    # 2. Формирование структуры
+    if plain_text_only:
+        msg = MIMEText(body, "plain", "utf-8")
     else:
-        msg = MIMEMultipart("alternative")
-        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg = MIMEMultipart("alternative", boundary=get_random_boundary())
         
-        # Автоматически создаём HTML-версию с кликабельными ссылками
-        import re
-        html_body = html.escape(body).replace("\n", "<br>\n")
+        plain_body = _STRIP_TAGS_RE.sub(' ', body) if is_html else body
+        plain_body = _WHITESPACE_RE.sub(' ', plain_body).strip()
         
-        # 1. Поддержка Markdown-ссылок: [Текст ссылки](URL) -> <a href="URL">Текст ссылки</a>
-        html_body = re.sub(r'\[([^\]]+)\]\((https?://[^\s<)]+)\)', r'<a href="\2">\1</a>', html_body)
-        
-        # 2. Оборачиваем остальные сырые ссылки в <a> (но не трогаем те, что уже внутри <a>)
-        parts = re.split(r'(<a\s[^>]+>.*?</a>)', html_body)
-        for i in range(0, len(parts), 2):
-            parts[i] = re.sub(r'(https?://[^\s<]+)', r'<a href="\1">\1</a>', parts[i])
-        html_body = "".join(parts)
-        
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        if is_html:
+            html_body = body
+        else:
+            html_body = html.escape(body).replace("\n", "<br>\n")
+            html_body = _MD_LINK_RE.sub(r'<a href="\2">\1</a>', html_body)
+            parts = _A_TAG_SPLIT_RE.split(html_body)
+            for i in range(0, len(parts), 2):
+                parts[i] = _RAW_URL_RE.sub(r'<a href="\1">\1</a>', parts[i])
+            html_body = "".join(parts)
+            
+        # Отключаем невидимые блоки, так как Google (Gmail) их жестко пессимизирует (spam flag).
+        # if rnd.random() < 0.8:
+        #     html_body = generate_invisible_block() + html_body + generate_invisible_block()
 
+        part_plain = MIMEText(plain_body, "plain", "utf-8")
+        part_html = MIMEText(html_body, "html", "utf-8")
+        
+        # Динамический Content-Transfer-Encoding (email.mime.text делает base64 по умолчанию для utf-8)
+        # Мы оставляем стандартный механизм email.mime, т.к. он сам выбирает base64
+        
+        # По RFC 2046 порядок ВСЕГДА должен быть от наименее сложного к наиболее сложному.
+        # То есть СНАЧАЛА text/plain, а ЗАТЕМ text/html.
+        # Если их поменять местами, мобильные клиенты (например, iOS/Android) отобразят plain text,
+        # а спам-фильтры (особенно Gmail) моментально пометят письмо как спам за нарушение стандарта.
+        msg.attach(part_plain)
+        msg.attach(part_html)
+
+    # 3. Форматирование отправителя (Строго по RFC)
     if sender_name:
+        # formataddr корректно энкодит кириллицу
         msg["From"] = formataddr((sender_name, from_email))
     else:
         msg["From"] = from_email
 
     msg["To"] = to_email
     msg["Subject"] = subject
-    msg["Date"] = formatdate(localtime=True)
+    
+    # 4. Header Jitter
+    # Date jitter: +/- 300 сек
+    jitter_sec = rnd.randint(-300, 300)
+    jitter_time = time_module.time() + jitter_sec
+    msg["Date"] = formatdate(timeval=jitter_time, localtime=True)
 
-    # Message-ID с доменом отправителя (а не hostname машины)
     sender_domain = from_email.split("@")[-1] if "@" in from_email else "localhost"
     msg["Message-ID"] = make_msgid(domain=sender_domain)
 
     msg["MIME-Version"] = "1.0"
-    msg["X-Mailer"] = random.choice(_MAILERS)
+    msg["X-Mailer"] = rnd.choice(_MAILERS)
+    
+    if rnd.random() < 0.3:
+        msg["X-Priority"] = str(rnd.randint(1, 5))
+    if rnd.random() < 0.2:
+        msg["X-MSMail-Priority"] = rnd.choice(["High", "Normal", "Low"])
+        
+    if rnd.random() < 0.4:
+        # Fake Thread-Index (Outlook style, 30 chars base64)
+        thread_id = "".join(rnd.choice(string.ascii_letters + string.digits) for _ in range(30))
+        msg["Thread-Index"] = thread_id
 
     if cc_addrs:
         msg["Cc"] = ", ".join(cc_addrs)
@@ -352,16 +455,19 @@ class CampaignSender:
 
     # ── управление ───────────────────────────────────────
 
-    def start(self, delay: float = 5.0, jitter: float = 2.0) -> None:
+    def start(self, delay: float = 1.0, jitter: float = 0.5, max_threads: int = 0, 
+              max_per_conn: int = 50, max_per_acc: int = 0) -> None:
+        """Запускает многопоточную рассылку (Global Queue)."""
         if self._running:
             return
+        self._running = True
         self.stop_event.clear()
         self.pause_event.set()
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._worker, args=(delay, jitter), daemon=True,
-        )
-        self._thread.start()
+        self.stats.resume()
+
+        threading.Thread(
+            target=self._worker_dispatcher, args=(delay, jitter, max_threads, max_per_conn, max_per_acc), daemon=True,
+        ).start()
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -379,31 +485,158 @@ class CampaignSender:
 
     # ── рабочий цикл ─────────────────────────────────────
 
-    def _worker(self, delay: float, jitter: float) -> None:
+    def _worker_dispatcher(self, delay: float, jitter: float, max_threads: int, max_per_conn: int, max_per_acc: int) -> None:
         total = len(self.recipients)
         self.stats.start(total)
-        self._emit("Sending started")
+        self._emit("Sending started (Multi-threaded)")
 
-        while self._idx < total:
+        alive_smtps = [a for a in self.smtp_mgr.accounts if a.status == SmtpStatus.ALIVE]
+        if not alive_smtps:
+            self._emit("No alive SMTP accounts — stopping")
+            self.stats.stop()
+            self._running = False
+            if self.on_finished:
+                self.on_finished()
+            return
+
+        num_workers = len(alive_smtps)
+        if max_threads > 0:
+            num_workers = min(num_workers, max_threads)
+            
+        self._emit(f"Spawning {num_workers} threads (Global Queue)...")
+
+        # Domain Interleaving
+        shuffled = interleave_by_domain(self.recipients)
+        
+        self.global_q = queue.Queue()
+        for r in shuffled:
+            self.global_q.put(r)
+
+        # Start workers
+        worker_threads = []
+        
+        # Shared state for limits
+        self._acc_sent = defaultdict(int)
+        self._acc_sent_lock = threading.RLock()
+        
+        # Shared lock for safe idx increment and state save
+        state_lock = threading.Lock()
+        
+        def safe_save_progress():
+            with state_lock:
+                self._save_counter += 1
+                if self._save_counter >= max(50, max_per_conn):
+                    self._save_state()
+                    self._save_counter = 0
+
+        for i in range(num_workers):
+            t = threading.Thread(
+                target=self._smtp_worker_thread,
+                args=(delay, jitter, max_per_conn, max_per_acc, safe_save_progress),
+                daemon=True,
+                name=f"SMTPWorker-{i+1}"
+            )
+            worker_threads.append(t)
+            t.start()
+
+        # Wait for all workers to finish
+        for t in worker_threads:
+            t.join()
+
+        self.stats.stop()
+        self._running = False
+        self._save_state()
+        if self.on_finished:
+            self.on_finished()
+            
+    def _smtp_worker_thread(self, delay: float, jitter: float, max_per_conn: int, max_per_acc: int, on_progress: Callable) -> None:
+        """Рабочий поток. Привязывается к конкретному SMTP аккаунту и обрабатывает адреса."""
+        conn = None
+        
+        def get_valid_account() -> SmtpAccount | None:
+            for _ in range(self.smtp_mgr.count_alive):
+                acc = self.smtp_mgr.get_next()
+                if not acc: return None
+                if max_per_acc <= 0: return acc
+                with self._acc_sent_lock:
+                    if self._acc_sent[acc.email] < max_per_acc:
+                        return acc
+            return None
+        
+        # Получаем аккаунт и прокси ОДИН РАЗ при старте потока
+        smtp_acc = get_valid_account()
+        if not smtp_acc:
+            return  # Нет живых аккаунтов для этого потока
+            
+        proxy = self.proxy_mgr.get_next()
+        proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
+        
+        sent_on_conn = 0
+        
+        while True:
             if self.stop_event.is_set():
-                self._emit("Stopped by user")
                 break
 
             self.pause_event.wait()
             if self.stop_event.is_set():
                 break
 
-            rcpt = self.recipients[self._idx]
-            tag = "[CONTROL] " if rcpt.is_control else ""
-
-            # ── SMTP ──
-            smtp_acc = self.smtp_mgr.get_next()
-            if not smtp_acc:
-                self._emit("No alive SMTP — stopping")
+            try:
+                rcpt = self.global_q.get(timeout=1.0)
+            except queue.Empty:
                 break
+                
+            # ── Check Account Limit ──
+            if max_per_acc > 0:
+                with self._acc_sent_lock:
+                    if self._acc_sent[smtp_acc.email] >= max_per_acc:
+                        new_acc = get_valid_account()
+                        if not new_acc:
+                            self.global_q.put(rcpt)
+                            break
+                        smtp_acc = new_acc
+                        conn = None  # force reconnect
+            
+            # ── Connection Pooling ──
+            if conn is None or (max_per_conn > 0 and sent_on_conn >= max_per_conn):
+                if conn:
+                    try:
+                        conn.quit()
+                    except Exception:
+                        pass
+                
+                # При превышении лимита (max_per_conn) берем СЛЕДУЮЩИЙ аккаунт
+                # Если отключим лимит (0), то будем шпарить до конца базы с одного
+                if max_per_conn > 0 and sent_on_conn >= max_per_conn:
+                    smtp_acc = get_valid_account()
+                    if not smtp_acc:
+                        self.global_q.put(rcpt)
+                        break
+                    proxy = self.proxy_mgr.get_next()
+                    proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
+                
+                tag = f"{smtp_acc.email} "
+                
+                try:
+                    conn = connect_smtp(smtp_acc, proxy=proxy)
+                    sent_on_conn = 0
+                except Exception as exc:
+                    self._emit(f"{tag}Connect error: {exc}")
+                    self.stats.record_error(smtp_acc.email, proxy_addr, smtp_dead=True)
+                    self.global_q.put(rcpt)
+                    conn = None
+                    # Если умер при коннекте, сразу меняем аккаунт
+                    smtp_acc = get_valid_account()
+                    if not smtp_acc:
+                        break
+                    proxy = self.proxy_mgr.get_next()
+                    proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
+                    continue
 
-            proxy = self.proxy_mgr.get_next()
-            proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
+            tag = f"{smtp_acc.email} "
+            is_control = getattr(rcpt, "is_control", False)
+            if is_control:
+                tag = f"{tag}[CONTROL] "
 
             # ── Контент ──
             variables = {
@@ -426,12 +659,13 @@ class CampaignSender:
             except ValueError as exc:
                 self._emit(f"{tag}Content error: {exc}")
                 self._record_error(rcpt, smtp_acc.email, proxy_addr, str(exc))
-                self._idx += 1
+                on_progress()
+                self.global_q.task_done()
                 continue
 
-            # ── CC / BCC (вероятностные) ──
-            use_cc = bool(self.cc_addrs and random.randint(1, 100) <= self.cc_percent)
-            use_bcc = bool(self.bcc_addrs and random.randint(1, 100) <= self.bcc_percent)
+            # ── CC / BCC ──
+            use_cc = bool(self.cc_addrs and random.SystemRandom().randint(1, 100) <= self.cc_percent)
+            use_bcc = bool(self.bcc_addrs and random.SystemRandom().randint(1, 100) <= self.bcc_percent)
             actual_cc = self.cc_addrs if use_cc else None
             actual_bcc = self.bcc_addrs if use_bcc else None
 
@@ -445,20 +679,18 @@ class CampaignSender:
                     rcpt.email, cc_addrs=actual_cc, bcc_addrs=actual_bcc,
                 )
 
-                conn = connect_smtp(smtp_acc, proxy=proxy)
-                try:
-                    conn.sendmail(smtp_acc.email, envelope_to, msg.as_string())
-                finally:
-                    try:
-                        conn.quit()
-                    except Exception:
-                        pass
-
+                conn.sendmail(smtp_acc.email, envelope_to, msg.as_string())
+                
+                sent_on_conn += 1
                 smtp_acc.sent_count += 1
+                if max_per_acc > 0:
+                    with self._acc_sent_lock:
+                        self._acc_sent[smtp_acc.email] += 1
+                
                 self.stats.record_sent(smtp_acc.email, proxy_addr)
                 self.logger.log_send(
                     rcpt.email, smtp_acc.email, proxy_addr, subject, "sent",
-                    control=rcpt.is_control,
+                    control=is_control,
                     had_cc=use_cc, had_bcc=use_bcc,
                 )
                 self._emit(f"{tag}✓ → {rcpt.email}")
@@ -471,33 +703,36 @@ class CampaignSender:
                     smtp_acc.last_error = err_str
                     self.stats.record_error(
                         smtp_acc.email, proxy_addr, smtp_dead=True)
+                    # Если 500+ ошибка — обрываем коннект
+                    conn = None 
                 else:
                     self.stats.record_error(smtp_acc.email, proxy_addr)
+                    # Если 400 ошибка, тоже на всякий случай реконнект
+                    conn = None
 
                 self.logger.log_send(
                     rcpt.email, smtp_acc.email, proxy_addr, subject,
-                    "error", error_text=err_str, control=rcpt.is_control,
+                    "error", error_text=err_str, control=is_control,
                     had_cc=use_cc, had_bcc=use_bcc,
                 )
                 self._emit(f"{tag}✗ → {rcpt.email}: {err_str[:80]}")
+                # Возвращаем письмо обратно в конец очереди!
+                self.global_q.put(rcpt)
 
             # ── Прогресс ──
-            self._idx += 1
-            self._save_counter += 1
-            if self._save_counter >= 15:
-                self._save_state()
-                self._save_counter = 0
+            self.global_q.task_done()
+            on_progress()
 
-            # ── Задержка ──
-            actual_delay = max(0.5, delay + random.uniform(-jitter, jitter))
-            if self.stop_event.wait(actual_delay):
-                break
-
-        self.stats.stop()
-        self._running = False
-        self._save_state()
-        if self.on_finished:
-            self.on_finished()
+            # ── Индивидуальная задержка (Per-Thread) ──
+            actual_delay = max(0.1, delay + random.SystemRandom().uniform(-jitter, jitter))
+            self.stop_event.wait(actual_delay)
+            
+        # Cleanup
+        if conn:
+            try:
+                conn.quit()
+            except Exception:
+                pass
 
     # ── helpers ──────────────────────────────────────────
 
@@ -513,5 +748,8 @@ class CampaignSender:
         )
 
     def _save_state(self) -> None:
-        remaining = self.recipients[self._idx:]
-        save_queue_state(remaining, self._idx, len(self.recipients))
+        if not hasattr(self, "global_q"):
+            return
+        remaining = list(self.global_q.queue)
+        sent_count = len(self.recipients) - len(remaining)
+        save_queue_state(remaining, sent_count, len(self.recipients))

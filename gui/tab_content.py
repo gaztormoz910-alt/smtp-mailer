@@ -90,12 +90,15 @@ class ContentTab:
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
-        self._btn(row, "Загрузить", self._on_load_subjects, 80).pack(side="left", padx=(0, 4))
-        self._btn(row, "Очистить", self._on_clear_subjects, 48, COLOR_TEXT_DIM).pack(side="left", padx=(0, 6))
+        self.btn_subj_load = self._btn(row, "Загрузить", self._on_load_subjects, 80)
+        self.btn_subj_load.pack(side="left", padx=(0, 4))
+        self.btn_subj_clear = self._btn(row, "Очистить", self._on_clear_subjects, 48, COLOR_TEXT_DIM)
+        self.btn_subj_clear.pack(side="left", padx=(0, 6))
         self.subj_counter = ctk.CTkLabel(row, text="0 загружено", font=(FONT_MONO, 10),
                                          text_color=COLOR_TEXT_DIM, anchor="w")
         self.subj_counter.pack(side="left")
-        self._btn(row, "Копировать", lambda: self._copy_text(self.subj_preview), 80, COLOR_TEXT_DIM).pack(side="right")
+        self.btn_subj_copy = self._btn(row, "Копировать", lambda: self._copy_text(self.subj_preview), 80, COLOR_TEXT_DIM)
+        self.btn_subj_copy.pack(side="right")
 
         self.subj_preview = self._textbox(f, h=50)
         self.subj_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
@@ -114,12 +117,15 @@ class ContentTab:
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
-        self._btn(row, "Загрузить", self._on_load_bodies, 80).pack(side="left", padx=(0, 4))
-        self._btn(row, "Очистить", self._on_clear_bodies, 48, COLOR_TEXT_DIM).pack(side="left", padx=(0, 6))
+        self.btn_body_load = self._btn(row, "Загрузить", self._on_load_bodies, 80)
+        self.btn_body_load.pack(side="left", padx=(0, 4))
+        self.btn_body_clear = self._btn(row, "Очистить", self._on_clear_bodies, 48, COLOR_TEXT_DIM)
+        self.btn_body_clear.pack(side="left", padx=(0, 6))
         self.body_counter = ctk.CTkLabel(row, text="0 загружено", font=(FONT_MONO, 10),
                                          text_color=COLOR_TEXT_DIM, anchor="w")
         self.body_counter.pack(side="left")
-        self._btn(row, "Копировать", lambda: self._copy_text(self.body_preview), 80, COLOR_TEXT_DIM).pack(side="right")
+        self.btn_body_copy = self._btn(row, "Копировать", lambda: self._copy_text(self.body_preview), 80, COLOR_TEXT_DIM)
+        self.btn_body_copy.pack(side="right")
 
         self.body_preview = self._textbox(f, h=50)
         self.body_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
@@ -138,20 +144,23 @@ class ContentTab:
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
-        self._btn(row, "Загрузить", self._on_load_links, 80).pack(side="left", padx=(0, 4))
-        self._btn(row, "Очистить", self._on_clear_links, 48, COLOR_TEXT_DIM).pack(side="left")
+        self.btn_link_load = self._btn(row, "Загрузить", self._on_load_links, 80)
+        self.btn_link_load.pack(side="left", padx=(0, 4))
+        self.btn_link_clear = self._btn(row, "Очистить", self._on_clear_links, 48, COLOR_TEXT_DIM)
+        self.btn_link_clear.pack(side="left")
         
         self.btn_link_copy = self._btn(row, "Копировать", self._on_copy_links, 80, COLOR_TEXT_DIM)
         self.btn_link_copy.pack(side="right")
 
         self.consistent_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
+        self.consistent_cb = ctk.CTkCheckBox(
             f, text="Единые ссылки для каждого письма",
             variable=self.consistent_var, font=(FONT_FAMILY, 10),
             text_color=COLOR_TEXT_DIM, fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             checkmark_color=COLOR_ACCENT, border_color=COLOR_BORDER,
             corner_radius=4, width=18, command=self._on_consistent_toggle,
-        ).pack(fill="x", padx=12, pady=(2, 3))
+        )
+        self.consistent_cb.pack(fill="x", padx=12, pady=(2, 3))
 
         self.link_list = ctk.CTkScrollableFrame(
             f, fg_color=COLOR_BG, corner_radius=8,
@@ -173,21 +182,25 @@ class ContentTab:
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
-        self._btn(row, "Загрузить", self._on_load_senders, 80).pack(side="left", padx=(0, 4))
-        self._btn(row, "Очистить", self._on_clear_senders, 48, COLOR_TEXT_DIM).pack(side="left", padx=(0, 6))
+        self.btn_sender_load = self._btn(row, "Загрузить", self._on_load_senders, 80)
+        self.btn_sender_load.pack(side="left", padx=(0, 4))
+        self.btn_sender_clear = self._btn(row, "Очистить", self._on_clear_senders, 48, COLOR_TEXT_DIM)
+        self.btn_sender_clear.pack(side="left", padx=(0, 6))
         self.sender_counter = ctk.CTkLabel(row, text="0 загружено", font=(FONT_MONO, 10),
                                            text_color=COLOR_TEXT_DIM, anchor="w")
         self.sender_counter.pack(side="left")
-        self._btn(row, "Копировать", lambda: self._copy_text(self.sender_preview), 80, COLOR_TEXT_DIM).pack(side="right")
+        self.btn_sender_copy = self._btn(row, "Копировать", lambda: self._copy_text(self.sender_preview), 80, COLOR_TEXT_DIM)
+        self.btn_sender_copy.pack(side="right")
 
         self.email_only_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            f, text="Только email (без имени отправителя)",
+        self.email_only_cb = ctk.CTkCheckBox(
+            f, text="Отправлять без имени (только email)",
             variable=self.email_only_var, font=(FONT_FAMILY, 10),
             text_color=COLOR_TEXT_DIM, fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             checkmark_color=COLOR_ACCENT, border_color=COLOR_BORDER,
             corner_radius=4, width=18, command=self._on_email_only_toggle,
-        ).pack(fill="x", padx=12, pady=(2, 3))
+        )
+        self.email_only_cb.pack(fill="x", padx=12, pady=(2, 3))
 
         self.sender_preview = self._textbox(f, h=40)
         self.sender_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
@@ -239,33 +252,66 @@ class ContentTab:
         self.sandbox_action = self._status(frame)
 
     # ══════════════════════════════════════════════════════
+    #  UI LOCKING
+    # ══════════════════════════════════════════════════════
+
+    def set_ui_locked(self, locked: bool) -> None:
+        state = "disabled" if locked else "normal"
+        self.btn_subj_load.configure(state=state)
+        self.btn_subj_clear.configure(state=state)
+        self.btn_subj_copy.configure(state=state)
+        
+        self.btn_body_load.configure(state=state)
+        self.btn_body_clear.configure(state=state)
+        self.btn_body_copy.configure(state=state)
+        
+        self.btn_link_load.configure(state=state)
+        self.btn_link_clear.configure(state=state)
+        self.btn_link_copy.configure(state=state)
+        self.consistent_cb.configure(state=state)
+
+        self.btn_sender_load.configure(state=state)
+        self.btn_sender_clear.configure(state=state)
+        self.btn_sender_copy.configure(state=state)
+        self.email_only_cb.configure(state=state)
+
+        self.test_email.configure(state=state)
+        self.test_name.configure(state=state)
+        self.btn_generate.configure(state=state)
+
+    # ══════════════════════════════════════════════════════
     #  HANDLERS — SUBJECTS
     # ══════════════════════════════════════════════════════
 
     def _on_load_subjects(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Выберите файл с темами",
+        paths = filedialog.askopenfilenames(
+            title="Выберите файлы с темами",
             filetypes=[("Text files", "*.txt"), ("All", "*.*")],
         )
-        if not path:
+        if not paths:
             return
 
         def _do() -> None:
             try:
-                count = self.content_mgr.load_subjects(path)
-                self._subjects_file = path
-                self.logger.info(f"Loaded {count} subjects", source="content", file=str(path))
-                self.parent.after(0, lambda: self._subj_done(count))
+                total_count = 0
+                for path in paths:
+                    total_count += self.content_mgr.load_subjects(path)
+                self.logger.info(f"Loaded {total_count} subjects from {len(paths)} files", source="content")
+                self.parent.after(0, lambda: self._subj_done(total_count, paths))
             except Exception as e:
                 self.parent.after(0, lambda: self.subj_action.configure(
                     text=f"✗  {e}", text_color=COLOR_ERROR))
         threading.Thread(target=_do, daemon=True).start()
 
-    def _subj_done(self, count: int) -> None:
-        self.subj_counter.configure(text=f"{count} загружено")
+    def _subj_done(self, count: int, paths: list = None) -> None:
+        total = self.content_mgr.subject_count
+        self.subj_counter.configure(text=f"{total} загружено")
         lines = self.content_mgr.subjects[:5]
         self._set_tb(self.subj_preview, "\n".join(lines) if lines else "(пусто)")
-        self.subj_action.configure(text=f"✓  {count} тем", text_color=COLOR_ACCENT)
+        disp = f"{len(paths)} файлов" if paths and len(paths) > 1 else Path(paths[0]).name if paths else ""
+        self.subj_action.configure(
+            text=f"✓ Добавлено {count} из {disp} (Всего: {total})",
+            text_color=COLOR_ACCENT)
 
     def _on_clear_subjects(self) -> None:
         self.content_mgr.clear_subjects()
@@ -278,26 +324,28 @@ class ContentTab:
     # ══════════════════════════════════════════════════════
 
     def _on_load_bodies(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Выберите файл с текстами писем",
+        paths = filedialog.askopenfilenames(
+            title="Выберите файлы с текстами писем",
             filetypes=[("Text / HTML", "*.txt *.html"), ("All", "*.*")],
         )
-        if not path:
+        if not paths:
             return
 
         def _do() -> None:
             try:
-                count = self.content_mgr.load_bodies(path)
-                self._bodies_file = path
-                self.logger.info(f"Loaded {count} bodies", source="content", file=str(path))
-                self.parent.after(0, lambda: self._body_done(count))
+                total_count = 0
+                for path in paths:
+                    total_count += self.content_mgr.load_bodies(path)
+                self.logger.info(f"Loaded {total_count} bodies from {len(paths)} files", source="content")
+                self.parent.after(0, lambda: self._body_done(total_count, paths))
             except Exception as e:
                 self.parent.after(0, lambda: self.body_action.configure(
                     text=f"✗  {e}", text_color=COLOR_ERROR))
         threading.Thread(target=_do, daemon=True).start()
 
-    def _body_done(self, count: int) -> None:
-        self.body_counter.configure(text=f"{count} загружено")
+    def _body_done(self, count: int, paths: list = None) -> None:
+        total = self.content_mgr.body_count
+        self.body_counter.configure(text=f"{total} загружено")
         bodies = self.content_mgr.bodies
         if bodies:
             first_lines = bodies[0].splitlines()[:8]
@@ -307,7 +355,10 @@ class ContentTab:
         else:
             preview = "(пусто)"
         self._set_tb(self.body_preview, preview)
-        self.body_action.configure(text=f"✓  {count} писем", text_color=COLOR_ACCENT)
+        disp = f"{len(paths)} файлов" if paths and len(paths) > 1 else Path(paths[0]).name if paths else ""
+        self.body_action.configure(
+            text=f"✓ Добавлено {count} из {disp} (Всего: {total})",
+            text_color=COLOR_ACCENT)
 
     def _on_clear_bodies(self) -> None:
         self.content_mgr.clear_bodies()
@@ -378,29 +429,34 @@ class ContentTab:
     # ══════════════════════════════════════════════════════
 
     def _on_load_senders(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Выберите файл имен отправителей",
+        paths = filedialog.askopenfilenames(
+            title="Выберите файлы имен отправителей",
             filetypes=[("Text files", "*.txt"), ("All", "*.*")],
         )
-        if not path:
+        if not paths:
             return
 
         def _do() -> None:
             try:
-                count = self.content_mgr.load_sender_names(path)
-                self._senders_file = path
-                self.logger.info(f"Loaded {count} sender names", source="content", file=str(path))
-                self.parent.after(0, lambda: self._senders_done(count))
+                total_count = 0
+                for path in paths:
+                    total_count += self.content_mgr.load_sender_names(path)
+                self.logger.info(f"Loaded {total_count} sender names from {len(paths)} files", source="content")
+                self.parent.after(0, lambda: self._senders_done(total_count, paths))
             except Exception as e:
                 self.parent.after(0, lambda: self.sender_action.configure(
                     text=f"✗  {e}", text_color=COLOR_ERROR))
         threading.Thread(target=_do, daemon=True).start()
 
-    def _senders_done(self, count: int) -> None:
-        self.sender_counter.configure(text=f"{count} загружено")
+    def _senders_done(self, count: int, paths: list = None) -> None:
+        total = self.content_mgr.sender_name_count
+        self.sender_counter.configure(text=f"{total} загружено")
         names = self.content_mgr.sender_names[:5]
         self._set_tb(self.sender_preview, "\n".join(names) if names else "(пусто)")
-        self.sender_action.configure(text=f"✓  {count} имен", text_color=COLOR_ACCENT)
+        disp = f"{len(paths)} файлов" if paths and len(paths) > 1 else Path(paths[0]).name if paths else ""
+        self.sender_action.configure(
+            text=f"✓ Добавлено {count} из {disp} (Всего: {total})",
+            text_color=COLOR_ACCENT)
 
     def _on_clear_senders(self) -> None:
         self.content_mgr.clear_sender_names()

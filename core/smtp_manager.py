@@ -40,6 +40,7 @@ class SmtpAccount:
     status: SmtpStatus = SmtpStatus.UNTESTED
     sent_count: int = 0
     last_error: str = ""
+    ping_ms: int = 0
 
     @property
     def display_host(self) -> str:
@@ -83,7 +84,6 @@ def parse_smtp_line(line: str) -> SmtpAccount | None:
 _PROXY_TYPE_MAP = {
     "socks5": socks.SOCKS5,
     "socks4": socks.SOCKS4,
-    "http":   socks.HTTP,
 }
 
 
@@ -96,9 +96,10 @@ def _make_proxy_sock(
     """Создаёт TCP-сокет, подключённый к ``dest`` через прокси."""
     s = socks.socksocket()
     s.set_proxy(
-        _PROXY_TYPE_MAP.get(proxy.protocol, socks.HTTP),
+        _PROXY_TYPE_MAP.get(proxy.protocol, socks.SOCKS5),
         proxy.host,
         proxy.port,
+        rdns=True,  # Force remote DNS resolution to prevent SOCKS 0x01 errors
         username=proxy.username or None,
         password=proxy.password or None,
     )
@@ -109,8 +110,7 @@ def _make_proxy_sock(
 
 # ── Подключение к SMTP ───────────────────────────────────
 
-_CONNECT_TIMEOUT = 30
-
+_CONNECT_TIMEOUT = 15  # Увеличили таймаут для медленных прокси
 
 def connect_smtp(
     account: SmtpAccount,
@@ -122,15 +122,19 @@ def connect_smtp(
     Возвращает готовый к отправке объект ``smtplib.SMTP``.
     При любой ошибке бросает исключение.
     """
+    import random
+    rnd = random.SystemRandom()
+    fake_ehlo = f"mta-{rnd.randint(100, 999)}-{rnd.randint(100, 999)}.local"
+
     host, port = account.host, account.port
     raw_sock = _make_proxy_sock(proxy, host, port, timeout) if proxy else None
 
     # ── SSL (порт 465) ────────────────────────────────
     if port == 465:
         if raw_sock:
-            ctx = ssl.create_default_context()
+            ctx = ssl._create_unverified_context() # Игнорируем ошибки сертификатов
             ssl_sock = ctx.wrap_socket(raw_sock, server_hostname=host)
-            smtp = smtplib.SMTP_SSL(timeout=timeout)
+            smtp = smtplib.SMTP_SSL(timeout=timeout, local_hostname=fake_ehlo)
             smtp.sock = ssl_sock
             smtp.file = smtp.sock.makefile("rb")
             smtp._host = host                       # noqa: SLF001
@@ -138,13 +142,14 @@ def connect_smtp(
             if code != 220:
                 raise smtplib.SMTPConnectError(code, b"Bad greeting")
         else:
-            smtp = smtplib.SMTP_SSL(host, port, timeout=timeout)
+            ctx = ssl._create_unverified_context()
+            smtp = smtplib.SMTP_SSL(host, port, timeout=timeout, local_hostname=fake_ehlo, context=ctx)
         smtp.ehlo()
 
     # ── STARTTLS (порт 587) ───────────────────────────
     elif port == 587:
         if raw_sock:
-            smtp = smtplib.SMTP(timeout=timeout)
+            smtp = smtplib.SMTP(timeout=timeout, local_hostname=fake_ehlo)
             smtp.sock = raw_sock
             smtp.file = smtp.sock.makefile("rb")
             smtp._host = host                       # noqa: SLF001
@@ -152,15 +157,20 @@ def connect_smtp(
             if code != 220:
                 raise smtplib.SMTPConnectError(code, b"Bad greeting")
         else:
-            smtp = smtplib.SMTP(host, port, timeout=timeout)
+            smtp = smtplib.SMTP(host, port, timeout=timeout, local_hostname=fake_ehlo)
         smtp.ehlo()
-        smtp.starttls()
-        smtp.ehlo()
+        ctx = ssl._create_unverified_context()
+        try:
+            smtp.starttls(context=ctx)
+            smtp.ehlo()
+        except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError) as e:
+            # Some servers drop connection or fail starttls, we pass it up or log it
+            raise smtplib.SMTPConnectError(587, f"STARTTLS failed: {e}".encode())
 
     # ── Без шифрования / авто-STARTTLS (порт 25 и др.) ──
     else:
         if raw_sock:
-            smtp = smtplib.SMTP(timeout=timeout)
+            smtp = smtplib.SMTP(timeout=timeout, local_hostname=fake_ehlo)
             smtp.sock = raw_sock
             smtp.file = smtp.sock.makefile("rb")
             smtp._host = host                       # noqa: SLF001
@@ -168,12 +178,13 @@ def connect_smtp(
             if code != 220:
                 raise smtplib.SMTPConnectError(code, b"Bad greeting")
         else:
-            smtp = smtplib.SMTP(host, port, timeout=timeout)
+            smtp = smtplib.SMTP(host, port, timeout=timeout, local_hostname=fake_ehlo)
         smtp.ehlo()
         try:
-            smtp.starttls()
+            ctx = ssl._create_unverified_context()
+            smtp.starttls(context=ctx)
             smtp.ehlo()
-        except (smtplib.SMTPNotSupportedError, smtplib.SMTPException):
+        except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError):
             pass  # сервер не поддерживает STARTTLS — продолжаем plaintext
 
     smtp.login(account.email, account.password)
@@ -218,6 +229,14 @@ class SmtpManager:
     def clear(self) -> None:
         with self._lock:
             self._accounts.clear()
+
+    def reset_all(self) -> None:
+        """Сбрасывает результаты проверок для всех аккаунтов."""
+        with self._lock:
+            for acc in self._accounts:
+                acc.status = SmtpStatus.UNTESTED
+                acc.last_error = ""
+                acc.ping_ms = 0
             self._rotation_idx = 0
 
     def load_from_file(self, filepath: str) -> int:
@@ -259,8 +278,13 @@ class SmtpManager:
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
+                t0 = time.time()
                 smtp = connect_smtp(account, proxy=proxy)
                 smtp.quit()
+                ping_ms = int((time.time() - t0) * 1000)
+                if not getattr(account, "ping_ms", 0) or ping_ms < account.ping_ms:
+                    account.ping_ms = ping_ms
+                
                 account.status = SmtpStatus.ALIVE
                 account.last_error = ""
                 return True
@@ -283,15 +307,25 @@ class SmtpManager:
                 # Временная ошибка (4xx) — попробуем ещё раз
                 account.last_error = f"Temp error: {err}"
                 if attempt < max_attempts - 1:
-                    time.sleep(5)
+                    time.sleep(1) # Уменьшена задержка, чтобы UI не висел долго
                     continue
+                account.status = SmtpStatus.UNTESTED
                 return False
 
-            except (OSError, socks.ProxyError) as exc:
+            except (OSError, socks.ProxyError, socket.timeout, TimeoutError) as exc:
                 account.last_error = f"Connection error: {exc}"
                 if attempt < max_attempts - 1:
-                    time.sleep(5)
+                    time.sleep(1) # Уменьшена задержка
                     continue
+                # Важно: если ошибка сетевая (таймаут, отказ прокси), мы НЕ помечаем SMTP аккаунт как DEAD.
+                # Потому что проблема может быть в самом прокси, а не в SMTP сервере/аккаунте.
+                # Мёртвым (DEAD) аккаунт считается только если сервер ответил "Неверный логин" или 5xx ошибкой.
+                account.status = SmtpStatus.UNTESTED
+                return False
+
+            except Exception as exc:
+                account.last_error = f"Unexpected error: {exc}"
+                account.status = SmtpStatus.UNTESTED
                 return False
         return False
 
@@ -343,8 +377,13 @@ class SmtpManager:
                     acc = futures[fut]
                     try:
                         fut.result()
-                    except Exception:
-                        acc.last_error = "Unexpected error"
+                    except Exception as e:
+                        if isinstance(e, (OSError, socks.ProxyError, socket.timeout, TimeoutError)):
+                            acc.last_error = f"Unexpected network error: {e}"
+                            acc.status = SmtpStatus.UNTESTED
+                        else:
+                            acc.last_error = f"Unexpected error: {e}"
+                            acc.status = SmtpStatus.UNTESTED
                     checked += 1
                     if on_progress:
                         on_progress(checked, total, acc)

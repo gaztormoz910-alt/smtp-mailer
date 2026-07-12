@@ -17,7 +17,7 @@ from core.storage import load_blocks, load_lines
 
 # ── Regex ─────────────────────────────────────────────────
 
-_SPINTAX_RE = re.compile(r"\{([^{}]+)\}")
+_SPINTAX_RE = re.compile(r"(?<!\{)\{([^{}]+)\}(?!\})")
 _MACRO_RE   = re.compile(r"\{\{\w+\}\}")
 _LINK_RE    = re.compile(r"\[\[LINK(\d*)\]\]")
 _HTML_RE    = re.compile(
@@ -94,6 +94,13 @@ def is_html(text: str) -> bool:
     return bool(_HTML_RE.search(text))
 
 
+_BR_RE = re.compile(r'<br\s*/?>', re.IGNORECASE)
+_BLOCK_END_RE = re.compile(r'</(p|div|h[1-6]|li|tr)>', re.IGNORECASE)
+_A_TAG_RE = re.compile(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+_ANY_TAG_RE = re.compile(r'<[^>]+>')
+_MULTI_NL_RE = re.compile(r'\n{3,}')
+_LEADING_SPACE_RE = re.compile(r'^[ \t]+', re.MULTILINE)
+
 # ── HTML to Plain Text ────────────────────────────────────
 
 def html_to_plain_text(text: str) -> str:
@@ -102,33 +109,33 @@ def html_to_plain_text(text: str) -> str:
         return text
     
     # 1. <br> -> \n
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = _BR_RE.sub('\n', text)
     
     # 2. Окончания блоков -> \n
-    text = re.sub(r'</(p|div|h[1-6]|li|tr)>', '\n', text, flags=re.IGNORECASE)
+    text = _BLOCK_END_RE.sub('\n', text)
     
     # 3. Извлечение ссылок: <a href="url">text</a> -> text url
     def link_repl(match):
         url = match.group(1)
         link_text = match.group(2).strip()
-        link_text = re.sub(r'<[^>]+>', '', link_text)
+        link_text = _ANY_TAG_RE.sub('', link_text)
         if link_text:
             return f"{link_text} {url}"
         return url
         
-    text = re.sub(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', link_repl, text, flags=re.IGNORECASE|re.DOTALL)
+    text = _A_TAG_RE.sub(link_repl, text)
     
     # 4. Удаление всех остальных тегов
-    text = re.sub(r'<[^>]+>', '', text)
+    text = _ANY_TAG_RE.sub('', text)
     
     # 5. Декодирование HTML-сущностей
     text = html.unescape(text)
     
     # 6. Очистка лишних пустых строк (оставляем максимум двойные)
-    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = _MULTI_NL_RE.sub('\n\n', text)
     
     # 7. Убираем пробелы (отступы) в начале каждой строки (остатки от форматирования HTML)
-    text = re.sub(r'^[ \t]+', '', text, flags=re.MULTILINE)
+    text = _LEADING_SPACE_RE.sub('', text)
     
     return text.strip()
 
@@ -198,8 +205,9 @@ class ContentManager:
         return len(self._subjects)
 
     def load_subjects(self, filepath: str) -> int:
-        self._subjects = load_lines(filepath)
-        return len(self._subjects)
+        lines = load_lines(filepath)
+        self._subjects.extend(lines)
+        return len(lines)
 
     def clear_subjects(self) -> None:
         self._subjects.clear()
@@ -228,8 +236,9 @@ class ContentManager:
         return len(self._bodies)
 
     def load_bodies(self, filepath: str) -> int:
-        self._bodies = load_blocks(filepath, separator="===END===")
-        return len(self._bodies)
+        blocks = load_blocks(filepath, separator="===END===")
+        self._bodies.extend(blocks)
+        return len(blocks)
 
     def clear_bodies(self) -> None:
         self._bodies.clear()
@@ -272,11 +281,13 @@ class ContentManager:
         filename = Path(filepath).name
         key = pool_key_from_filename(filename)
         urls = load_lines(filepath)
-        self._link_pools[key] = urls
-        # обновляем или добавляем запись
-        self._link_files = [
-            (fn, k, c) for fn, k, c in self._link_files if k != key
-        ]
+        
+        if key in self._link_pools:
+            self._link_pools[key].extend(urls)
+        else:
+            self._link_pools[key] = urls
+            
+        # Обновляем список загруженных файлов (просто добавляем)
         self._link_files.append((filename, key, len(urls)))
         self._link_files.sort(key=lambda x: x[1])
         return key, len(urls)
@@ -299,8 +310,9 @@ class ContentManager:
 
     def load_sender_names(self, filepath: str) -> int:
         """Загружает имена отправителей из файла (одно имя на строку)."""
-        self._sender_names = load_lines(filepath)
-        return len(self._sender_names)
+        lines = load_lines(filepath)
+        self._sender_names.extend(lines)
+        return len(lines)
 
     def clear_sender_names(self) -> None:
         self._sender_names.clear()
