@@ -1,9 +1,9 @@
 #!/bin/bash
-# CHARLY MAILER — macOS / Linux launcher
+# SMTP MAILER — macOS / Linux launcher
 # Usage: chmod +x start.command && ./start.command
 
 echo "============================================"
-echo "  CHARLY MAILER — Launcher"
+echo "  SMTP MAILER — Launcher"
 echo "============================================"
 echo ""
 
@@ -21,5 +21,5 @@ echo "[*] Installing dependencies..."
 pip3 install -r requirements.txt --quiet 2>/dev/null || pip install -r requirements.txt --quiet
 
 echo ""
-echo "[*] Starting CHARLY MAILER..."
+echo "[*] Starting SMTP MAILER..."
 python3 main.py

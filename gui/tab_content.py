@@ -149,7 +149,7 @@ class ContentTab:
         self.btn_link_clear = self._btn(row, "Очистить", self._on_clear_links, 48, COLOR_TEXT_DIM)
         self.btn_link_clear.pack(side="left")
         
-        self.btn_link_copy = self._btn(row, "Копировать", self._on_copy_links, 80, COLOR_TEXT_DIM)
+        self.btn_link_copy = self._btn(row, "Копировать", lambda: self._copy_text(self.link_preview), 80, COLOR_TEXT_DIM)
         self.btn_link_copy.pack(side="right")
 
         self.consistent_var = ctk.BooleanVar(value=False)
@@ -162,11 +162,8 @@ class ContentTab:
         )
         self.consistent_cb.pack(fill="x", padx=12, pady=(2, 3))
 
-        self.link_list = ctk.CTkScrollableFrame(
-            f, fg_color=COLOR_BG, corner_radius=8,
-            border_color=COLOR_BORDER, border_width=1,
-        )
-        self.link_list.pack(fill="both", expand=True, padx=12, pady=(0, 3))
+        self.link_preview = self._textbox(f, h=50)
+        self.link_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
         self.link_action = self._status(f)
 
     # ══════════════════════════════════════════════════════
@@ -246,7 +243,9 @@ class ContentTab:
             frame, fg_color=COLOR_BG,
             text_color=COLOR_ACCENT, font=(FONT_MONO, 11),
             corner_radius=8, border_color=COLOR_BORDER, border_width=1,
-            state="disabled", wrap="word",
+            state="disabled", wrap="none",
+            scrollbar_button_color=COLOR_BORDER,
+            scrollbar_button_hover_color=COLOR_TEXT_DIM
         )
         self.sandbox_out.pack(fill="both", expand=True, padx=12, pady=(0, 5))
         self.sandbox_action = self._status(frame)
@@ -306,7 +305,7 @@ class ContentTab:
     def _subj_done(self, count: int, paths: list = None) -> None:
         total = self.content_mgr.subject_count
         self.subj_counter.configure(text=f"{total} загружено")
-        lines = self.content_mgr.subjects[:5]
+        lines = self.content_mgr.subjects
         self._set_tb(self.subj_preview, "\n".join(lines) if lines else "(пусто)")
         disp = f"{len(paths)} файлов" if paths and len(paths) > 1 else Path(paths[0]).name if paths else ""
         self.subj_action.configure(
@@ -348,10 +347,7 @@ class ContentTab:
         self.body_counter.configure(text=f"{total} загружено")
         bodies = self.content_mgr.bodies
         if bodies:
-            first_lines = bodies[0].splitlines()[:8]
-            preview = "\n".join(first_lines)
-            if len(bodies[0].splitlines()) > 8:
-                preview += "\n  …"
+            preview = "\n\n===END===\n\n".join(bodies)
         else:
             preview = "(пусто)"
         self._set_tb(self.body_preview, preview)
@@ -395,7 +391,8 @@ class ContentTab:
 
     def _links_done(self, msgs: list[str]) -> None:
         self._refresh_link_list()
-        self.link_action.configure(text=f"✓  {len(msgs)} файл(ов)", text_color=COLOR_ACCENT)
+        total = sum(len(pool) for pool in self.content_mgr.link_pools.values())
+        self.link_action.configure(text=f"✓ Добавлено {len(msgs)} файл(ов) (Всего ссылок: {total})", text_color=COLOR_ACCENT)
 
     def _on_clear_links(self) -> None:
         self.content_mgr.clear_links()
@@ -405,24 +402,19 @@ class ContentTab:
     def _on_consistent_toggle(self) -> None:
         self.content_mgr.consistent_links = self.consistent_var.get()
 
-    def _on_copy_links(self) -> None:
-        links_data = []
-        for filename, key, count in self.content_mgr.link_files:
-            links_data.append(f"{filename}: {count} → [[LINK{key}]]")
-        text = "\n".join(links_data)
-        if text:
-            self.parent.clipboard_clear()
-            self.parent.clipboard_append(text)
-            self.link_action.configure(text="✓  Скопировано", text_color=COLOR_ACCENT)
-
     def _refresh_link_list(self) -> None:
-        for w in self.link_list.winfo_children():
-            w.destroy()
+        lines = []
         for filename, key, count in self.content_mgr.link_files:
             macro = f"[[LINK{key}]]"
-            text = f"  {filename}  {count} → {macro}"
-            ctk.CTkLabel(self.link_list, text=text, font=(FONT_MONO, 10),
-                         text_color=COLOR_TEXT_DIM, anchor="w", height=18).pack(fill="x", padx=4, pady=1)
+            lines.append(f"[{filename} | {count} шт. → {macro}]")
+            
+            pool = self.content_mgr.link_pools.get(key, [])
+            for link in pool:
+                lines.append(link)
+            lines.append("")
+            
+        text = "\n".join(lines).strip()
+        self._set_tb(self.link_preview, text if text else "(пусто)")
 
     # ══════════════════════════════════════════════════════
     #  HANDLERS — SENDERS
@@ -451,7 +443,7 @@ class ContentTab:
     def _senders_done(self, count: int, paths: list = None) -> None:
         total = self.content_mgr.sender_name_count
         self.sender_counter.configure(text=f"{total} загружено")
-        names = self.content_mgr.sender_names[:5]
+        names = self.content_mgr.sender_names
         self._set_tb(self.sender_preview, "\n".join(names) if names else "(пусто)")
         disp = f"{len(paths)} файлов" if paths and len(paths) > 1 else Path(paths[0]).name if paths else ""
         self.sender_action.configure(
@@ -552,7 +544,9 @@ class ContentTab:
         return ctk.CTkTextbox(parent, height=h, fg_color=COLOR_BG,
                               text_color=COLOR_TEXT_DIM, font=(FONT_MONO, 10),
                               corner_radius=8, border_color=COLOR_BORDER,
-                              border_width=1, state="disabled", wrap="word")
+                              border_width=1, state="disabled", wrap="none",
+                              scrollbar_button_color=COLOR_BORDER,
+                              scrollbar_button_hover_color=COLOR_TEXT_DIM)
 
     @staticmethod
     def _status(parent) -> ctk.CTkLabel:

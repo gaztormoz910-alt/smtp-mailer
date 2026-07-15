@@ -1,7 +1,7 @@
 @echo off
-title CHARLY MAILER
+title SMTP MAILER
 echo ============================================
-echo   CHARLY MAILER — Launcher
+echo   SMTP MAILER — Launcher
 echo ============================================
 echo.
 
@@ -19,7 +19,7 @@ echo [*] Installing dependencies...
 pip install -r requirements.txt --quiet
 echo.
 
-echo [*] Starting CHARLY MAILER...
+echo [*] Starting SMTP MAILER...
 python main.py
 
 pause

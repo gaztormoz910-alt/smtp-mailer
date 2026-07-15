@@ -14,7 +14,7 @@ msg["Subject"] = rendered_subject
 msg["Date"] = formatdate(localtime=True)      # антиспам
 msg["Message-ID"] = make_msgid()               # уникальный ID
 msg["MIME-Version"] = "1.0"
-msg["X-Mailer"] = "CharlyMailer/1.0"
+msg["X-Mailer"] = "SmtpMailer/1.0"
 msg.attach(MIMEText(body, "html"|"plain", "utf-8"))
 ```
 

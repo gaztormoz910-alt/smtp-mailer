@@ -1,4 +1,4 @@
-# CHARLY MAILER
+# SMTP MAILER
 
 SMTP mass mailing tool with proxy support, spintax, anti-spam headers,
 real-time statistics, and campaign management.
@@ -89,7 +89,7 @@ alice@test.org,Alice
 To create a standalone `.exe` (no Python required):
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name CharlyMailer main.py
+pyinstaller --onefile --windowed --name SmtpMailer main.py
 ```
 The executable will be in the `dist/` folder.
 
