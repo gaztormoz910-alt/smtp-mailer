@@ -128,8 +128,12 @@ class SetupTab:
         ctk.CTkLabel(row2, text="мин", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 10))
 
+        # ── Строка 3: действия ────────────────
+        row3 = ctk.CTkFrame(self.proxy_frame, fg_color="transparent")
+        row3.pack(fill="x", padx=16, pady=(0, 5))
+
         self.btn_px_check = ctk.CTkButton(
-            row2, text="⚡ Проверить все", width=105, height=28,
+            row3, text="⚡ Проверить все", width=105, height=28,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             text_color=COLOR_WARN, font=(FONT_FAMILY, 12, "bold"),
             border_color=COLOR_WARN, border_width=2, corner_radius=8,
@@ -137,15 +141,15 @@ class SetupTab:
         )
         self.btn_px_check.pack(side="left", padx=(0, 6))
 
-        self.btn_px_dead = self._btn(row2, "✕ Мертвые", self._on_px_remove_dead, w=70,
+        self.btn_px_dead = self._btn(row3, "✕ Мертвые", self._on_px_remove_dead, w=70,
                                      text_color=COLOR_ERROR)
         self.btn_px_dead.pack(side="left", padx=(0, 4))
 
-        self.btn_px_clear = self._btn(row2, "Очистить", self._on_px_clear, w=60,
+        self.btn_px_clear = self._btn(row3, "Очистить", self._on_px_clear, w=60,
                                       text_color=COLOR_TEXT_DIM)
         self.btn_px_clear.pack(side="left")
 
-        self.btn_px_copy = self._btn(row2, "Копировать", self._on_px_copy, w=80,
+        self.btn_px_copy = self._btn(row3, "Копировать", self._on_px_copy, w=80,
                                       text_color=COLOR_TEXT_DIM)
         self.btn_px_copy.pack(side="right")
 
@@ -309,7 +313,6 @@ class SetupTab:
         self.proxy_mgr.check_all(on_progress=on_prog, on_done=on_done)
 
     def _on_px_remove_dead(self) -> None:
-        self.btn_px_dead.configure(state="disabled")
         n = self.proxy_mgr.remove_dead()
         self._px_page = 0
         self._px_refresh()
@@ -464,8 +467,12 @@ class SetupTab:
                                      self._on_sm_load_file, w=140)
         self.btn_sm_file.pack(side="left", padx=(0, 6))
 
+        # ── Строка 2: действия ────────────────
+        row2 = ctk.CTkFrame(self.smtp_frame, fg_color="transparent")
+        row2.pack(fill="x", padx=16, pady=(0, 5))
+
         self.btn_sm_check = ctk.CTkButton(
-            row1, text="⚡ Проверить все", width=110, height=30,
+            row2, text="⚡ Проверить все", width=110, height=30,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
             text_color=COLOR_WARN, font=(FONT_FAMILY, 12, "bold"),
             border_color=COLOR_WARN, border_width=2, corner_radius=8,
@@ -473,15 +480,15 @@ class SetupTab:
         )
         self.btn_sm_check.pack(side="left", padx=(0, 6))
 
-        self.btn_sm_dead = self._btn(row1, "✕ Мертвые", self._on_sm_remove_dead, w=70,
+        self.btn_sm_dead = self._btn(row2, "✕ Мертвые", self._on_sm_remove_dead, w=70,
                                      text_color=COLOR_ERROR)
         self.btn_sm_dead.pack(side="left", padx=(0, 4))
 
-        self.btn_sm_clear = self._btn(row1, "Очистить", self._on_sm_clear, w=60,
+        self.btn_sm_clear = self._btn(row2, "Очистить", self._on_sm_clear, w=60,
                                       text_color=COLOR_TEXT_DIM)
         self.btn_sm_clear.pack(side="left")
         
-        self.btn_sm_copy = self._btn(row1, "Копировать", self._on_sm_copy, w=80,
+        self.btn_sm_copy = self._btn(row2, "Копировать", self._on_sm_copy, w=80,
                                       text_color=COLOR_TEXT_DIM)
         self.btn_sm_copy.pack(side="right")
 
@@ -656,7 +663,6 @@ class SetupTab:
         threading.Thread(target=_do, daemon=True).start()
 
     def _on_sm_remove_dead(self) -> None:
-        self.btn_sm_dead.configure(state="disabled")
         n = self.smtp_mgr.remove_dead()
         self._sm_page = 0
         self._sm_refresh()

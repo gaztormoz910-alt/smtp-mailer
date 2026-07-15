@@ -67,7 +67,7 @@ BCC работает именно за счёт этого разделения:
 
 ## Build .exe
 ```bash
-pyinstaller --onefile --windowed --name CharlyMailer main.py
+pyinstaller --onefile --windowed --name SmtpMailer main.py
 ```
 
 ## Файлы задачи 11

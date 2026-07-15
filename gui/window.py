@@ -1,5 +1,5 @@
 """
-Главное окно приложения CHARLY MAILER.
+Главное окно приложения SMTP MAILER.
 
 Инициализирует CTkTabview с пятью вкладками и маршрутизирует
 содержимое каждой вкладки в отдельный модуль gui/tab_*.py.
@@ -39,9 +39,9 @@ class App(ctk.CTk):
         super().__init__()
 
         # ── Окно ──────────────────────────────────────────────
-        self.title("CHARLY MAILER")
-        self.geometry("940x640")
-        self.minsize(780, 500)
+        self.title("SMTP MAILER")
+        self.geometry("1400x800")
+        self.minsize(1024, 768)
         self.configure(fg_color=COLOR_BG)
 
         # ── Общие менеджеры ───────────────────────────────────

@@ -85,18 +85,29 @@ _MAILERS = [
 
 _ZERO_WIDTH = ["\u200B", "\u200C", "\u200D", "\uFEFF"]
 
-def inject_zero_width(text: str) -> str:
-    """Вставляет невидимые символы между словами/буквами."""
+def inject_zero_width(text: str, is_html: bool = False) -> str:
+    """Вставляет невидимые символы между буквами, не ломая HTML и пробелы."""
     if not text:
         return text
     rnd = random.SystemRandom()
-    words = text.split()
-    for i in range(len(words)):
-        if len(words[i]) > 3 and rnd.random() < 0.3:
-            insert_pos = rnd.randint(1, len(words[i]) - 1)
+    
+    def _mutate_word(m: re.Match) -> str:
+        word = m.group(0)
+        if len(word) > 3 and rnd.random() < 0.3:
+            insert_pos = rnd.randint(1, len(word) - 1)
             char = rnd.choice(_ZERO_WIDTH)
-            words[i] = words[i][:insert_pos] + char + words[i][insert_pos:]
-    return " ".join(words)
+            return word[:insert_pos] + char + word[insert_pos:]
+        return word
+
+    if is_html:
+        # Для HTML мутируем только текст ВНЕ тегов
+        parts = re.split(r'(<[^>]*>)', text)
+        for i in range(0, len(parts), 2):
+            if parts[i]:
+                parts[i] = re.sub(r'[A-Za-zА-Яа-яЁё]+', _mutate_word, parts[i])
+        return "".join(parts)
+    else:
+        return re.sub(r'[A-Za-zА-Яа-яЁё]+', _mutate_word, text)
 
 def generate_invisible_block() -> str:
     """Генерирует скрытый div со случайным текстом."""
@@ -140,8 +151,8 @@ def build_message(
 
     # 1. Мутация текста (Zero-width chars)
     if rnd.random() < 0.7:
-        body = inject_zero_width(body)
-        subject = inject_zero_width(subject)
+        body = inject_zero_width(body, is_html=is_html)
+        subject = inject_zero_width(subject, is_html=False)
 
     # 2. Формирование структуры
     if plain_text_only:

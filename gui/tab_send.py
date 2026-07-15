@@ -263,7 +263,9 @@ class SendTab:
             frame, fg_color=COLOR_BG,
             text_color=COLOR_ACCENT, font=(FONT_MONO, 12),
             corner_radius=8, border_color=COLOR_BORDER, border_width=1,
-            state="disabled", wrap="word",
+            state="disabled", wrap="none",
+            scrollbar_button_color=COLOR_BORDER,
+            scrollbar_button_hover_color=COLOR_TEXT_DIM
         )
         self.preview_box.pack(fill="both", expand=True, padx=14, pady=(0, 12))
 
@@ -391,8 +393,10 @@ class SendTab:
         alive = app.smtp_mgr.count_alive if app else 1
         if alive < 1:
             alive = 1
-        import math
-        max_per_acc = math.ceil(len(self._recipients) / alive)
+        
+        # We no longer strictly enforce max_per_acc under the hood to prevent 
+        # dropped emails if an account dies during sending.
+        max_per_acc = 0
         
         self._campaign.start(delay=delay, jitter=jitter, max_threads=max_threads, 
                              max_per_conn=max_per_conn, max_per_acc=max_per_acc)

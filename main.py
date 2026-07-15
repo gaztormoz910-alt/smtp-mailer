@@ -1,5 +1,5 @@
 """
-CHARLY MAILER — точка входа.
+SMTP MAILER — точка входа.
 Запуск: python main.py
 """
 
