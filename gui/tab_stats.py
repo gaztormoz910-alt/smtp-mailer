@@ -248,8 +248,8 @@ class StatsTab:
 
         # ── прогресс ──────────────────────────────────
         self.status_label.configure(text=snap["status_text"])
-        pct = snap["progress"]
-        self.progress_bar.set(min(pct, 1.0))
+        pct = min(snap["progress"], 1.0)
+        self.progress_bar.set(pct)
         self.pct_label.configure(text=f"{pct * 100:.1f} %")
 
         # ── метрики ───────────────────────────────────

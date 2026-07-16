@@ -145,13 +145,13 @@ class SendTab:
         ctk.CTkLabel(delay_row, text="Задержка (0=авто):", font=(FONT_FAMILY, 12),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
         self.delay_entry = ctk.CTkEntry(
-            delay_row, width=50, height=28, placeholder_text="0",
+            delay_row, width=50, height=28, placeholder_text="5",
             font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
             text_color=COLOR_TEXT, border_color=COLOR_BORDER,
             corner_radius=6, justify="center",
         )
         self.delay_entry.pack(side="left", padx=(0, 4))
-        self.delay_entry.insert(0, "0")
+        self.delay_entry.insert(0, "5")
         register_float_validation(self.delay_entry)
         ctk.CTkLabel(delay_row, text="сек", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 16))
@@ -159,13 +159,13 @@ class SendTab:
         ctk.CTkLabel(delay_row, text="±Разброс:", font=(FONT_FAMILY, 12),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
         self.jitter_entry = ctk.CTkEntry(
-            delay_row, width=50, height=28, placeholder_text="0.5",
+            delay_row, width=50, height=28, placeholder_text="2",
             font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
             text_color=COLOR_TEXT, border_color=COLOR_BORDER,
             corner_radius=6, justify="center",
         )
         self.jitter_entry.pack(side="left", padx=(0, 4))
-        self.jitter_entry.insert(0, "0.5")
+        self.jitter_entry.insert(0, "2")
         register_float_validation(self.jitter_entry)
         ctk.CTkLabel(delay_row, text="сек", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 16))
