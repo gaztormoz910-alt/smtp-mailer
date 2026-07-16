@@ -27,12 +27,34 @@ _HTML_RE    = re.compile(
 )
 
 # ── Омоглифы (Анти-фильтр букв) ───────────────────────────
-_HOMOGLYPHS = {
+# Только визуально идентичные пары символов.
+# Направление замены определяется автоматически по доминирующему алфавиту текста.
+
+# Кириллица → Латиница (для русскоязычных писем)
+_HOMOGLYPHS_CYR_TO_LAT = {
     'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
-    'А': 'A', 'Е': 'E', 'О': 'O', 'Р': 'P', 'С': 'C', 'Х': 'X', 'У': 'Y',
-    'і': 'i', 'І': 'I', 'ѕ': 's', 'Ѕ': 'S', 'м': 'm', 'М': 'M', 'т': 't',
-    'Т': 'T', 'н': 'h', 'Н': 'H', 'к': 'k', 'К': 'K', 'в': 'b', 'В': 'B'
+    'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M', 'Н': 'H', 'О': 'O',
+    'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X',
+    'і': 'i', 'І': 'I', 'ѕ': 's', 'Ѕ': 'S'
 }
+
+# Латиница → Кириллица (для англоязычных писем)
+_HOMOGLYPHS_LAT_TO_CYR = {v: k for k, v in _HOMOGLYPHS_CYR_TO_LAT.items()}
+
+def _detect_dominant_script(text: str) -> str:
+    """Определяет доминирующий алфавит текста: 'cyrillic' или 'latin'.
+    Считает количество кириллических и латинских букв и возвращает тот,
+    которого больше.
+    """
+    cyr_count = 0
+    lat_count = 0
+    for ch in text:
+        code = ord(ch)
+        if 0x0400 <= code <= 0x04FF:    # Кириллица (Unicode block)
+            cyr_count += 1
+        elif (0x0041 <= code <= 0x005A) or (0x0061 <= code <= 0x007A):  # A-Z, a-z
+            lat_count += 1
+    return 'cyrillic' if cyr_count >= lat_count else 'latin'
 
 # Списке случайных слов для генерации белого шума (текста)
 _NOISE_WORDS = [
@@ -55,14 +77,6 @@ def _generate_random_id(length: int = 8) -> str:
     chars = "abcdefghijklmnopqrstuvwxyz0123456789"
     return "".join(rnd.choice(chars) for _ in range(length))
 
-def _replace_homoglyphs(text: str, rate: float = 0.08) -> str:
-    """Случайно заменяет схожие русские буквы на латинские (по умолчанию ~8% букв)."""
-    rnd = random.SystemRandom()
-    chars = list(text)
-    for i, char in enumerate(chars):
-        if char in _HOMOGLYPHS and rnd.random() < rate:
-            chars[i] = _HOMOGLYPHS[char]
-    return "".join(chars)
 
 
 # ── Спинтакс ──────────────────────────────────────────────
@@ -94,17 +108,29 @@ def substitute_links(
     missing: set[str] = set()
 
     def _randomize_url(url: str) -> str:
-        """Добавляет случайный GET-хвост к URL для полной уникальности."""
+        """Добавляет случайный GET-хвост к URL для полной уникальности.
+        Корректно обрабатывает хэши/якоря (#) в конце ссылок.
+        """
         if not url:
             return url
-        # Генерируем случайный ключ и значение (например: ?utm_id=a8f2k3s9)
+            
+        # Отделяем хэш (#anchor), если он есть
+        hash_part = ""
+        if "#" in url:
+            url, hash_part = url.split("#", 1)
+            hash_part = "#" + hash_part
+
         param_name = random.choice(["id", "sid", "tid", "hash", "token", "uid", "utm_id"])
         param_val = _generate_random_id(8)
         
         # Если в URL уже есть параметры
         if "?" in url:
-            return f"{url}&{param_name}={param_val}"
-        return f"{url}?{param_name}={param_val}"
+            randomized = f"{url}&{param_name}={param_val}"
+        else:
+            randomized = f"{url}?{param_name}={param_val}"
+            
+        # Склеиваем обратно с хэшем
+        return randomized + hash_part
 
     def _repl(m: re.Match) -> str:
         key = m.group(1)              # "" для [[LINK]], "1" для [[LINK1]]
@@ -213,21 +239,34 @@ def _substitute_ams_macros(text: str) -> str:
     return text
 
 def _replace_homoglyphs(text: str, rate: float = 0.08) -> str:
-    """Случайно заменяет схожие русские буквы на латинские только в тексте.
-    НЕ затрагивает HTML-теги, ссылки и CSS-стили, чтобы ничего не сломать.
+    """Двусторонняя замена визуально идентичных букв между алфавитами.
+
+    Автоматически определяет доминирующий алфавит текста:
+    - Русский текст → часть кириллических букв заменяется на латинские
+    - Английский текст → часть латинских букв заменяется на кириллические
+    НЕ затрагивает HTML-теги, ссылки и CSS-стили.
     """
-    rnd = random.SystemRandom()
-    # Разделяем текст по HTML-тегам
+    # Собираем только текстовые части (без HTML-тегов) для определения языка
     parts = re.split(r'(<[^>]+>)', text)
+    text_only = ''.join(parts[i] for i in range(0, len(parts), 2))
+
+    # Определяем направление замены
+    script = _detect_dominant_script(text_only)
+    if script == 'cyrillic':
+        homoglyph_map = _HOMOGLYPHS_CYR_TO_LAT
+    else:
+        homoglyph_map = _HOMOGLYPHS_LAT_TO_CYR
+
+    rnd = random.SystemRandom()
     for i in range(len(parts)):
-        # Четные индексы (0, 2, 4...) — это обычный текст вне тегов
+        # Четные индексы — обычный текст вне тегов
         if i % 2 == 0:
             chars = list(parts[i])
             for j, char in enumerate(chars):
-                if char in _HOMOGLYPHS and rnd.random() < rate:
-                    chars[j] = _HOMOGLYPHS[char]
-            parts[i] = "".join(chars)
-    return "".join(parts)
+                if char in homoglyph_map and rnd.random() < rate:
+                    chars[j] = homoglyph_map[char]
+            parts[i] = ''.join(chars)
+    return ''.join(parts)
 
 def render(
     template: str,
