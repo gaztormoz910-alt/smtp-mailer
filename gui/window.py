@@ -44,6 +44,9 @@ class App(ctk.CTk):
         self.minsize(1024, 768)
         self.configure(fg_color=COLOR_BG)
 
+        # Клик за пределами инпута — снимает фокус с инпута
+        self.bind_all("<Button-1>", self._on_global_click)
+
         # ── Общие менеджеры ───────────────────────────────────
         self.proxy_mgr = ProxyManager()
         self.smtp_mgr = SmtpManager()
@@ -125,6 +128,14 @@ class App(ctk.CTk):
                 btn.configure(text_color=COLOR_BG)
             else:
                 btn.configure(text_color=COLOR_TEXT)
+
+    def _on_global_click(self, event):
+        """Снимает фокус с Entry при клике за его пределами."""
+        widget = event.widget
+        # Если кликнули НЕ по Entry — переводим фокус на корневое окно
+        widget_class = widget.winfo_class()
+        if widget_class not in ("Entry", "Text", "TEntry"):
+            self.focus_set()
 
     # ══════════════════════════════════════════════════════
     #  UI LOCKING

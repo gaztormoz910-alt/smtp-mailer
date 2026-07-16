@@ -26,6 +26,44 @@ _HTML_RE    = re.compile(
     re.IGNORECASE,
 )
 
+# ── Омоглифы (Анти-фильтр букв) ───────────────────────────
+_HOMOGLYPHS = {
+    'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
+    'А': 'A', 'Е': 'E', 'О': 'O', 'Р': 'P', 'С': 'C', 'Х': 'X', 'У': 'Y',
+    'і': 'i', 'І': 'I', 'ѕ': 's', 'Ѕ': 'S', 'м': 'm', 'М': 'M', 'т': 't',
+    'Т': 'T', 'н': 'h', 'Н': 'H', 'к': 'k', 'К': 'K', 'в': 'b', 'В': 'B'
+}
+
+# Списке случайных слов для генерации белого шума (текста)
+_NOISE_WORDS = [
+    "clarity", "density", "factor", "random", "profile", "element", "system",
+    "network", "channel", "message", "status", "context", "index", "vector",
+    "domain", "server", "proxy", "config", "header", "subject", "content",
+    "delivery", "account", "volume", "sender", "route", "filter", "security",
+    "process", "thread", "queue", "client", "request", "response", "source"
+]
+
+def _generate_noise_text(word_count: int = 15) -> str:
+    """Генерирует случайную фразу для белого шума."""
+    rnd = random.SystemRandom()
+    words = [rnd.choice(_NOISE_WORDS) for _ in range(word_count)]
+    return " ".join(words)
+
+def _generate_random_id(length: int = 8) -> str:
+    """Генерирует случайный ID (буквы + цифры)."""
+    rnd = random.SystemRandom()
+    chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+    return "".join(rnd.choice(chars) for _ in range(length))
+
+def _replace_homoglyphs(text: str, rate: float = 0.08) -> str:
+    """Случайно заменяет схожие русские буквы на латинские (по умолчанию ~8% букв)."""
+    rnd = random.SystemRandom()
+    chars = list(text)
+    for i, char in enumerate(chars):
+        if char in _HOMOGLYPHS and rnd.random() < rate:
+            chars[i] = _HOMOGLYPHS[char]
+    return "".join(chars)
+
 
 # ── Спинтакс ──────────────────────────────────────────────
 
@@ -51,25 +89,37 @@ def substitute_links(
     cache: dict[str, str] | None = None,
 ) -> str:
     """Заменяет ``[[LINK]]``, ``[[LINK1]]`` и т.д. на URL из пулов.
-
-    ``pools`` — словарь ``{"": [urls...], "1": [urls...], ...}``.
-    ``cache`` — если передан dict, включает режим consistent links
-    (одна и та же ссылка для одного макроса внутри одного письма).
-    Если пул не найден — ``ValueError``.
+    Каждая ссылка получает уникальный GET-параметр для обхода фильтров.
     """
     missing: set[str] = set()
+
+    def _randomize_url(url: str) -> str:
+        """Добавляет случайный GET-хвост к URL для полной уникальности."""
+        if not url:
+            return url
+        # Генерируем случайный ключ и значение (например: ?utm_id=a8f2k3s9)
+        param_name = random.choice(["id", "sid", "tid", "hash", "token", "uid", "utm_id"])
+        param_val = _generate_random_id(8)
+        
+        # Если в URL уже есть параметры
+        if "?" in url:
+            return f"{url}&{param_name}={param_val}"
+        return f"{url}?{param_name}={param_val}"
 
     def _repl(m: re.Match) -> str:
         key = m.group(1)              # "" для [[LINK]], "1" для [[LINK1]]
         pool = pools.get(key)
         if not pool:
             missing.add(f"[[LINK{key}]]")
-            return m.group(0)         # оставляем как есть для диагностики
+            return m.group(0)
+            
         if cache is not None:
             if key not in cache:
-                cache[key] = random.choice(pool)
+                raw_url = random.choice(pool)
+                cache[key] = _randomize_url(raw_url)
             return cache[key]
-        return random.choice(pool)
+            
+        return _randomize_url(random.choice(pool))
 
     result = _LINK_RE.sub(_repl, text)
 
@@ -142,26 +192,111 @@ def html_to_plain_text(text: str) -> str:
 
 # ── Render pipeline ──────────────────────────────────────
 
+# Регулярные выражения для новых макросов AMS стиля
+_RND_STRING_RE = re.compile(r"\[%%RndString\((\d+)\)%%\]")
+_RND_NUMBER_RE = re.compile(r"\[%%RndNumber\((\d+),(\d+)\)%%\]")
+
+def _substitute_ams_macros(text: str) -> str:
+    """Обрабатывает макросы [%%RndString(8)%%] и [%%RndNumber(100,200)%%]."""
+    # 1. RndString
+    def rnd_str_repl(m):
+        length = int(m.group(1))
+        return _generate_random_id(length)
+    text = _RND_STRING_RE.sub(rnd_str_repl, text)
+
+    # 2. RndNumber
+    def rnd_num_repl(m):
+        lo, hi = int(m.group(1)), int(m.group(2))
+        return str(random.SystemRandom().randint(lo, hi))
+    text = _RND_NUMBER_RE.sub(rnd_num_repl, text)
+    
+    return text
+
+def _replace_homoglyphs(text: str, rate: float = 0.08) -> str:
+    """Случайно заменяет схожие русские буквы на латинские только в тексте.
+    НЕ затрагивает HTML-теги, ссылки и CSS-стили, чтобы ничего не сломать.
+    """
+    rnd = random.SystemRandom()
+    # Разделяем текст по HTML-тегам
+    parts = re.split(r'(<[^>]+>)', text)
+    for i in range(len(parts)):
+        # Четные индексы (0, 2, 4...) — это обычный текст вне тегов
+        if i % 2 == 0:
+            chars = list(parts[i])
+            for j, char in enumerate(chars):
+                if char in _HOMOGLYPHS and rnd.random() < rate:
+                    chars[j] = _HOMOGLYPHS[char]
+            parts[i] = "".join(chars)
+    return "".join(parts)
+
 def render(
     template: str,
     variables: dict[str, str] | None = None,
     link_pools: dict[str, list[str]] | None = None,
     link_cache: dict[str, str] | None = None,
 ) -> str:
-    """Полный пайплайн: спинтакс → ссылки → макросы.
-
-    Порядок: spin ▸ [[LINK]] ▸ {{var}}.
-    Если в тексте есть ``[[LINK...]]``, а ``link_pools`` пуст — ``ValueError``.
+    """Полный пайплайн 101% рандомизации:
+    Спинтакс -> Ссылки -> Макросы -> AMS макросы -> Омоглифы -> Уникализация (HTML/Text).
     """
+    # Определяем формат оригинального шаблона ДО каких-либо модификаций
+    original_is_html = is_html(template)
+
+    # 1. Спинтакс
     result = spin(template)
+    
+    # 2. Ссылки [[LINK]] с автоматическими GET-хвостами
     if _LINK_RE.search(result):
         if not link_pools:
             raise ValueError(
                 "Template contains [[LINK]] macros but no link pools loaded"
             )
         result = substitute_links(result, link_pools, cache=link_cache)
+        
+    # 3. Базовые переменные получателя {{name}}, {{email}}
     if variables:
         result = substitute(result, variables)
+        
+    # 4. Обработка AMS макросов [%%RndString%%] и [%%RndNumber%%]
+    result = _substitute_ams_macros(result)
+    
+    # 5. Анти-фильтр: Замена схожих кириллических букв на латиницу в тексте
+    result = _replace_homoglyphs(result, rate=0.08)
+
+    # 6. Уникализация контента
+    if original_is_html:
+        # 6a. Добавляем невидимый белый шум в конец body (12-22 случайных слов)
+        noise_word_count = random.SystemRandom().randint(12, 22)
+        noise_text = _generate_noise_text(noise_word_count)
+        noise_html = (
+            f'<div style="display:none !important; font-size:1px; color:#ffffff; '
+            f'line-height:1px; opacity:0; filter:alpha(opacity=0);">'
+            f'{noise_text}</div>'
+        )
+        
+        if "</body>" in result:
+            result = result.replace("</body>", f"{noise_html}</body>")
+        elif "</html>" in result:
+            result = result.replace("</html>", f"{noise_html}</html>")
+        else:
+            result = f"{result}{noise_html}"
+            
+        # 6b. Вставляем HTML-комментарии строго ПОСЛЕ закрывающих тегов разметки
+        # Это гарантирует, что мы не сломаем синтаксис внутри тегов (например, <a <!-- --> href="...">)
+        block_tags = ["</div>", "</p>", "</td>", "</tr>", "</th>", "</ul>", "</ol>", "</li>", "<br>", "<br/>"]
+        for _ in range(3):
+            comment = f"<!-- {_generate_random_id(12)} -->"
+            found_positions = []
+            for tag in block_tags:
+                for m in re.finditer(re.escape(tag), result, re.IGNORECASE):
+                    found_positions.append(m.end())
+            if found_positions:
+                idx = random.SystemRandom().choice(found_positions)
+                result = result[:idx] + comment + result[idx:]
+    else:
+        # Для Plain Text писем добавляем текстовый шум в самом низу через отступы
+        noise_text = _generate_noise_text(6)
+        result = f"{result}\n\n\n\n\n[ {noise_text} ]"
+
     return result
 
 

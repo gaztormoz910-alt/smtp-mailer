@@ -23,6 +23,10 @@ from gui.theme import (
     COLOR_TEXT, COLOR_TEXT_DIM, COLOR_WARN,
     FONT_FAMILY, FONT_MONO,
 )
+from gui.validation import (
+    register_int_validation, register_percent_validation,
+    register_email_list_validation,
+)
 
 
 class CampaignTab:
@@ -185,6 +189,8 @@ class CampaignTab:
         )
         self.cc_pct.pack(side="left", padx=(4, 0))
         self.cc_pct.insert(0, "0")
+        register_percent_validation(self.cc_pct)
+        register_email_list_validation(self.cc_entry)
 
         # BCC row
         bcc_row = ctk.CTkFrame(frame, fg_color="transparent")
@@ -209,6 +215,8 @@ class CampaignTab:
         )
         self.bcc_pct.pack(side="left", padx=(4, 0))
         self.bcc_pct.insert(0, "0")
+        register_percent_validation(self.bcc_pct)
+        register_email_list_validation(self.bcc_entry)
 
     # ── Bottom: Control Inject + Presets ──────────────────
 
@@ -245,6 +253,7 @@ class CampaignTab:
         )
         self.inject_n_entry.pack(side="left", padx=(0, 4))
         self.inject_n_entry.insert(0, "100")
+        register_int_validation(self.inject_n_entry)
         ctk.CTkLabel(r1, text="писем (0=выкл)", font=(FONT_FAMILY, 10),
                      text_color=COLOR_TEXT_DIM).pack(side="left")
 
@@ -258,6 +267,7 @@ class CampaignTab:
             text_color=COLOR_TEXT, border_color=COLOR_BORDER, corner_radius=6,
         )
         self.ctrl_emails_entry.pack(side="left", fill="x", expand=True)
+        register_email_list_validation(self.ctrl_emails_entry)
 
         r3 = ctk.CTkFrame(frame, fg_color="transparent")
         r3.pack(fill="x", padx=12, pady=(4, 8))
