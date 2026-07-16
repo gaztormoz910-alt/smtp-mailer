@@ -31,6 +31,10 @@ from gui.theme import (
     COLOR_ERROR, COLOR_FRAME, COLOR_TEXT, COLOR_TEXT_DIM, COLOR_WARN,
     FONT_FAMILY, FONT_MONO,
 )
+from gui.validation import (
+    register_float_validation, register_int_validation,
+    register_email_validation,
+)
 
 
 class SendTab:
@@ -103,6 +107,7 @@ class SendTab:
             text_color=COLOR_TEXT, border_color=COLOR_BORDER, corner_radius=8,
         )
         self.test_email_entry.pack(side="left", padx=(0, 10))
+        register_email_validation(self.test_email_entry)
 
         self.btn_test = ctk.CTkButton(
             row, text="📨  ОТПРАВИТЬ ТЕСТ", width=140, height=32,
@@ -137,16 +142,17 @@ class SendTab:
         delay_row = ctk.CTkFrame(frame, fg_color="transparent")
         delay_row.pack(fill="x", padx=14, pady=(0, 8))
 
-        ctk.CTkLabel(delay_row, text="Задержка:", font=(FONT_FAMILY, 12),
+        ctk.CTkLabel(delay_row, text="Задержка (0=авто):", font=(FONT_FAMILY, 12),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
         self.delay_entry = ctk.CTkEntry(
-            delay_row, width=50, height=28, placeholder_text="1",
+            delay_row, width=50, height=28, placeholder_text="0",
             font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
             text_color=COLOR_TEXT, border_color=COLOR_BORDER,
             corner_radius=6, justify="center",
         )
         self.delay_entry.pack(side="left", padx=(0, 4))
-        self.delay_entry.insert(0, "1.0")
+        self.delay_entry.insert(0, "0")
+        register_float_validation(self.delay_entry)
         ctk.CTkLabel(delay_row, text="сек", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 16))
 
@@ -160,6 +166,7 @@ class SendTab:
         )
         self.jitter_entry.pack(side="left", padx=(0, 4))
         self.jitter_entry.insert(0, "0.5")
+        register_float_validation(self.jitter_entry)
         ctk.CTkLabel(delay_row, text="сек", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 16))
 
@@ -177,8 +184,9 @@ class SendTab:
         )
         self.threads_entry.pack(side="left", padx=(0, 16))
         self.threads_entry.insert(0, "0")
+        register_int_validation(self.threads_entry)
         
-        ctk.CTkLabel(pooling_row, text="Писем/коннект (0 = ♾️):", font=(FONT_FAMILY, 12),
+        ctk.CTkLabel(pooling_row, text="Писем/коннект (0=авто):", font=(FONT_FAMILY, 12),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
         self.conn_limit_entry = ctk.CTkEntry(
             pooling_row, width=50, height=28, placeholder_text="50",
@@ -188,6 +196,7 @@ class SendTab:
         )
         self.conn_limit_entry.pack(side="left", padx=(0, 4))
         self.conn_limit_entry.insert(0, "50")
+        register_int_validation(self.conn_limit_entry)
 
         self.btn_auto_limit = ctk.CTkButton(
             pooling_row, text="⚖️ Распределить поровну", width=160, height=26,

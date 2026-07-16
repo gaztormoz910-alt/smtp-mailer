@@ -19,6 +19,7 @@ from gui.theme import (
     COLOR_BTN, COLOR_BTN_HVR, COLOR_ERROR, COLOR_FRAME,
     COLOR_TEXT, COLOR_TEXT_DIM, COLOR_WARN, FONT_FAMILY, FONT_MONO,
 )
+from gui.validation import register_int_validation, register_url_validation
 
 
 class SetupTab:
@@ -99,6 +100,7 @@ class SetupTab:
             text_color=COLOR_TEXT, border_color=COLOR_BORDER, corner_radius=8,
         )
         self.px_url_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        register_url_validation(self.px_url_entry)
 
         self.btn_px_url = self._btn(row1, "🌐 URL", self._on_px_load_url, w=80)
         self.btn_px_url.pack(side="left")
@@ -124,6 +126,7 @@ class SetupTab:
             corner_radius=6, justify="center",
         )
         self.px_auto_min.pack(side="left", padx=4)
+        register_int_validation(self.px_auto_min)
 
         ctk.CTkLabel(row2, text="мин", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 10))

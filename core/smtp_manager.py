@@ -9,6 +9,7 @@ from __future__ import annotations
 import smtplib
 import socket
 import ssl
+import random
 import threading
 import time
 from collections import defaultdict
@@ -116,11 +117,44 @@ _CONNECT_TIMEOUT = 15  # Увеличили таймаут для медленн
 _UNVERIFIED_CTX: ssl.SSLContext | None = None
 
 def _get_ssl_ctx() -> ssl.SSLContext:
-    """Lazy-создание SSL-контекста (thread-safe через GIL)."""
+    """Ленивое создание SSL-контекста (thread-safe через GIL)."""
     global _UNVERIFIED_CTX
     if _UNVERIFIED_CTX is None:
         _UNVERIFIED_CTX = ssl._create_unverified_context()
     return _UNVERIFIED_CTX
+
+
+# ── Smart EHLO ─────────────────────────────────────────
+
+_EHLO_TEMPLATES = [
+    "mail.{domain}",
+    "smtp.{domain}",
+    "mx.{domain}",
+    "relay{n}.{domain}",
+    "out{n}.{domain}",
+    "mta{n}.{domain}",
+    "send.{domain}",
+    "mailer.{domain}",
+]
+
+def _make_smart_ehlo(sender_email: str) -> str:
+    """Генерирует реалистичный EHLO на основе домена отправителя."""
+    rnd = random.SystemRandom()
+    domain = sender_email.split("@")[-1] if "@" in sender_email else "localhost"
+    tpl = rnd.choice(_EHLO_TEMPLATES)
+    return tpl.format(domain=domain, n=rnd.randint(1, 9))
+
+
+# ── NOOP keep-alive ───────────────────────────────────
+
+def smtp_keep_alive(conn: smtplib.SMTP) -> bool:
+    """Проверяет что SMTP соединение ещё живое через NOOP."""
+    try:
+        code, _ = conn.noop()
+        return code == 250
+    except Exception:
+        return False
+
 
 def connect_smtp(
     account: SmtpAccount,
@@ -132,9 +166,7 @@ def connect_smtp(
     Возвращает готовый к отправке объект ``smtplib.SMTP``.
     При любой ошибке бросает исключение.
     """
-    import random
-    rnd = random.SystemRandom()
-    fake_ehlo = f"mta-{rnd.randint(100, 999)}-{rnd.randint(100, 999)}.local"
+    fake_ehlo = _make_smart_ehlo(account.email)
 
     host, port = account.host, account.port
     raw_sock = _make_proxy_sock(proxy, host, port, timeout) if proxy else None
@@ -169,7 +201,7 @@ def connect_smtp(
         else:
             smtp = smtplib.SMTP(host, port, timeout=timeout, local_hostname=fake_ehlo)
         smtp.ehlo()
-        ctx = ssl._create_unverified_context()
+        ctx = _get_ssl_ctx()
         try:
             smtp.starttls(context=ctx)
             smtp.ehlo()
@@ -191,7 +223,7 @@ def connect_smtp(
             smtp = smtplib.SMTP(host, port, timeout=timeout, local_hostname=fake_ehlo)
         smtp.ehlo()
         try:
-            ctx = ssl._create_unverified_context()
+            ctx = _get_ssl_ctx()
             smtp.starttls(context=ctx)
             smtp.ehlo()
         except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError):

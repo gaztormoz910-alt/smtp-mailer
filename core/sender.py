@@ -24,8 +24,9 @@ from core.content import ContentManager
 from core.logger import JsonLogger
 from core.proxy_manager import ProxyManager
 from core.queue_manager import Recipient
-from core.smtp_manager import SmtpManager, SmtpStatus, connect_smtp
+from core.smtp_manager import SmtpManager, SmtpStatus, connect_smtp, smtp_keep_alive
 from core.stats import SendStats
+from core.domain_config import get_delay, get_warmup_factor, get_domain_group, get_max_per_conn
 
 STATE_DIR = Path(__file__).resolve().parent.parent / "data"
 STATE_FILE = STATE_DIR / "queue-state.json"
@@ -67,21 +68,25 @@ def split_evenly(items: list[Recipient], n: int) -> list[list[Recipient]]:
 # ── X-Mailer ротация (имитация реальных клиентов) ─────────
 
 import string
+import uuid
 import time as time_module
 
-_MAILERS = [
-    "Microsoft Outlook 16.0",
-    "Mozilla Thunderbird 115.0",
-    "Apple Mail (2.3774.200.91)",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Postbox 7.0.61",
-    "The Bat! 11.3",
-    "eM Client 9.2",
-    "Evolution 3.44.4",
-    "KMail/5.20.3",
-    "Pegasus Mail/4.73",
-    "Foxmail 7.2.20.273",
-]
+
+def _generate_mailer() -> str:
+    """Генерирует уникальный X-Mailer для каждого письма (AMS Enterprise стиль)."""
+    rnd = random.SystemRandom()
+    templates = [
+        f"Microsoft Outlook {rnd.choice(['16.0', '15.0', '14.0'])}.{rnd.randint(4000,5999)}.{rnd.randint(1000,9999)}",
+        f"Mozilla Thunderbird {rnd.randint(100,120)}.{rnd.randint(0,9)}.{rnd.randint(0,3)}",
+        f"Apple Mail ({rnd.randint(2,3)}.{rnd.randint(3000,4000)}.{rnd.randint(100,999)}.{rnd.randint(1,99)})",
+        f"Evolution {rnd.randint(3,4)}.{rnd.randint(40,48)}.{rnd.randint(0,4)}",
+        f"eM Client {rnd.randint(8,10)}.{rnd.randint(0,3)}.{rnd.randint(1000,3999)}.{rnd.randint(0,9)}",
+        f"Postbox {rnd.randint(7,8)}.{rnd.randint(0,2)}.{rnd.randint(50,99)}",
+        f"The Bat! {rnd.randint(10,12)}.{rnd.randint(0,5)}",
+        f"KMail/{rnd.randint(5,6)}.{rnd.randint(18,24)}.{rnd.randint(0,5)}",
+        f"Foxmail {rnd.randint(7,8)}.{rnd.randint(2,3)}.{rnd.randint(20,30)}.{rnd.randint(200,400)}",
+    ]
+    return rnd.choice(templates)
 
 _ZERO_WIDTH = ["\u200B", "\u200C", "\u200D", "\uFEFF"]
 
@@ -201,7 +206,7 @@ def build_message(
     msg["Subject"] = subject
     
     # 4. Header Jitter
-    # Date jitter: +/- 30 сек (было ±300 — слишком агрессивно, спам-фильтры ловят)
+    # Date jitter: +/- 30 сек
     jitter_sec = rnd.randint(-30, 30)
     jitter_time = time_module.time() + jitter_sec
     msg["Date"] = formatdate(timeval=jitter_time, localtime=True)
@@ -209,13 +214,14 @@ def build_message(
     sender_domain = from_email.split("@")[-1] if "@" in from_email else "localhost"
     msg["Message-ID"] = make_msgid(domain=sender_domain)
 
-    # MIME-Version НЕ добавляем вручную — MIMEMultipart/MIMEText уже ставят его.
-    # Дублирование MIME-Version — аномалия для спам-фильтров.
+    # X-Mailer: динамическая генерация уникальной версии для каждого письма
+    msg["X-Mailer"] = _generate_mailer()
 
-    msg["X-Mailer"] = rnd.choice(_MAILERS)
-
-    # X-Priority, X-MSMail-Priority, Thread-Index УБРАНЫ:
-    # Случайные значения этих заголовков — прямой спам-сигнал для Gmail/Outlook.
+    # List-Unsubscribe: Gmail показывает кнопку "Отписаться" вместо "Спам"
+    # Это ЗНАЧИТЕЛЬНО повышает доставляемость в inbox!
+    unsub_id = uuid.uuid4().hex[:12]
+    msg["List-Unsubscribe"] = f"<mailto:unsub-{unsub_id}@{sender_domain}>"
+    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
     if cc_addrs:
         msg["Cc"] = ", ".join(cc_addrs)
@@ -583,6 +589,7 @@ class CampaignSender:
         proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
         
         sent_on_conn = 0
+        _send_time = 0.0  # Время последней отправки для adaptive delay
         
         while True:
             if self.stop_event.is_set():
@@ -597,6 +604,22 @@ class CampaignSender:
             except queue.Empty:
                 break
                 
+            # ── Задержка ДО отправки письма (имитация человека) ──
+            domain_delay = get_delay(rcpt.email, base_delay=delay, jitter=jitter)
+            warmup = get_warmup_factor(smtp_acc.sent_count, rcpt.email)
+            actual_delay = domain_delay * warmup
+            
+            # Adaptive: если прошлый ответ сервера был долгим — увеличиваем паузу
+            if _send_time > 2.0:
+                actual_delay *= 1.5
+                
+            actual_delay = max(0.5, actual_delay)
+            
+            self.stop_event.wait(actual_delay)
+            if self.stop_event.is_set():
+                self.global_q.put(rcpt)
+                break
+                
             # ── Check Account Limit ──
             if max_per_acc > 0:
                 with self._acc_sent_lock:
@@ -609,7 +632,13 @@ class CampaignSender:
                         conn = None  # force reconnect
             
             # ── Connection Pooling ──
-            if conn is None or (max_per_conn > 0 and sent_on_conn >= max_per_conn):
+            # User's max_per_conn приоритет; domain_max только при 0 (авто)
+            if max_per_conn > 0:
+                effective_max = max_per_conn  # Пользователь задал — его значение
+            else:
+                effective_max = get_max_per_conn(rcpt.email)  # Авто из профиля домена
+            
+            if conn is None or (effective_max > 0 and sent_on_conn >= effective_max):
                 if conn:
                     try:
                         conn.quit()
@@ -618,7 +647,7 @@ class CampaignSender:
                 
                 # При превышении лимита (max_per_conn) берем СЛЕДУЮЩИЙ аккаунт
                 # Если отключим лимит (0), то будем шпарить до конца базы с одного
-                if max_per_conn > 0 and sent_on_conn >= max_per_conn:
+                if effective_max > 0 and sent_on_conn >= effective_max:
                     smtp_acc = get_valid_account()
                     if not smtp_acc:
                         self.global_q.put(rcpt)
@@ -690,7 +719,9 @@ class CampaignSender:
                     rcpt.email, cc_addrs=actual_cc, bcc_addrs=actual_bcc,
                 )
 
+                _t0 = time.monotonic()
                 conn.sendmail(smtp_acc.email, envelope_to, msg.as_string())
+                _send_time = time.monotonic() - _t0
                 
                 sent_on_conn += 1
                 with self._sent_lock:
@@ -742,10 +773,6 @@ class CampaignSender:
             # ── Прогресс ──
             self.global_q.task_done()
             on_progress()
-
-            # ── Индивидуальная задержка (Per-Thread) ──
-            actual_delay = max(0.1, delay + random.SystemRandom().uniform(-jitter, jitter))
-            self.stop_event.wait(actual_delay)
             
         # Cleanup
         if conn:
