@@ -108,9 +108,19 @@ def _make_proxy_sock(
     return s
 
 
-# ── Подключение к SMTP ───────────────────────────────────
+# ── Подключение к SMTP ─────────────────────────────────────────
 
 _CONNECT_TIMEOUT = 15  # Увеличили таймаут для медленных прокси
+
+# Кэшированный SSL-контекст (создаётся один раз, используется многократно)
+_UNVERIFIED_CTX: ssl.SSLContext | None = None
+
+def _get_ssl_ctx() -> ssl.SSLContext:
+    """Lazy-создание SSL-контекста (thread-safe через GIL)."""
+    global _UNVERIFIED_CTX
+    if _UNVERIFIED_CTX is None:
+        _UNVERIFIED_CTX = ssl._create_unverified_context()
+    return _UNVERIFIED_CTX
 
 def connect_smtp(
     account: SmtpAccount,
@@ -132,7 +142,7 @@ def connect_smtp(
     # ── SSL (порт 465) ────────────────────────────────
     if port == 465:
         if raw_sock:
-            ctx = ssl._create_unverified_context() # Игнорируем ошибки сертификатов
+            ctx = _get_ssl_ctx()
             ssl_sock = ctx.wrap_socket(raw_sock, server_hostname=host)
             smtp = smtplib.SMTP_SSL(timeout=timeout, local_hostname=fake_ehlo)
             smtp.sock = ssl_sock
@@ -142,7 +152,7 @@ def connect_smtp(
             if code != 220:
                 raise smtplib.SMTPConnectError(code, b"Bad greeting")
         else:
-            ctx = ssl._create_unverified_context()
+            ctx = _get_ssl_ctx()
             smtp = smtplib.SMTP_SSL(host, port, timeout=timeout, local_hostname=fake_ehlo, context=ctx)
         smtp.ehlo()
 
