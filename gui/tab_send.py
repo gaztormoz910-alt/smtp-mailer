@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import threading
+import time as _time
+from collections import deque
 
 import customtkinter as ctk
 
@@ -53,6 +55,11 @@ class SendTab:
 
         self._campaign: CampaignSender | None = None
         self._recipients: list[Recipient] = []  # заполняется из Campaign-таба
+
+        # Throttle для логов: буферизация, макс. 5 обновлений/сек
+        self._log_buffer: deque[str] = deque(maxlen=200)
+        self._log_flush_pending = False
+        self._LOG_MAX_LINES = 500  # Максимум строк в preview_box
 
         self._build_layout()
         self._check_resume_state()
@@ -410,6 +417,11 @@ class SendTab:
         self.campaign_status.configure(
             text=f"▶  Отправка {len(self._recipients)} получателям…{cc_info}{bcc_info}",
             text_color=COLOR_ACCENT)
+
+        # Запускаем polling статистики
+        app = self._get_app()
+        if app and hasattr(app, 'tab_stats'):
+            app.tab_stats.start_polling()
         self._set_preview(f"Кампания начата: {len(self._recipients)} получателей\n"
                           f"Delay: {delay}s ±{jitter}s{cc_info}{bcc_info}")
         
@@ -430,6 +442,8 @@ class SendTab:
         app = self._get_app()
         if app:
             app.set_ui_locked(False)
+            if hasattr(app, 'tab_stats'):
+                app.tab_stats.stop_polling()
 
     # ── Pause / Resume ───────────────────────────────────
 
@@ -466,6 +480,8 @@ class SendTab:
         app = self._get_app()
         if app:
             app.set_ui_locked(False)
+            if hasattr(app, 'tab_stats'):
+                app.tab_stats.stop_polling()
 
     # ── Resume state check ───────────────────────────────
 
@@ -556,9 +572,36 @@ class SendTab:
         self.preview_box.configure(state="disabled")
 
     def _append_log(self, text: str) -> None:
-        self.campaign_status.configure(text=text, text_color=COLOR_ACCENT)
+        """Буферизованное обновление лога — макс. 5 раз/сек вместо каждого письма."""
+        self._log_buffer.append(text)
+        if not self._log_flush_pending:
+            self._log_flush_pending = True
+            self.parent.after(200, self._flush_log_buffer)  # 200мс = 5 раз/сек
+
+    def _flush_log_buffer(self) -> None:
+        """Пакетная запись всех накопленных строк в textbox."""
+        self._log_flush_pending = False
+        if not self._log_buffer:
+            return
+
+        # Собираем все строки за интервал
+        lines = []
+        while self._log_buffer:
+            lines.append(self._log_buffer.popleft())
+
+        # Обновляем статус последней строкой
+        self.campaign_status.configure(text=lines[-1], text_color=COLOR_ACCENT)
+
+        # Пакетная вставка
         self.preview_box.configure(state="normal")
-        self.preview_box.insert("end", f"\n{text}")
+        self.preview_box.insert("end", "\n" + "\n".join(lines))
+
+        # Ограничение 500 строк — удаляем старые
+        total_lines = int(self.preview_box.index("end-1c").split(".")[0])
+        if total_lines > self._LOG_MAX_LINES:
+            overflow = total_lines - self._LOG_MAX_LINES
+            self.preview_box.delete("1.0", f"{overflow + 1}.0")
+
         self.preview_box.see("end")
         self.preview_box.configure(state="disabled")
 

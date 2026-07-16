@@ -149,10 +149,10 @@ def build_message(
     """Формирует MIME с тотальной уникализацией."""
     rnd = random.SystemRandom()
 
-    # 1. Мутация текста (Zero-width chars)
+    # 1. Мутация текста (Zero-width chars) — ТОЛЬКО в body, НЕ в subject!
+    # Zero-width символы в Subject — это красный флаг для Gmail/Outlook.
     if rnd.random() < 0.7:
         body = inject_zero_width(body, is_html=is_html)
-        subject = inject_zero_width(subject, is_html=False)
 
     # 2. Формирование структуры
     if plain_text_only:
@@ -201,26 +201,21 @@ def build_message(
     msg["Subject"] = subject
     
     # 4. Header Jitter
-    # Date jitter: +/- 300 сек
-    jitter_sec = rnd.randint(-300, 300)
+    # Date jitter: +/- 30 сек (было ±300 — слишком агрессивно, спам-фильтры ловят)
+    jitter_sec = rnd.randint(-30, 30)
     jitter_time = time_module.time() + jitter_sec
     msg["Date"] = formatdate(timeval=jitter_time, localtime=True)
 
     sender_domain = from_email.split("@")[-1] if "@" in from_email else "localhost"
     msg["Message-ID"] = make_msgid(domain=sender_domain)
 
-    msg["MIME-Version"] = "1.0"
+    # MIME-Version НЕ добавляем вручную — MIMEMultipart/MIMEText уже ставят его.
+    # Дублирование MIME-Version — аномалия для спам-фильтров.
+
     msg["X-Mailer"] = rnd.choice(_MAILERS)
-    
-    if rnd.random() < 0.3:
-        msg["X-Priority"] = str(rnd.randint(1, 5))
-    if rnd.random() < 0.2:
-        msg["X-MSMail-Priority"] = rnd.choice(["High", "Normal", "Low"])
-        
-    if rnd.random() < 0.4:
-        # Fake Thread-Index (Outlook style, 30 chars base64)
-        thread_id = "".join(rnd.choice(string.ascii_letters + string.digits) for _ in range(30))
-        msg["Thread-Index"] = thread_id
+
+    # X-Priority, X-MSMail-Priority, Thread-Index УБРАНЫ:
+    # Случайные значения этих заголовков — прямой спам-сигнал для Gmail/Outlook.
 
     if cc_addrs:
         msg["Cc"] = ", ".join(cc_addrs)
@@ -455,6 +450,11 @@ class CampaignSender:
         self._idx: int = 0
         self._save_counter: int = 0
         self._running = False
+        self._retry_counts: dict[str, int] = {}  # email → retry count
+        self._retry_lock = threading.Lock()
+        self._max_retries = 3  # Максимум 3 попытки на одного получателя
+        self._sent_atomic = 0  # Атомарный счётчик отправленных
+        self._sent_lock = threading.Lock()  # Lock для sent_count
 
     @property
     def running(self) -> bool:
@@ -693,10 +693,14 @@ class CampaignSender:
                 conn.sendmail(smtp_acc.email, envelope_to, msg.as_string())
                 
                 sent_on_conn += 1
-                smtp_acc.sent_count += 1
+                with self._sent_lock:
+                    smtp_acc.sent_count += 1
                 if max_per_acc > 0:
                     with self._acc_sent_lock:
                         self._acc_sent[smtp_acc.email] += 1
+                
+                with self._sent_lock:
+                    self._sent_atomic += 1
                 
                 self.stats.record_sent(smtp_acc.email, proxy_addr)
                 self.logger.log_send(
@@ -714,11 +718,9 @@ class CampaignSender:
                     smtp_acc.last_error = err_str
                     self.stats.record_error(
                         smtp_acc.email, proxy_addr, smtp_dead=True)
-                    # Если 500+ ошибка — обрываем коннект
                     conn = None 
                 else:
                     self.stats.record_error(smtp_acc.email, proxy_addr)
-                    # Если 400 ошибка, тоже на всякий случай реконнект
                     conn = None
 
                 self.logger.log_send(
@@ -727,8 +729,15 @@ class CampaignSender:
                     had_cc=use_cc, had_bcc=use_bcc,
                 )
                 self._emit(f"{tag}✗ → {rcpt.email}: {err_str[:80]}")
-                # Возвращаем письмо обратно в конец очереди!
-                self.global_q.put(rcpt)
+                
+                # Retry с лимитом (макс. 3 попытки), а не бесконечно!
+                with self._retry_lock:
+                    retries = self._retry_counts.get(rcpt.email, 0)
+                    if retries < self._max_retries:
+                        self._retry_counts[rcpt.email] = retries + 1
+                        self.global_q.put(rcpt)  # Вернуть в очередь
+                    else:
+                        self._emit(f"{tag}⚠ {rcpt.email}: исчерпаны попытки ({self._max_retries})")
 
             # ── Прогресс ──
             self.global_q.task_done()
@@ -761,6 +770,20 @@ class CampaignSender:
     def _save_state(self) -> None:
         if not hasattr(self, "global_q"):
             return
-        remaining = list(self.global_q.queue)
-        sent_count = len(self.recipients) - len(remaining)
+        # Thread-safe копирование очереди
+        remaining = []
+        try:
+            while True:
+                try:
+                    item = self.global_q.get_nowait()
+                    remaining.append(item)
+                except queue.Empty:
+                    break
+            # Вернуть элементы обратно
+            for item in remaining:
+                self.global_q.put(item)
+        except Exception:
+            pass
+        with self._sent_lock:
+            sent_count = self._sent_atomic
         save_queue_state(remaining, sent_count, len(self.recipients))

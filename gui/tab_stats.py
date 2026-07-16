@@ -31,8 +31,8 @@ class StatsTab:
         self.logger = JsonLogger()
         self._smtp_rows: dict[str, dict] = {}
         self._proxy_rows: dict[str, dict] = {}
+        self._polling_active = False
         self._build_layout()
-        self._start_polling()
 
     # ══════════════════════════════════════════════════════
     #  LAYOUT
@@ -220,11 +220,30 @@ class StatsTab:
     #  POLLING  — потокобезопасное обновление UI
     # ══════════════════════════════════════════════════════
 
-    def _start_polling(self) -> None:
-        self._update_ui()
+    def start_polling(self) -> None:
+        """Запустить polling UI (вызывать при старте кампании)."""
+        if not self._polling_active:
+            self._polling_active = True
+            self._update_ui()
+
+    def stop_polling(self) -> None:
+        """Остановить polling UI (вызывать при остановке кампании). Делает одно последнее обновление."""
+        self._polling_active = False
+        # Одно финальное обновление чтобы показать итоговый статус
+        try:
+            self._do_update_ui()
+        except Exception:
+            pass
 
     def _update_ui(self) -> None:
         """Раз в секунду читает snapshot из stats и обновляет виджеты."""
+        if not self._polling_active:
+            return
+        self._do_update_ui()
+        self.parent.after(1000, self._update_ui)
+
+    def _do_update_ui(self) -> None:
+        """Фактическое обновление виджетов."""
         snap = self.stats.snapshot
 
         # ── прогресс ──────────────────────────────────
@@ -269,8 +288,7 @@ class StatsTab:
             st_color = self._status_color(item["status"])
             row["status"].configure(text=item["status"], text_color=st_color)
 
-        # повторяем через 1 сек
-        self.parent.after(1000, self._update_ui)
+
 
     # ── создание строк таблиц ────────────────────────────
 
