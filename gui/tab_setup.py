@@ -808,8 +808,15 @@ class SetupTab:
         data = self._smtp_card_map.get(id(acc))
         if not data:
             return
+        
+        status_text = f"●  {acc.status.value}"
         color = self._sm_color(acc.status)
-        data["status_lbl"].configure(text=f"●  {acc.status.value}", text_color=color)
+        
+        if acc.status.name == "UNTESTED" and acc.last_error:
+            status_text = "●  Error"
+            color = "#F59E0B"  # Orange
+
+        data["status_lbl"].configure(text=status_text, text_color=color)
         data["sent_lbl"].configure(text=f"Отправлено: {acc.sent_count}")
         data["error_lbl"].configure(text=acc.last_error or "")
         ping_str = f" {acc.ping_ms}ms" if getattr(acc, "ping_ms", 0) else ""

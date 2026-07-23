@@ -49,7 +49,10 @@ class ContentTab:
 
 
     def _copy_text(self, tb) -> None:
-        text = tb.get("1.0", "end-1c")
+        try:
+            text = tb.get("sel.first", "sel.last")
+        except Exception:
+            text = tb.get("1.0", "end-1c")
         if text:
             self.parent.clipboard_clear()
             self.parent.clipboard_append(text)
@@ -139,7 +142,7 @@ class ContentTab:
         f = self._frame(c, r, col, pad_right=True)
         ctk.CTkLabel(f, text="🔗  Ссылки", font=(FONT_FAMILY, 13, "bold"),
                      text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 2))
-        ctk.CTkLabel(f, text=".txt · один URL на строку · links.txt→[[LINK]]  links1.txt→[[LINK1]]",
+        ctk.CTkLabel(f, text=".txt · один URL на строку · 1-й файл→[[LINK]]  2-й файл→[[LINK1]]",
                      font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w").pack(fill="x", padx=14, pady=(0, 2))
 
         row = ctk.CTkFrame(f, fg_color="transparent")
@@ -248,6 +251,8 @@ class ContentTab:
             scrollbar_button_hover_color=COLOR_TEXT_DIM
         )
         self.sandbox_out.pack(fill="both", expand=True, padx=12, pady=(0, 5))
+        self.sandbox_out.bind("<Control-c>", lambda e: self._copy_text(self.sandbox_out))
+        self.sandbox_out.bind("<Command-c>", lambda e: self._copy_text(self.sandbox_out))
         self.sandbox_action = self._status(frame)
 
     # ══════════════════════════════════════════════════════
