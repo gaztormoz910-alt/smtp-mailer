@@ -126,23 +126,61 @@ def _get_ssl_ctx() -> ssl.SSLContext:
 
 # ── Smart EHLO ─────────────────────────────────────────
 
-_EHLO_TEMPLATES = [
-    "mail.{domain}",
-    "smtp.{domain}",
-    "mx.{domain}",
-    "relay{n}.{domain}",
-    "out{n}.{domain}",
-    "mta{n}.{domain}",
-    "send.{domain}",
-    "mailer.{domain}",
-]
+import string
 
 def _make_smart_ehlo(sender_email: str) -> str:
-    """Генерирует реалистичный EHLO на основе домена отправителя."""
+    """Генерирует реалистичный EHLO на основе домена отправителя.
+    
+    Для freemail (gmail, gmx, etc.) использует реальные паттерны,
+    которые существуют в DNS. Для кастомных доменов — генерирует
+    правдоподобные поддомены.
+    """
     rnd = random.SystemRandom()
     domain = sender_email.split("@")[-1] if "@" in sender_email else "localhost"
-    tpl = rnd.choice(_EHLO_TEMPLATES)
-    return tpl.format(domain=domain, n=rnd.randint(1, 9))
+    
+    rnd_str = lambda n: "".join(rnd.choice(string.ascii_lowercase + string.digits) for _ in range(n))
+    
+    # Реальные EHLO паттерны для freemail провайдеров
+    _FREEMAIL_EHLO = {
+        'gmail.com': [
+            lambda: f"mail-{rnd.choice(['oi','lf','pg','qt','vs','wr','yb','ua','io','il'])}{rnd.randint(1,9)}-f{rnd.randint(100,255)}.google.com",
+        ],
+        'gmx.com': [lambda: f"mout.gmx.net"],
+        'gmx.net': [lambda: f"mout.gmx.net"],
+        'gmx.de': [lambda: f"mout.gmx.net"],
+        'web.de': [lambda: f"mout.web.de"],
+        'outlook.com': [
+            lambda: f"{rnd.choice(['EUR','AMS','DUB','FRA','LON','PAR'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+        ],
+        'hotmail.com': [
+            lambda: f"{rnd.choice(['EUR','AMS','DUB'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+        ],
+        'yahoo.com': [
+            lambda: f"sonic{rnd.randint(100,999)}-{rnd.randint(1,99)}.consmr.mail.{rnd.choice(['bf2','ne1','gq1'])}.yahoo.com",
+        ],
+        'icloud.com': [
+            lambda: f"st{rnd.randint(11,43)}-asmtp{rnd.randint(100,999)}.me.com",
+        ],
+        'zohomail.eu': [lambda: f"sender{rnd.randint(1,20)}.zoho.eu"],
+        'zohomail.com': [lambda: f"sender{rnd.randint(1,20)}.zoho.com"],
+    }
+    
+    domain_lower = domain.lower()
+    if domain_lower in _FREEMAIL_EHLO:
+        return rnd.choice(_FREEMAIL_EHLO[domain_lower])()
+    
+    # Для кастомных доменов — поддомены самого домена (правдоподобно)
+    templates = [
+        lambda: f"mail.{domain}",
+        lambda: f"smtp.{domain}",
+        lambda: f"mx.{domain}",
+        lambda: f"relay.{domain}",
+        lambda: f"out.{domain}",
+        lambda: f"mailer.{domain}",
+        lambda: f"mta.{domain}",
+        lambda: f"send.{domain}",
+    ]
+    return rnd.choice(templates)()
 
 
 # ── NOOP keep-alive ───────────────────────────────────

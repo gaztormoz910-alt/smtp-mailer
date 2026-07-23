@@ -14,13 +14,14 @@ import threading
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.charset import Charset, BASE64, QP
 from email.utils import formataddr, formatdate, make_msgid
 from collections import defaultdict
 from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Callable
 
-from core.content import ContentManager
+from core.content import ContentManager, html_to_plain_text
 from core.logger import JsonLogger
 from core.proxy_manager import ProxyManager
 from core.queue_manager import Recipient
@@ -65,81 +66,95 @@ def split_evenly(items: list[Recipient], n: int) -> list[list[Recipient]]:
     return [items[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n)]
 
 
-# ── X-Mailer ротация (имитация реальных клиентов) ─────────
+# ── Boundary and Message-ID Generation ─────────
 
 import string
 import uuid
 import time as time_module
 
+# ── Маппинг SMTP-домена → стиль клиента ────────────────
 
-def _generate_mailer() -> str:
-    """Генерирует уникальный X-Mailer для каждого письма (AMS Enterprise стиль)."""
+_DOMAIN_CLIENT_MAP = {
+    'gmail.com': 'gmail', 'googlemail.com': 'gmail',
+    'outlook.com': 'outlook', 'hotmail.com': 'outlook', 'live.com': 'outlook', 'msn.com': 'outlook',
+    'yahoo.com': 'yahoo', 'ymail.com': 'yahoo',
+    'icloud.com': 'apple', 'me.com': 'apple', 'mac.com': 'apple',
+    'gmx.com': 'generic', 'gmx.net': 'generic', 'gmx.de': 'generic',
+    'zohomail.com': 'generic', 'zoho.com': 'generic',
+}
+
+def _get_client_style(sender_email: str) -> str:
+    """Определяет стиль email-клиента по домену отправителя."""
+    domain = sender_email.split('@')[-1].lower() if '@' in sender_email else ''
+    return _DOMAIN_CLIENT_MAP.get(domain, 'generic')
+
+
+def get_random_boundary(sender_email: str = "") -> str:
+    """Генерирует уникальный boundary для MIME, привязанный к стилю клиента."""
     rnd = random.SystemRandom()
-    templates = [
-        f"Microsoft Outlook {rnd.choice(['16.0', '15.0', '14.0'])}.{rnd.randint(4000,5999)}.{rnd.randint(1000,9999)}",
-        f"Mozilla Thunderbird {rnd.randint(100,120)}.{rnd.randint(0,9)}.{rnd.randint(0,3)}",
-        f"Apple Mail ({rnd.randint(2,3)}.{rnd.randint(3000,4000)}.{rnd.randint(100,999)}.{rnd.randint(1,99)})",
-        f"Evolution {rnd.randint(3,4)}.{rnd.randint(40,48)}.{rnd.randint(0,4)}",
-        f"eM Client {rnd.randint(8,10)}.{rnd.randint(0,3)}.{rnd.randint(1000,3999)}.{rnd.randint(0,9)}",
-        f"Postbox {rnd.randint(7,8)}.{rnd.randint(0,2)}.{rnd.randint(50,99)}",
-        f"The Bat! {rnd.randint(10,12)}.{rnd.randint(0,5)}",
-        f"KMail/{rnd.randint(5,6)}.{rnd.randint(18,24)}.{rnd.randint(0,5)}",
-        f"Foxmail {rnd.randint(7,8)}.{rnd.randint(2,3)}.{rnd.randint(20,30)}.{rnd.randint(200,400)}",
-    ]
-    return rnd.choice(templates)
+    style = _get_client_style(sender_email)
 
-_ZERO_WIDTH = ["\u200B", "\u200C", "\u200D", "\uFEFF"]
+    # Шаблоны, соответствующие реальным клиентам
+    if style == 'gmail':
+        templates = [
+            lambda: f"{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(28))}",
+            lambda: f"{''.join(rnd.choice(string.digits) for _ in range(20))}",
+        ]
+    elif style == 'outlook':
+        templates = [
+            lambda: f"----=_Part_{rnd.randint(1000,99999)}_{rnd.randint(1000000,9999999)}",
+            lambda: f"----=_NextPart_000_{rnd.randint(1000,9999)}_{''.join(rnd.choice(string.ascii_uppercase + string.digits) for _ in range(8))}",
+            lambda: f"--_000_{''.join(rnd.choice(string.ascii_uppercase + string.digits) for _ in range(16))}",
+        ]
+    elif style == 'apple':
+        templates = [
+            lambda: f"Apple-Mail-{''.join(rnd.choice(string.ascii_uppercase + string.digits) for _ in range(8))}",
+            lambda: f"Apple-Mail=_{''.join(rnd.choice(string.ascii_uppercase + string.digits) for _ in range(12))}",
+        ]
+    elif style == 'yahoo':
+        templates = [
+            lambda: f"{''.join(rnd.choice(string.digits) for _ in range(10))}_{rnd.randint(100000,999999)}",
+            lambda: f"----=_Part_{''.join(rnd.choice(string.digits) for _ in range(8))}",
+        ]
+    else:  # generic
+        templates = [
+            lambda: f"==============_{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(16))}==",
+            lambda: f"=_mixed_{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(20))}_",
+            lambda: f"B_{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(10))}",
+            lambda: ''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(28)),
+        ]
+    return rnd.choice(templates)()
 
-def inject_zero_width(text: str, is_html: bool = False) -> str:
-    """Вставляет невидимые символы между буквами, не ломая HTML и пробелы."""
-    if not text:
-        return text
+def _generate_message_id(domain: str, sender_email: str = "") -> str:
+    """Генерирует Message-ID, привязанный к стилю клиента отправителя."""
     rnd = random.SystemRandom()
-    
-    def _mutate_word(m: re.Match) -> str:
-        word = m.group(0)
-        if len(word) > 3 and rnd.random() < 0.3:
-            insert_pos = rnd.randint(1, len(word) - 1)
-            char = rnd.choice(_ZERO_WIDTH)
-            return word[:insert_pos] + char + word[insert_pos:]
-        return word
+    style = _get_client_style(sender_email) if sender_email else 'generic'
 
-    if is_html:
-        # Для HTML мутируем только текст ВНЕ тегов
-        parts = re.split(r'(<[^>]*>)', text)
-        for i in range(0, len(parts), 2):
-            if parts[i]:
-                parts[i] = re.sub(r'[A-Za-zА-Яа-яЁё]+', _mutate_word, parts[i])
-        return "".join(parts)
-    else:
-        return re.sub(r'[A-Za-zА-Яа-яЁё]+', _mutate_word, text)
-
-def generate_invisible_block() -> str:
-    """Генерирует скрытый div со случайным текстом."""
-    rnd = random.SystemRandom()
-    styles = [
-        "display:none;",
-        "height:0;width:0;overflow:hidden;",
-        "font-size:0px;color:#ffffff;",
-        "opacity:0;position:absolute;left:-9999px;",
-        "visibility:hidden;height:1px;",
-    ]
-    style = rnd.choice(styles)
-    # Генерируем случайный набор слов (простой фейк)
-    words = ["hello", "world", "project", "test", "update", "info", "data", "report", "check", "system"]
-    fake_text = " ".join(rnd.choice(words) for _ in range(rnd.randint(5, 15)))
-    return f'<div style="{style}">{fake_text}</div>'
-
-def get_random_boundary() -> str:
-    """Генерирует уникальный boundary для MIME."""
-    rnd = random.SystemRandom()
-    if rnd.random() < 0.5:
-        # Стиль 1: ----=_Part_X_Y
-        return f"----=_Part_{rnd.randint(1000,9999)}_{rnd.randint(100000,999999)}"
-    else:
-        # Стиль 2: ============_X==
-        chars = "".join(rnd.choice(string.ascii_letters + string.digits) for _ in range(16))
-        return f"==============_{chars}=="
+    if style == 'gmail':
+        templates = [
+            lambda: f"<{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(22))}@mail.{domain}>",
+            lambda: f"<{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(32))}@mail.{domain}>",
+        ]
+    elif style == 'outlook':
+        templates = [
+            lambda: f"<{uuid.uuid4().hex.upper()}@{domain}>",
+            lambda: f"<{''.join(rnd.choice(string.ascii_uppercase + string.digits) for _ in range(32))}@{domain}>",
+        ]
+    elif style == 'apple':
+        templates = [
+            lambda: f"<{uuid.uuid4().hex.upper()}-{uuid.uuid4().hex[:4].upper()}@{domain}>",
+            lambda: f"<{uuid.uuid4().hex.upper()}@{domain}>",
+        ]
+    elif style == 'yahoo':
+        templates = [
+            lambda: f"<{rnd.randint(100000000,999999999)}.{rnd.randint(100000,999999)}.{int(time_module.time())}@{domain}>",
+        ]
+    else:  # generic / thunderbird
+        templates = [
+            lambda: f"<{uuid.uuid4()}@{domain}>",
+            lambda: f"<{int(time_module.time())}.{rnd.randint(10000,99999)}.{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(8))}@{domain}>",
+        ]
+    return rnd.choice(templates)()
 
 def build_message(
     from_email: str,
@@ -151,22 +166,25 @@ def build_message(
     cc_addrs: list[str] | None = None,
     plain_text_only: bool = False,
 ) -> Any:
-    """Формирует MIME с тотальной уникализацией."""
+    """Формирует MIME с тотальной уникализацией (Уровень AMS Enterprise+)."""
     rnd = random.SystemRandom()
 
-    # 1. Мутация текста (Zero-width chars) — ТОЛЬКО в body, НЕ в subject!
-    # Zero-width символы в Subject — это красный флаг для Gmail/Outlook.
-    if rnd.random() < 0.7:
-        body = inject_zero_width(body, is_html=is_html)
-
-    # 2. Формирование структуры
+    # 1. Формирование структуры
+    # Только валидные IANA charset names
+    rnd_charset_str = rnd.choice(["utf-8", "UTF-8"])
+    
     if plain_text_only:
-        msg = MIMEText(body, "plain", "utf-8")
+        c = Charset(rnd_charset_str)
+        c.body_encoding = QP if rnd.random() < 0.5 else BASE64
+        msg = MIMEText(body, "plain", _charset=c)
+        if rnd.random() < 0.5:
+            msg.set_param("format", "flowed")
+            msg.set_param("delsp", "yes")
     else:
-        msg = MIMEMultipart("alternative", boundary=get_random_boundary())
+        msg = MIMEMultipart("alternative", boundary=get_random_boundary(from_email))
         
-        plain_body = _STRIP_TAGS_RE.sub(' ', body) if is_html else body
-        plain_body = _WHITESPACE_RE.sub(' ', plain_body).strip()
+        # Корректная конвертация в Plain Text (без спам-шума и мусора)
+        plain_body = html_to_plain_text(body) if is_html else body
         
         if is_html:
             html_body = body
@@ -177,54 +195,91 @@ def build_message(
             for i in range(0, len(parts), 2):
                 parts[i] = _RAW_URL_RE.sub(r'<a href="\1">\1</a>', parts[i])
             html_body = "".join(parts)
-            
-        # Отключаем невидимые блоки, так как Google (Gmail) их жестко пессимизирует (spam flag).
-        # if rnd.random() < 0.8:
-        #     html_body = generate_invisible_block() + html_body + generate_invisible_block()
 
-        part_plain = MIMEText(plain_body, "plain", "utf-8")
-        part_html = MIMEText(html_body, "html", "utf-8")
+        # RAND-1: Раздельная рандомизация encoding для plain и html
+        c_plain = Charset(rnd_charset_str)
+        c_plain.body_encoding = QP if rnd.random() < 0.5 else BASE64
+        c_html = Charset(rnd.choice(["utf-8", "UTF-8"]))
+        c_html.body_encoding = QP if rnd.random() < 0.5 else BASE64
+            
+        part_plain = MIMEText(plain_body, "plain", _charset=c_plain)
+        if rnd.random() < 0.5:
+            part_plain.set_param("format", "flowed")
+            part_plain.set_param("delsp", "yes")
+            
+        part_html = MIMEText(html_body, "html", _charset=c_html)
         
-        # Динамический Content-Transfer-Encoding (email.mime.text делает base64 по умолчанию для utf-8)
-        # Мы оставляем стандартный механизм email.mime, т.к. он сам выбирает base64
-        
-        # По RFC 2046 порядок ВСЕГДА должен быть от наименее сложного к наиболее сложному.
-        # То есть СНАЧАЛА text/plain, а ЗАТЕМ text/html.
-        # Если их поменять местами, мобильные клиенты (например, iOS/Android) отобразят plain text,
-        # а спам-фильтры (особенно Gmail) моментально пометят письмо как спам за нарушение стандарта.
+        # По RFC 2046 порядок ВСЕГДА должен быть: сначала text/plain, потом text/html.
         msg.attach(part_plain)
         msg.attach(part_html)
 
-    # 3. Форматирование отправителя (Строго по RFC)
-    if sender_name:
-        # formataddr корректно энкодит кириллицу
-        msg["From"] = formataddr((sender_name, from_email))
-    else:
-        msg["From"] = from_email
-
-    msg["To"] = to_email
-    msg["Subject"] = subject
+    # 2. Форматирование заголовков
+    from_header = formataddr((sender_name, from_email)) if sender_name else from_email
     
-    # 4. Header Jitter
-    # Date jitter: +/- 30 сек
-    jitter_sec = rnd.randint(-30, 30)
+    # BUG-2 FIX: Date jitter ТОЛЬКО в прошлое (0-5 минут назад)
+    # Письма с датой в будущем — 100% красный флаг для фильтров.
+    jitter_sec = rnd.randint(-300, 0)
     jitter_time = time_module.time() + jitter_sec
-    msg["Date"] = formatdate(timeval=jitter_time, localtime=True)
+    date_header = formatdate(timeval=jitter_time, localtime=True)
 
     sender_domain = from_email.split("@")[-1] if "@" in from_email else "localhost"
-    msg["Message-ID"] = make_msgid(domain=sender_domain)
+    message_id = _generate_message_id(sender_domain, from_email)
 
-    # X-Mailer: динамическая генерация уникальной версии для каждого письма
-    msg["X-Mailer"] = _generate_mailer()
+    cc_header = ", ".join(cc_addrs) if cc_addrs else None
 
-    # List-Unsubscribe: Gmail показывает кнопку "Отписаться" вместо "Спам"
-    # Это ЗНАЧИТЕЛЬНО повышает доставляемость в inbox!
-    unsub_id = uuid.uuid4().hex[:12]
-    msg["List-Unsubscribe"] = f"<mailto:unsub-{unsub_id}@{sender_domain}>"
-    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+    # BUG-3 FIX: Content-Language определяется по РЕАЛЬНОМУ содержимому
+    # Кириллица → ru, Латиница → en. Никакого рандома.
+    content_lang = None
+    if rnd.random() < 0.8:
+        cyr = sum(1 for ch in subject + body if 0x0400 <= ord(ch) <= 0x04FF)
+        lat = sum(1 for ch in subject + body if (0x41 <= ord(ch) <= 0x5A) or (0x61 <= ord(ch) <= 0x7A))
+        if cyr > lat:
+            content_lang = rnd.choice(["ru", "ru-RU"])
+        else:
+            content_lang = rnd.choice(["en", "en-US", "en-GB"])
 
-    if cc_addrs:
-        msg["Cc"] = ", ".join(cc_addrs)
+    # RAND-4: Реалистичные шаблоны порядка заголовков (вместо shuffle)
+    style = _get_client_style(from_email)
+    if style == 'gmail':
+        order = ["MIME-Version", "Date", "Message-ID", "Subject", "From", "To"]
+    elif style == 'outlook':
+        order = ["From", "To", "Subject", "Date", "Message-ID", "MIME-Version"]
+    elif style == 'apple':
+        order = ["From", "Content-Language", "Subject", "Date", "Message-ID", "To", "MIME-Version"]
+    elif style == 'yahoo':
+        order = ["Date", "From", "To", "Message-ID", "Subject", "MIME-Version"]
+    else:
+        # Thunderbird / generic
+        order = rnd.choice([
+            ["Message-ID", "Date", "MIME-Version", "From", "Subject", "To"],
+            ["Date", "From", "To", "Subject", "Message-ID", "MIME-Version"],
+            ["From", "Date", "Subject", "To", "Message-ID", "MIME-Version"],
+        ])
+
+    # Собираем все заголовки в dict для подстановки по шаблону
+    header_pool = {
+        "From": from_header,
+        "To": to_email,
+        "Subject": subject,
+        "Date": date_header,
+        "Message-ID": message_id,
+    }
+    if cc_header:
+        header_pool["Cc"] = cc_header
+    if content_lang:
+        header_pool["Content-Language"] = content_lang
+
+    # Добавляем по шаблону порядка
+    for key in order:
+        if key in header_pool:
+            msg[key] = header_pool.pop(key)
+    # Оставшиеся (Cc, Content-Language если не в шаблоне)
+    for key, val in header_pool.items():
+        msg[key] = val
+
+    # Примечания:
+    # 1. Мы УДАЛИЛИ X-Mailer, так как для Office365/Gmail SMTP это красный флаг фишинга.
+    # 2. Мы УДАЛИЛИ фейковый List-Unsubscribe, так как bounce на этот адрес ухудшает репутацию домена сильнее.
 
     return msg
 

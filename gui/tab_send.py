@@ -284,6 +284,8 @@ class SendTab:
             scrollbar_button_hover_color=COLOR_TEXT_DIM
         )
         self.preview_box.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        self.preview_box.bind("<Control-c>", lambda e: self._copy_preview())
+        self.preview_box.bind("<Command-c>", lambda e: self._copy_preview())
 
     # ══════════════════════════════════════════════════════
     #  UI LOCKING
@@ -615,7 +617,10 @@ class SendTab:
         self.preview_box.configure(state="disabled")
 
     def _copy_preview(self) -> None:
-        text = self.preview_box.get("1.0", "end-1c")
+        try:
+            text = self.preview_box.get("sel.first", "sel.last")
+        except Exception:
+            text = self.preview_box.get("1.0", "end-1c")
         if text:
             self.parent.clipboard_clear()
             self.parent.clipboard_append(text)
