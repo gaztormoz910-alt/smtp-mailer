@@ -118,9 +118,14 @@ def substitute_links(
     text: str,
     pools: dict[str, list[str]],
     cache: dict[str, str] | None = None,
+    mode: str = "urls",
 ) -> str:
     """Заменяет ``[[LINK]]``, ``[[LINK1]]`` и т.д. на URL из пулов.
-    Каждая ссылка получает уникальный GET-параметр для обхода фильтров.
+
+    mode="urls":    Берёт случайный URL и добавляет уникальный GET-параметр.
+    mode="spintax": Берёт случайный спинтакс-шаблон, раскрывает через spin()
+                    и НЕ добавляет GET-параметры (они уже в спинтаксе).
+                    Каждый [[LINK]] раскрывается ЗАНОВО (полная уникальность).
     """
     missing: set[str] = set()
 
@@ -162,7 +167,12 @@ def substitute_links(
         if not pool:
             missing.add(f"[[LINK{key}]]")
             return m.group(0)
-            
+
+        if mode == "spintax":
+            # Спинтакс-режим: ВСЕГДА уникальный URL, БЕЗ кеша, БЕЗ доп. GET
+            return spin(_rnd.choice(pool))
+
+        # Режим готовых ссылок (urls): кеш + GET-параметр
         if cache is not None:
             if key not in cache:
                 raw_url = _rnd.choice(pool)
@@ -433,11 +443,14 @@ def render(
     link_pools: dict[str, list[str]] | None = None,
     link_cache: dict[str, str] | None = None,
     is_subject: bool = False,
+    link_mode: str = "urls",
 ) -> str:
     """Полный пайплайн рандомизации.
 
     is_subject=True:  облегчённый режим для тем (без омоглифов, без HTML-шума).
     is_subject=False: полный режим для тела письма (максимальная уникализация).
+    link_mode="urls":    готовые ссылки + авто GET-хвосты.
+    link_mode="spintax": спинтакс-шаблоны → каждый [[LINK]] уникален.
     """
     # Определяем формат шаблона ДО модификаций
     original_is_html = is_html(template)
@@ -451,7 +464,7 @@ def render(
             raise ValueError(
                 "Template contains [[LINK]] macros but no link pools loaded"
             )
-        result = substitute_links(result, link_pools, cache=link_cache)
+        result = substitute_links(result, link_pools, cache=link_cache, mode=link_mode)
 
     # 3. Переменные получателя {{name}}, {{email}}
     if variables:
@@ -543,6 +556,7 @@ class ContentManager:
         self._sender_names: list[str] = []                 # задача 10
         self.consistent_links: bool = False
         self.email_only: bool = False
+        self.link_mode: str = "urls"                       # "urls" | "spintax" (авто-определяется)
 
     # ══════════════════════════════════════════════════════
     #  SUBJECTS
@@ -573,7 +587,8 @@ class ContentManager:
             return ""
         template = _rnd.choice(self._subjects)
         pools = self._link_pools if self._link_pools else None
-        return render(template, variables, pools, link_cache, is_subject=True)
+        return render(template, variables, pools, link_cache, is_subject=True,
+                      link_mode=self.link_mode)
 
     # ══════════════════════════════════════════════════════
     #  BODIES
@@ -604,7 +619,8 @@ class ContentManager:
             return ("", False)
         template = _rnd.choice(self._bodies)
         pools = self._link_pools if self._link_pools else None
-        rendered = render(template, variables, pools, link_cache)
+        rendered = render(template, variables, pools, link_cache,
+                          link_mode=self.link_mode)
         is_html_body = is_html(rendered)
         return (rendered, is_html_body)
 
@@ -625,14 +641,32 @@ class ContentManager:
     def link_pool_count(self) -> int:
         return len(self._link_pools)
 
-    def load_links_file(self, filepath: str) -> tuple[str, int]:
+    @staticmethod
+    def _detect_link_mode(lines: list[str]) -> str:
+        """Авто-определяет режим ссылок по содержимому файла.
+        
+        Если хотя бы одна строка содержит '{' и '|' — это спинтакс.
+        Иначе — готовые URL.
+        """
+        for line in lines:
+            if '{' in line and '|' in line:
+                return "spintax"
+        return "urls"
+
+    def load_links_file(self, filepath: str) -> tuple[str, int, str]:
         """Загружает ссылки из файла. Пул определяется порядком загрузки 
         (1-й файл -> "", 2-й -> "1", и т.д.).
         
-        Возвращает ``(pool_key, count)``.
+        Автоматически определяет режим (urls/spintax) по содержимому.
+        
+        Возвращает ``(pool_key, count, detected_mode)``.
         """
         filename = Path(filepath).name
         urls = load_lines(filepath)
+        
+        # Авто-определяем режим по содержимому файла
+        detected_mode = self._detect_link_mode(urls)
+        self.link_mode = detected_mode
         
         # Ищем, загружался ли уже этот файл, чтобы добавить в тот же пул
         existing_keys = [k for fname, k, _ in self._link_files if fname == filename]
@@ -651,7 +685,7 @@ class ContentManager:
         self._link_files.append((filename, key, len(urls)))
         # Сортируем для красоты (пустые ключи первые, потом по числу)
         self._link_files.sort(key=lambda x: int(x[1]) if x[1].isdigit() else 0)
-        return key, len(urls)
+        return key, len(urls), detected_mode
 
     def clear_links(self) -> None:
         self._link_pools.clear()

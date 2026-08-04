@@ -303,13 +303,17 @@ class SetupTab:
         def on_done() -> None:
             def _f() -> None:
                 self._proxy_checking = False
+                self.proxy_mgr.sort_by_score()  # Сортировка: лучшие прокси первые
                 self.btn_px_check.configure(text="⚡ Проверить все", state="normal")
                 self._px_set_state("normal")
+                self._px_refresh()  # Перерисовать с новым порядком
                 self._px_update_stats()
                 a, d = self.proxy_mgr.count_alive, self.proxy_mgr.count_dead
+                bl = self.proxy_mgr.count_blacklisted
+                bl_str = f"  ⛔BL: {bl}" if bl > 0 else "  ✅BL: чисто"
                 self.px_action.configure(
-                    text=f"✓  Готово — Живых: {a}  Мертвых: {d}", text_color=COLOR_ACCENT)
-                self.logger.info(f"Proxy check done: alive={a}, dead={d}",
+                    text=f"✓  Готово — Живых: {a}  Мертвых: {d}{bl_str}", text_color=COLOR_ACCENT)
+                self.logger.info(f"Proxy check done: alive={a}, dead={d}, blacklisted={bl}",
                                  source="proxy")
             self.parent.after(0, _f)
 
@@ -409,13 +413,16 @@ class SetupTab:
         t = self.proxy_mgr.count_total
         a = self.proxy_mgr.count_alive
         d = self.proxy_mgr.count_dead
-        self.px_stats.configure(text=f"Всего: {t}  ·  Живых: {a}  ·  Мертвых: {d}")
+        bl = self.proxy_mgr.count_blacklisted
+        bl_str = f"  ·  ⛔BL: {bl}" if bl > 0 else ""
+        self.px_stats.configure(text=f"Всего: {t}  ·  Живых: {a}  ·  Мертвых: {d}{bl_str}")
 
     @staticmethod
     def _px_row(p) -> str:
         server_info = f"  ✓ {p.passed_server}" if getattr(p, "passed_server", "") else ""
         geo = ""
         ping = ""
+        bl = ""
         if p.status.name == "ALIVE":
             geo_code = getattr(p, "country", "")
             if geo_code:
@@ -425,7 +432,16 @@ class SetupTab:
             else:
                 geo = " [?]"
             ping = f" {p.ping_ms}ms" if getattr(p, "ping_ms", 0) else ""
-        return f" [{p.protocol.upper():6s}] {p.host}:{p.port:<6}  {p.status.value}{ping}{geo}{server_info}"
+            # DNSBL статус
+            bl_status = getattr(p, "blacklist_clean", None)
+            if bl_status is True:
+                bl = " ✅BL:clean"
+            elif bl_status is False:
+                hits = getattr(p, "blacklist_hits", []) or []
+                bl = f" ⛔BL:{len(hits)}hits"
+            else:
+                bl = ""
+        return f" [{p.protocol.upper():6s}] {p.host}:{p.port:<6}  {p.status.value}{ping}{geo}{bl}{server_info}"
 
     @staticmethod
     def _px_color(status: ProxyStatus) -> str:
@@ -633,7 +649,7 @@ class SetupTab:
 
         self.smtp_mgr.check_all(
             proxy_getter=proxy_getter,
-            max_workers=15,
+            max_workers=40,
             on_progress=on_prog,
             on_done=on_done,
         )
