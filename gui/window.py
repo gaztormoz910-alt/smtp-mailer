@@ -167,6 +167,7 @@ class App(ctk.CTk):
         data["senders_file"] = self.tab_content._senders_file
         data["link_files"] = list(self.tab_content._link_file_paths)
         data["consistent_links"] = self.content_mgr.consistent_links
+        data["link_mode"] = self.content_mgr.link_mode
         data["email_only"] = self.content_mgr.email_only
 
         # Campaign
@@ -268,6 +269,7 @@ class App(ctk.CTk):
 
         # Content — flags
         self.content_mgr.consistent_links = data.get("consistent_links", False)
+        self.content_mgr.link_mode = data.get("link_mode", "urls")
         self.content_mgr.email_only = data.get("email_only", False)
         self.tab_content.consistent_var.set(self.content_mgr.consistent_links)
         self.tab_content.email_only_var.set(self.content_mgr.email_only)

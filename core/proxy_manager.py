@@ -41,6 +41,8 @@ class ProxyEntry:
     passed_server: str = ""   # host:port SMTP-сервера, на котором прокси прошла
     country: str = ""
     ping_ms: int = 0
+    blacklist_clean: bool | None = None   # None=не проверено, True=чисто, False=в блэклисте
+    blacklist_hits: list[str] | None = None  # названия DNSBL, в которых найден IP
 
     # --- helpers ---
 
@@ -53,6 +55,27 @@ class ProxyEntry:
         """Полный URL для requests (поддерживает PySocks)."""
         auth = f"{self.username}:{self.password}@" if self.username else ""
         return f"{self.protocol}://{auth}{self.host}:{self.port}"
+
+    @property
+    def score(self) -> int:
+        """Качество прокси 0-100. Используется для сортировки/приоритизации."""
+        if self.status != ProxyStatus.ALIVE:
+            return 0
+        s = 50  # базовый балл за Alive
+        # Ping: <200ms = +30, <500ms = +20, <1000ms = +10
+        if self.ping_ms > 0:
+            if self.ping_ms < 200:
+                s += 30
+            elif self.ping_ms < 500:
+                s += 20
+            elif self.ping_ms < 1000:
+                s += 10
+        # Blacklist: чисто = +20, грязно = -40
+        if self.blacklist_clean is True:
+            s += 20
+        elif self.blacklist_clean is False:
+            s -= 40
+        return max(0, min(100, s))
 
     @property
     def display(self) -> str:
@@ -141,6 +164,60 @@ _CHECK_TIMEOUTS = [5, 10]   # эскалация: быстрый → медле�
 _CHECK_RETRIES = 1       # 1 повторная попытка перед вердиктом Dead
 _RETRY_PAUSE = 2         # секунд между попытками
 
+
+# ── DNSBL Blacklist Check ─────────────────────────────────
+
+import socket as _socket
+
+# Основные DNSBL, проверяемые почтовыми серверами (Gmail, Outlook, Yahoo)
+_DNSBL_SERVERS = [
+    "zen.spamhaus.org",        # Spamhaus ZEN (SBL+XBL+PBL) — самый важный
+    "b.barracudacentral.org",  # Barracuda — второй по важности
+    "bl.spamcop.net",          # SpamCop — жалобы пользователей
+    "dnsbl.sorbs.net",         # SORBS — широко используется
+    "all.s5h.net",             # s5h.net — быстрый и актуальный
+]
+
+
+def _check_dnsbl(ip: str, timeout: float = 2.0) -> tuple[bool, list[str]]:
+    """Проверяет IP в DNSBL блэклистах.
+    
+    Возвращает ``(is_clean, hit_list)``.
+    ``is_clean=True`` — IP чист, ``hit_list`` пуст.
+    ``is_clean=False`` — IP найден минимум в одном блэклисте.
+    """
+    # Разворачиваем IP: 1.2.3.4 → 4.3.2.1
+    try:
+        parts = ip.split(".")
+        if len(parts) != 4:
+            return True, []  # Не IPv4 — пропускаем
+        reversed_ip = ".".join(reversed(parts))
+    except Exception:
+        return True, []
+    
+    hits: list[str] = []
+    original_timeout = _socket.getdefaulttimeout()
+    _socket.setdefaulttimeout(timeout)
+    try:
+        for dnsbl in _DNSBL_SERVERS:
+            query = f"{reversed_ip}.{dnsbl}"
+            try:
+                result = _socket.gethostbyname(query)
+                # Если DNS резолвится (обычно 127.0.0.x) — IP в блэклисте
+                if result.startswith("127."):
+                    hits.append(dnsbl)
+            except _socket.gaierror:
+                # NXDOMAIN = IP НЕ в этом блэклисте (хорошо)
+                pass
+            except _socket.timeout:
+                pass
+            except Exception:
+                pass
+    finally:
+        _socket.setdefaulttimeout(original_timeout)
+    
+    return len(hits) == 0, hits
+
 # Динамические хосты из загруженных SMTP-аккаунтов
 _USER_SMTP_TARGETS: list[tuple[str, int]] = []
 
@@ -178,7 +255,7 @@ def _smtp_tcp_test(proxy: ProxyEntry) -> bool:
     for t in all_targets:
         if t not in unique_targets:
             unique_targets.append(t)
-    targets_to_check = unique_targets[:3]
+    targets_to_check = unique_targets[:5]  # Проверяем до 5 серверов вместо 3
     
     for idx, (host, port) in enumerate(targets_to_check):
         timeout = _CHECK_TIMEOUTS[0] if idx == 0 else _CHECK_TIMEOUTS[-1]
@@ -243,17 +320,26 @@ def _check_single(proxy: ProxyEntry, on_geo_done=None) -> ProxyEntry:
     """Проверяет прокси TCP-соединением на SMTP-порт. Ставит статус Alive/Dead.
 
     При неудаче делает 1 повторную попытку через короткую паузу.
+    После успешного TCP-теста — параллельно проверяет DNSBL и GEO.
     """
     for attempt in range(_CHECK_RETRIES + 1):
         if _smtp_tcp_test(proxy):
             proxy.status = ProxyStatus.ALIVE
             
+            # ── DNSBL проверка (быстрая, ~1-2 сек) ──
+            try:
+                is_clean, hits = _check_dnsbl(proxy.host)
+                proxy.blacklist_clean = is_clean
+                proxy.blacklist_hits = hits if hits else None
+            except Exception:
+                proxy.blacklist_clean = None  # не удалось проверить
+            
+            # ── GEO (fire-and-forget, НЕ блокирует) ──
             def _fetch_geo():
                 import requests
                 p_url = proxy.url.replace("socks5://", "socks5h://").replace("socks4://", "socks4a://")
                 proxies = {"http": p_url, "https": p_url}
                 
-                # Попытка 1: Через сам прокси (чтобы узнать реальный выходной IP и обойти лимиты)
                 for api_url in ["http://ip-api.com/json/", "https://ipinfo.io/json"]:
                     try:
                         resp = requests.get(api_url, proxies=proxies, timeout=4)
@@ -266,10 +352,8 @@ def _check_single(proxy: ProxyEntry, on_geo_done=None) -> ProxyEntry:
                     except Exception:
                         pass
                         
-                # Попытка 2: Локально (если прокси блокирует HTTP-порты 80/443)
                 for api_url in [f"http://ip-api.com/json/{proxy.host}", f"https://ipinfo.io/{proxy.host}/json"]:
                     try:
-                        # Без прокси, напрямую со своего IP
                         resp = requests.get(api_url, timeout=4)
                         if resp.status_code == 200:
                             data = resp.json()
@@ -280,13 +364,12 @@ def _check_single(proxy: ProxyEntry, on_geo_done=None) -> ProxyEntry:
                     except Exception:
                         pass
 
-            t = threading.Thread(target=_fetch_geo, daemon=True)
-            t.start()
-            t.join(timeout=6.0) # Ждем 6 секунд, если не успели - ставим [?]
+            # Fire-and-forget: не блокируем поток проверки ради гео
+            threading.Thread(target=_fetch_geo, daemon=True).start()
             
             return proxy
         if attempt < _CHECK_RETRIES:
-            time.sleep(1) # Было _RETRY_PAUSE, уменьшили для скорости
+            time.sleep(1)
 
     proxy.status = ProxyStatus.DEAD
     return proxy
@@ -333,6 +416,13 @@ class ProxyManager:
         with self._lock:
             return sum(1 for p in self._proxies if p.status == ProxyStatus.DEAD)
 
+    @property
+    def count_blacklisted(self) -> int:
+        """Количество прокси, найденных в DNSBL блэклистах."""
+        with self._lock:
+            return sum(1 for p in self._proxies 
+                       if p.status == ProxyStatus.ALIVE and p.blacklist_clean is False)
+
     # -- загрузка --------------------------------------------------
 
     def clear(self) -> None:
@@ -348,6 +438,8 @@ class ProxyManager:
                 p.passed_server = ""
                 p.ping_ms = 0
                 p.country = ""
+                p.blacklist_clean = None
+                p.blacklist_hits = None
 
     def load_from_lines(self, lines: list[str]) -> int:
         """Парсит строки и добавляет в список. Возвращает кол-во добавленных."""
@@ -429,11 +521,19 @@ class ProxyManager:
     # -- ротация ---------------------------------------------------
 
     def get_next(self) -> ProxyEntry | None:
-        """Round-robin по живым прокси без O(N) аллокаций памяти."""
+        """Round-robin по живым прокси. Пропускает забаненные в DNSBL."""
         with self._lock:
             total = len(self._proxies)
             if not total:
                 return None
+            # Первый проход: ищем Alive + чистый blacklist
+            for _ in range(total):
+                idx = self._rotation_idx % total
+                self._rotation_idx = idx + 1
+                p = self._proxies[idx]
+                if p.status == ProxyStatus.ALIVE and p.blacklist_clean is not False:
+                    return p
+            # Второй проход: если все в blacklist — берём любой Alive
             for _ in range(total):
                 idx = self._rotation_idx % total
                 self._rotation_idx = idx + 1
@@ -441,6 +541,12 @@ class ProxyManager:
                 if p.status == ProxyStatus.ALIVE:
                     return p
             return None
+
+    def sort_by_score(self) -> None:
+        """Сортирует прокси по скору (лучшие первые). Вызывать после check_all."""
+        with self._lock:
+            self._proxies.sort(key=lambda p: p.score, reverse=True)
+            self._rotation_idx = 0
 
     # -- авто-обновление -------------------------------------------
 

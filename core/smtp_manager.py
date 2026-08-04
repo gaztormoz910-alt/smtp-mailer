@@ -56,21 +56,110 @@ class SmtpAccount:
         return "PLAIN"
 
 
-# ── Парсинг ───────────────────────────────────────────────
+# Разделители для автодетекта (порядок приоритета)
+_SMTP_DELIMITERS = ['|', ';', ',', '\t']
+
+import re as _re
+
+def _parse_port(raw: str) -> int | None:
+    """Извлекает номер порта из строки, убирая суффиксы вроде (SSL), /TLS и т.п.
+    
+    Примеры: '587' → 587, '465(SSL)' → 465, '587/TLS' → 587, '465 SSL' → 465
+    """
+    raw = raw.strip()
+    if not raw:
+        return None
+    # Извлекаем только цифры из начала строки
+    m = _re.match(r'^(\d+)', raw)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
 
 
 def parse_smtp_line(line: str) -> SmtpAccount | None:
-    """Парсит ``host:port:email:password``.  Пароль может содержать двоеточия."""
+    """Парсит строку SMTP-аккаунта с ЛЮБЫМ разделителем.
+
+    Поддерживаемые форматы (разделитель определяется автоматически):
+
+    **4-поля** (host, port, email, password — раздельно):
+      host|port|email|password
+      host;port;email;password
+      host,port,email,password
+      host<TAB>port<TAB>email<TAB>password
+
+    **3-поля** (host:port вместе):
+      host:port|email|password
+      host:port;email;password
+      host:port,email,password
+
+    **Двоеточие** (fallback):
+      host:port:email:password
+
+    Порт может содержать суффикс: 465(SSL), 587/TLS и т.п.
+    Пароль может содержать любые символы, включая сам разделитель.
+    """
     line = line.strip()
     if not line:
         return None
+
+    # ── 1. Пробуем не-двоеточные разделители ──────────────
+    for delim in _SMTP_DELIMITERS:
+        if delim not in line:
+            continue
+        parts = line.split(delim)
+        if len(parts) < 3:
+            continue
+
+        # ── 1a. 4-поля: host|port|email|password ──────────
+        if len(parts) >= 4:
+            port = _parse_port(parts[1])
+
+            if port is not None:
+                host = parts[0].strip()
+                email = parts[2].strip()
+                # Пароль = всё после третьего разделителя
+                password = delim.join(parts[3:]).strip()
+
+                if host and email and password:
+                    return SmtpAccount(
+                        host=host, port=port,
+                        email=email, password=password,
+                    )
+
+        # ── 1b. 3-поля: host:port|email|password ─────────
+        host_port = parts[0].strip()
+        email = parts[1].strip()
+        password = delim.join(parts[2:]).strip()
+
+        if ':' not in host_port:
+            continue
+        # Если в строке есть '@', но email-поле его не содержит —
+        # значит '@' где-то в другом месте и этот разделитель неверный
+        if '@' not in email and '@' in line:
+            continue
+
+        hp = host_port.rsplit(':', 1)
+        host = hp[0].strip()
+        port = _parse_port(hp[1])
+        if port is None:
+            continue
+
+        if host and email and password:
+            return SmtpAccount(
+                host=host, port=port,
+                email=email, password=password,
+            )
+
+    # ── 2. Fallback: двоеточие (host:port:email:password) ─
     parts = line.split(":", 3)
     if len(parts) < 4:
         return None
     host, port_str, email, password = parts
-    try:
-        port = int(port_str.strip())
-    except ValueError:
+    port = _parse_port(port_str)
+    if port is None:
         return None
     return SmtpAccount(
         host=host.strip(),
@@ -352,8 +441,16 @@ class SmtpManager:
         """Тест-логин одного аккаунта.  Обновляет ``status`` и ``last_error``.
 
         5xx → Dead (перма-бан / неверный пароль).
-        4xx / сетевая ошибка → повторная попытка через 5 секунд.
+        4xx / сетевая ошибка → повторная попытка.
         Если и вторая попытка провалилась — остаётся в ротации (Untested).
+        
+        Детализированная диагностика ошибок:
+        - Account Locked (заблокирован Microsoft/Google)
+        - Bad Credentials (неверный пароль/App Password)
+        - IP Blocked (бан по IP)
+        - Rate Limited (превышен лимит)
+        - TLS Failure (проблема шифрования)
+        - Connection Error (сетевая ошибка / прокси)
         """
         max_attempts = 2
         for attempt in range(max_attempts):
@@ -374,32 +471,92 @@ class SmtpManager:
                 msg = exc.smtp_error
                 if isinstance(msg, bytes):
                     msg = msg.decode(errors="replace")
-                account.last_error = f"Auth failed: {msg}"
+                msg_lower = msg.lower()
+                
+                # Детализация причины отказа аутентификации
+                if any(w in msg_lower for w in ("locked", "disabled", "suspended", "blocked",
+                                                  "deactivated", "compromised")):
+                    account.last_error = f"🔒 Account Locked: {msg}"
+                elif any(w in msg_lower for w in ("badcredentials", "invalid password",
+                                                    "wrong password", "incorrect")):
+                    account.last_error = f"🔑 Bad Credentials: {msg}"
+                elif "too many" in msg_lower or "rate" in msg_lower:
+                    account.last_error = f"⏱️ Rate Limited: {msg}"
+                else:
+                    account.last_error = f"Auth failed: {msg}"
+                return False
+
+            except smtplib.SMTPConnectError as exc:
+                code = getattr(exc, "smtp_code", 0)
+                err = str(exc)
+                err_lower = err.lower()
+                
+                if "starttls" in err_lower or "tls" in err_lower:
+                    account.last_error = f"🔐 TLS Failure: {err}"
+                    if attempt < max_attempts - 1:
+                        time.sleep(1)
+                        continue
+                    account.status = SmtpStatus.UNTESTED
+                    return False
+                
+                account.last_error = f"Connect error ({code}): {err}"
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+                    continue
+                account.status = SmtpStatus.UNTESTED
                 return False
 
             except smtplib.SMTPException as exc:
                 code = getattr(exc, "smtp_code", 0)
                 err = str(exc)
+                err_lower = err.lower()
+                
                 if code and code >= 500:
+                    # Детализация 5xx
+                    if any(w in err_lower for w in ("blocked", "banned", "blacklisted",
+                                                      "denied", "rejected")):
+                        account.last_error = f"🚫 IP Blocked ({code}): {err}"
+                    elif any(w in err_lower for w in ("relay", "not allowed")):
+                        account.last_error = f"⛔ Relay Denied ({code}): {err}"
+                    else:
+                        account.last_error = f"Permanent ({code}): {err}"
                     account.status = SmtpStatus.DEAD
-                    account.last_error = f"Permanent ({code}): {err}"
                     return False
-                # Временная ошибка (4xx) — попробуем ещё раз
-                account.last_error = f"Temp error: {err}"
+                
+                # 4xx — временная ошибка
+                if any(w in err_lower for w in ("too many", "rate", "throttl")):
+                    account.last_error = f"⏱️ Rate Limited: {err}"
+                elif "try again" in err_lower or "temporary" in err_lower:
+                    account.last_error = f"⏳ Temp error (retry): {err}"
+                else:
+                    account.last_error = f"Temp error: {err}"
+                    
                 if attempt < max_attempts - 1:
-                    time.sleep(1) # Уменьшена задержка, чтобы UI не висел долго
+                    time.sleep(1)
                     continue
                 account.status = SmtpStatus.UNTESTED
                 return False
 
             except (OSError, socks.ProxyError, socket.timeout, TimeoutError) as exc:
-                account.last_error = f"Connection error: {exc}"
+                err_str = str(exc).lower()
+                
+                if isinstance(exc, socks.ProxyError) or "proxy" in err_str:
+                    account.last_error = f"🌐 Proxy error: {exc}"
+                elif isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in err_str:
+                    account.last_error = f"⏰ Timeout: {exc}"
+                elif "connection refused" in err_str:
+                    account.last_error = f"🚫 Connection refused: {exc}"
+                elif "ttl expired" in err_str or "unreachable" in err_str:
+                    account.last_error = f"🌐 Network unreachable: {exc}"
+                elif "unexpectedly closed" in err_str or "eof" in err_str:
+                    account.last_error = f"💔 Connection dropped: {exc}"
+                else:
+                    account.last_error = f"Connection error: {exc}"
+                    
                 if attempt < max_attempts - 1:
-                    time.sleep(1) # Уменьшена задержка
+                    time.sleep(1)
                     continue
-                # Важно: если ошибка сетевая (таймаут, отказ прокси), мы НЕ помечаем SMTP аккаунт как DEAD.
-                # Потому что проблема может быть в самом прокси, а не в SMTP сервере/аккаунте.
-                # Мёртвым (DEAD) аккаунт считается только если сервер ответил "Неверный логин" или 5xx ошибкой.
+                # Сетевая ошибка → НЕ Dead (может быть проблема прокси, а не аккаунта)
                 account.status = SmtpStatus.UNTESTED
                 return False
 
@@ -409,12 +566,14 @@ class SmtpManager:
                 return False
         return False
 
-    _HOST_MAX_CONCURRENT = 3   # макс. одновременных соединений к одному хосту
+    _HOST_MAX_CONCURRENT = 12   # макс. одновременных соединений к одному хосту
+    # Office365/Gmail держат 10-15+ параллельных логинов.
+    # При 3 — проверка 90k аккаунтов занимает ~33ч, при 12 — ~4-5ч.
 
     def check_all(
         self,
         proxy_getter: Callable[[], Any] | None = None,
-        max_workers: int = 10,
+        max_workers: int = 30,
         on_progress: Callable[[int, int, SmtpAccount], None] | None = None,
         on_done: Callable[[], None] | None = None,
     ) -> None:

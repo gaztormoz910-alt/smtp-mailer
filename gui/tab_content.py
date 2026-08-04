@@ -142,8 +142,9 @@ class ContentTab:
         f = self._frame(c, r, col, pad_right=True)
         ctk.CTkLabel(f, text="🔗  Ссылки", font=(FONT_FAMILY, 13, "bold"),
                      text_color=COLOR_TEXT, anchor="w").pack(fill="x", padx=12, pady=(10, 2))
-        ctk.CTkLabel(f, text=".txt · один URL на строку · 1-й файл→[[LINK]]  2-й файл→[[LINK1]]",
-                     font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w").pack(fill="x", padx=14, pady=(0, 2))
+        self.link_hint = ctk.CTkLabel(f, text=".txt · один URL на строку · 1-й файл→[[LINK]]  2-й файл→[[LINK1]]",
+                     font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w")
+        self.link_hint.pack(fill="x", padx=14, pady=(0, 2))
 
         row = ctk.CTkFrame(f, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 3))
@@ -381,23 +382,37 @@ class ContentTab:
 
         def _do() -> None:
             loaded: list[str] = []
+            detected_mode = "urls"
             for p in paths:
                 try:
-                    key, count = self.content_mgr.load_links_file(p)
+                    key, count, detected_mode = self.content_mgr.load_links_file(p)
                     if p not in self._link_file_paths:
                         self._link_file_paths.append(p)
                     macro = f"[[LINK{key}]]"
-                    self.logger.info(f"Loaded {count} links → {macro}", source="content", file=str(p))
+                    self.logger.info(f"Loaded {count} links → {macro} (mode: {detected_mode})", source="content", file=str(p))
                     loaded.append(f"{Path(p).name}: {count} → {macro}")
                 except Exception as e:
                     loaded.append(f"{Path(p).name}: error — {e}")
-            self.parent.after(0, lambda: self._links_done(loaded))
+            self.parent.after(0, lambda: self._links_done(loaded, detected_mode))
         threading.Thread(target=_do, daemon=True).start()
 
-    def _links_done(self, msgs: list[str]) -> None:
+    def _links_done(self, msgs: list[str], mode: str = "urls") -> None:
         self._refresh_link_list()
         total = sum(len(pool) for pool in self.content_mgr.link_pools.values())
-        self.link_action.configure(text=f"✓ Добавлено {len(msgs)} файл(ов) (Всего ссылок: {total})", text_color=COLOR_ACCENT)
+        mode_label = "🎲 Спинтакс" if mode == "spintax" else "📋 Готовые URL"
+        self.link_action.configure(
+            text=f"✓ {len(msgs)} файл(ов) · {total} шт. · Режим: {mode_label}",
+            text_color=COLOR_ACCENT,
+        )
+        # Обновляем подсказку
+        if mode == "spintax":
+            self.link_hint.configure(
+                text=".txt · спинтакс-шаблоны · каждый [[LINK]] = уникальный URL"
+            )
+        else:
+            self.link_hint.configure(
+                text=".txt · один URL на строку · 1-й файл→[[LINK]]  2-й файл→[[LINK1]]"
+            )
 
     def _on_clear_links(self) -> None:
         self.content_mgr.clear_links()
@@ -409,13 +424,18 @@ class ContentTab:
 
     def _refresh_link_list(self) -> None:
         lines = []
+        mode = self.content_mgr.link_mode
         for filename, key, count in self.content_mgr.link_files:
             macro = f"[[LINK{key}]]"
-            lines.append(f"[{filename} | {count} шт. → {macro}]")
+            mode_tag = " [🎲спинтакс]" if mode == "spintax" else ""
+            lines.append(f"[{filename} | {count} шт. → {macro}{mode_tag}]")
             
             pool = self.content_mgr.link_pools.get(key, [])
             for link in pool:
-                lines.append(link)
+                if mode == "spintax" and len(link) > 90:
+                    lines.append(link[:90] + "…")
+                else:
+                    lines.append(link)
             lines.append("")
             
         text = "\n".join(lines).strip()
