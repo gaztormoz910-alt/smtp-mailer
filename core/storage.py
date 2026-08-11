@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 import requests
@@ -59,6 +60,10 @@ def load_blocks(
 
     text = path.read_text(encoding="utf-8", errors="replace")
     blocks: list[str] = []
+    # Удаляем маркеры блоков кода (```html, ```text, ```) —
+    # пользователи часто копируют их из ответов ИИ вместе с контентом
+    _code_fence_re = re.compile(r'^\s*```(?:html|text|plain)?\s*$', re.MULTILINE)
+    text = _code_fence_re.sub('', text)
     for chunk in text.split(separator):
         cleaned = chunk.strip()
         if cleaned:

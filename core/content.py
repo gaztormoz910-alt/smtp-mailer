@@ -306,12 +306,21 @@ def _replace_homoglyphs(text: str, rate: float = 0.0) -> str:
     else:
         homoglyph_map = _HOMOGLYPHS_LAT_TO_CYR
 
+    # Определяем позиции __ABLOCK_N__ маркеров для защиты от замены
+    _ablock_marker_re = re.compile(r'__ABLOCK_\d+__')
+
     for i in range(len(parts)):
         # Четные индексы — обычный текст вне тегов
         if i % 2 == 0:
+            # Находим позиции символов внутри ABLOCK маркеров — их нельзя менять!
+            protected = set()
+            for m in _ablock_marker_re.finditer(parts[i]):
+                for pos in range(m.start(), m.end()):
+                    protected.add(pos)
+
             chars = list(parts[i])
             for j, char in enumerate(chars):
-                if char in homoglyph_map and rnd.random() < rate:
+                if j not in protected and char in homoglyph_map and rnd.random() < rate:
                     chars[j] = homoglyph_map[char]
             parts[i] = ''.join(chars)
     result = ''.join(parts)
@@ -391,11 +400,22 @@ def _generate_realistic_comment() -> str:
 def _randomize_html_entities(text: str, rate: float = 0.03) -> str:
     """Заменяет ~3% букв в тексте на HTML-entity эквиваленты.
     Визуально ничего не меняется, но исходный код письма уникален.
-    Обрабатывает ТОЛЬКО текстовые ноды (не трогает HTML-теги и атрибуты).
+    Обрабатывает ТОЛЬКО текстовые ноды (не трогает HTML-теги, атрибуты и <a> блоки).
     """
+    # Защищаем <a> блоки от entity-замены (чтобы не ломать видимый текст ссылок)
+    _a_re = re.compile(r'(<a\s[^>]*>.*?</a>)', re.IGNORECASE | re.DOTALL)
+    a_blocks = []
+    def _hide(m):
+        a_blocks.append(m.group(0))
+        return f'__ENTPROT_{len(a_blocks)-1}__'
+    text = _a_re.sub(_hide, text)
+
     parts = re.split(r'(<[^>]+>)', text)
     for i in range(0, len(parts), 2):
         if parts[i]:
+            # Не трогаем защитные маркеры
+            if '__ENTPROT_' in parts[i] or '__ABLOCK_' in parts[i]:
+                continue
             chars = list(parts[i])
             for j, char in enumerate(chars):
                 if char.isalpha() and _rnd.random() < rate:
@@ -408,7 +428,12 @@ def _randomize_html_entities(text: str, rate: float = 0.03) -> str:
                     else:
                         chars[j] = f"&#x{code:X};"
             parts[i] = ''.join(chars)
-    return ''.join(parts)
+    result = ''.join(parts)
+
+    # Восстанавливаем <a> блоки
+    for i, block in enumerate(a_blocks):
+        result = result.replace(f'__ENTPROT_{i}__', block)
+    return result
 
 
 def _inject_css_noise(text: str) -> str:
