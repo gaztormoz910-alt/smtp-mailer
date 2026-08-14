@@ -1,0 +1,276 @@
+<div style="max-width: 600px; margin: 0 auto; background-color: #1c1c1e; border-radius: 16px; padding: 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f2f2f7; box-shadow: 0 10px 20px rgba(0,0,0,0.3);">
+    <div style="display: flex; align-items: center; margin-bottom: 24px;">
+        <div style="background: linear-gradient(135deg, #0a84ff, #5e5ce6); border-radius: 50%; width: 48px; height: 48px; display: inline-block; text-align: center; line-height: 48px; font-size: 24px; color: #fff; margin-right: 16px;">🔔</div>
+        <h2 style="margin: 0; font-size: 20px; font-weight: 600; color: #ffffff;">{New Activity|Recent Update|Notification}</h2>
+    </div>
+    <p style="font-size: 16px; line-height: 1.6; color: #ebebf5; margin-bottom: 24px;">
+        {Hi|Hello|Hey} {{name}},<br><br>
+        {Someone|A user|A girl} {from your area|nearby|in your city} {just|recently} {viewed|checked} your {profile|account} and {left a message|wants to chat|sent a request}.
+    </p>
+    <div style="background-color: #2c2c2e; border-radius: 12px; padding: 20px; margin-bottom: 32px; border-left: 4px solid #0a84ff;">
+        <p style="margin: 0; font-size: 15px; color: #98989d;">
+            <strong>{Status|Activity}:</strong> {Pending match|New connection|Unread message}<br>
+            <strong>{Location|Distance}:</strong> {Less than 5 miles|Very close|Nearby}
+        </p>
+    </div>
+    <a href="[[LINK]]" style="display: block; width: 100%; background: linear-gradient(90deg, #0a84ff, #30b0c7); color: #ffffff; text-align: center; padding: 16px 0; border-radius: 12px; font-size: 16px; font-weight: 600; text-decoration: none; box-shadow: 0 4px 12px rgba(10, 132, 255, 0.4);">
+        {View Details|See Who|Open Message}
+    </a>
+</div>
+
+===END===
+
+<div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 24px; padding: 40px 24px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333333; box-shadow: 0 15px 35px rgba(253, 41, 123, 0.15); text-align: center; border: 1px solid #ffeff4;">
+    <div style="background: linear-gradient(45deg, #fd297b, #ff655b); border-radius: 50%; width: 72px; height: 72px; margin: 0 auto 24px auto; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 16px rgba(253, 41, 123, 0.3);">
+        <span style="font-size: 32px; color: white;">❤️</span>
+    </div>
+    <h1 style="margin: 0 0 16px 0; font-size: 28px; font-weight: 700; color: #fd297b; letter-spacing: -0.5px;">
+        {It's a Match|New Connection|You Caught Her Eye}
+    </h1>
+    <p style="font-size: 18px; line-height: 1.5; color: #555555; margin-bottom: 32px;">
+        {Hey|Hi} {{name}}, {you have|there is} {a new|1} {person|girl} {interested in|checking out} you. {She|This person} is {waiting|online} {now|right now}.
+    </p>
+    <div style="margin-bottom: 40px; padding: 16px; background-color: #f8f9fa; border-radius: 16px;">
+        <p style="margin: 0; font-size: 14px; color: #888888; text-transform: uppercase; letter-spacing: 1px;">{Action Required|Don't keep her waiting}</p>
+    </div>
+    <a href="[[LINK]]" style="display: inline-block; padding: 18px 48px; background: linear-gradient(45deg, #fd297b, #ff655b); color: #ffffff; border-radius: 30px; font-size: 18px; font-weight: bold; text-decoration: none; box-shadow: 0 10px 20px rgba(253, 41, 123, 0.4); transition: transform 0.2s;">
+        {Start Chat|Say Hello|See Profile}
+    </a>
+</div>
+
+===END===
+
+<div style="max-width: 600px; margin: 0 auto; background-color: #0f172a; padding: 40px; border-radius: 20px; font-family: 'Inter', system-ui, sans-serif; color: #e2e8f0; position: relative; overflow: hidden; border: 1px solid #334155;">
+    <h2 style="color: #c4b5fd; font-size: 24px; font-weight: 300; margin-top: 0; letter-spacing: 1px;">
+        {System Alert|Update|Notice} // {{name}}
+    </h2>
+    <div style="width: 40px; height: 2px; background-color: #8b5cf6; margin-bottom: 24px;"></div>
+    <p style="font-size: 16px; line-height: 1.8; color: #cbd5e1; margin-bottom: 32px;">
+        {We detected|There is} {new|recent} {activity|interest} {on your profile|in your account}.<br>
+        {Someone|A user} {nearby|in your vicinity} {has requested|wants} to {view your private photos|connect with you|start a conversation}.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 32px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+        <tr>
+            <td style="padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #94a3b8;">{Distance|Location}</td>
+            <td style="padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #f8fafc; text-align: right; font-weight: 600;">{< 2 miles|< 5 km|Very Close}</td>
+        </tr>
+        <tr>
+            <td style="padding: 16px; color: #94a3b8;">{Intent|Looking for}</td>
+            <td style="padding: 16px; color: #f8fafc; text-align: right; font-weight: 600;">{Chat & Meet|Casual|Hookup}</td>
+        </tr>
+    </table>
+    <a href="[[LINK]]" style="display: block; width: 100%; text-align: center; padding: 18px 0; background-color: #8b5cf6; color: #ffffff; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);">
+        {Access Now|Unlock Profile|View Request}
+    </a>
+</div>
+
+===END===
+
+<div style="max-width: 550px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #ffffff; border: 1px solid #e1e4e8; border-radius: 8px; overflow: hidden;">
+    <div style="background-color: #24292e; padding: 20px; text-align: center;">
+        <div style="color: #ffffff; font-size: 20px; font-weight: 600; letter-spacing: 1px;">{Social|Network} {Alert|Notification}</div>
+    </div>
+    <div style="padding: 40px 30px;">
+        <h3 style="margin-top: 0; color: #24292e; font-size: 22px; font-weight: 400;">
+            {Hi|Hello} {{name}},
+        </h3>
+        <p style="color: #586069; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+            {You appeared in|Your profile was in} {several|multiple} {searches|match lists} {this week|recently}.<br><br>
+            {One person|A user} {from your city|nearby} {took action|sent a message}. {Don't leave them waiting|Check it out now}.
+        </p>
+        <div style="text-align: center;">
+            <a href="[[LINK]]" style="display: inline-block; background-color: #2ea44f; color: #ffffff; padding: 14px 32px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; box-shadow: 0 4px 6px rgba(46, 164, 79, 0.2);">
+                {Review Activity|See Connections|Open Inbox}
+            </a>
+        </div>
+        <hr style="border: 0; border-top: 1px solid #e1e4e8; margin: 40px 0 20px 0;">
+        <p style="color: #a3aab1; font-size: 12px; text-align: center; margin: 0;">
+            {Sent to|Delivered to}: {{email}}<br>
+            {Automated message|System notification}
+        </p>
+    </div>
+</div>
+
+===END===
+
+<div style="max-width: 600px; margin: 0 auto; font-family: Arial, sans-serif; font-size: 16px; color: #333; line-height: 1.5; padding: 20px;">
+    <p>{Hey|Hi} {{name}},</p>
+    <p>{I noticed|We saw} {you haven't|you didn't} {checked|read} your {messages|inbox} {lately|recently}.</p>
+    <p>{There is|You have} <strong style="color: #d93025;">{1 unread message|a pending chat}</strong> {waiting|sitting} {for you|there}. {The sender|She} is {from your area|local} and {is online now|wants to talk}.</p>
+    <p style="margin: 30px 0;">
+        <a href="[[LINK]]" style="background-color: #1a73e8; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+            {Read Message|Reply Now|Open Chat}
+        </a>
+    </p>
+    <p>{Best|Regards},<br>{{senderName}}</p>
+</div>
+
+===END===
+
+<div style="max-width: 500px; margin: 0 auto; background-color: #111111; padding: 40px; text-align: center; font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, serif; border: 2px solid #d4af37;">
+    <div style="color: #d4af37; font-size: 36px; margin-bottom: 20px;">✧</div>
+    <h1 style="color: #d4af37; font-size: 24px; font-weight: normal; margin-top: 0; text-transform: uppercase; letter-spacing: 3px;">
+        {Exclusive|Premium} {Match|Invitation}
+    </h1>
+    <p style="color: #aaaaaa; font-size: 18px; line-height: 1.6; margin-bottom: 40px; font-style: italic;">
+        {Greetings|Welcome} {{name}},<br><br>
+        {A highly compatible|An exclusive} {match|connection} {has been found|is waiting} {for you|in your area}. {She|This person} {specifically requested|asked} to {connect|chat} with you.
+    </p>
+    <a href="[[LINK]]" style="display: inline-block; border: 1px solid #d4af37; color: #d4af37; padding: 15px 40px; text-decoration: none; text-transform: uppercase; letter-spacing: 2px; font-size: 14px; transition: all 0.3s; background-color: transparent;">
+        {Reveal Identity|View Profile|Accept Invitation}
+    </a>
+</div>
+
+===END===
+
+<div style="max-width: 450px; margin: 0 auto; background-color: #f0f2f5; padding: 30px 20px; font-family: Helvetica, Arial, sans-serif; border-radius: 20px;">
+    <div style="text-align: center; color: #8e8e93; font-size: 12px; margin-bottom: 20px; text-transform: uppercase;">
+        {Today|Just now}
+    </div>
+    <div style="background-color: #ffffff; padding: 16px 20px; border-radius: 20px; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); margin-bottom: 24px; color: #000000; font-size: 16px; line-height: 1.4; display: inline-block; max-width: 85%;">
+        {Hey|Hi} {{name}}! {Are you there|Are you free}? 👋<br>
+        {I saw your profile|I noticed you} and {wanted to say hi|wanted to chat}.
+    </div>
+    <div style="clear: both;"></div>
+    <div style="text-align: right; margin-top: 10px;">
+        <a href="[[LINK]]" style="display: inline-block; background-color: #0084ff; color: #ffffff; padding: 12px 24px; border-radius: 20px; text-decoration: none; font-weight: bold; box-shadow: 0 2px 4px rgba(0, 132, 255, 0.3);">
+            {Type a reply...|Reply to her...|Send message}
+        </a>
+    </div>
+</div>
+
+===END===
+
+<div style="max-width: 600px; margin: 0 auto; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #ffffff; border: 1px solid #e0e0e0; padding: 0;">
+    <div style="background-color: #ff9800; color: #ffffff; padding: 16px 24px; font-size: 18px; font-weight: 600;">
+        ⚠️ {Action Required|Attention Needed}: {{name}}
+    </div>
+    <div style="padding: 30px 24px;">
+        <p style="font-size: 16px; color: #333333; line-height: 1.6; margin-top: 0;">
+            {Your profile|Your account} {has a pending|received a private} {request|message} {that will expire soon|that is waiting}.
+        </p>
+        <p style="font-size: 16px; color: #666666; margin-bottom: 30px;">
+            {For your privacy|For security}, {we keep these hidden|these are blurred} {until you verify|until you log in}. {Someone|A girl} {nearby|in your city} {sent this|is waiting}.
+        </p>
+        <a href="[[LINK]]" style="display: inline-block; background-color: #333333; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 4px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+            {View Secure Message|Unlock Now|Read Safely}
+        </a>
+    </div>
+</div>
+
+===END===
+
+<div style="max-width: 550px; margin: 0 auto; background-color: #050505; border: 1px solid #ff007f; padding: 40px; font-family: 'Courier New', Courier, monospace; color: #00ffcc; border-radius: 10px; box-shadow: inset 0 0 20px rgba(255, 0, 127, 0.2);">
+    <h2 style="color: #ff007f; text-transform: uppercase; margin-top: 0; font-size: 22px; text-shadow: 0 0 10px rgba(255, 0, 127, 0.5);">
+        > {NEW_CONNECTION_DETECTED|SYSTEM_ALERT} _
+    </h2>
+    <p style="line-height: 1.6; margin-bottom: 30px; font-size: 15px;">
+        TARGET: {{name}}<br>
+        STATUS: {MATCH PENDING|MESSAGE UNREAD}<br>
+        LOCATION: {PROXIMITY ALERT - LOCAL|NEARBY ZONE}
+    </p>
+    <p style="color: #aaaaaa; margin-bottom: 40px;">
+        {A user|An entity} {is requesting|wants} {to establish a link|to chat} {with you|immediately}. {Do not ignore|Respond soon}.
+    </p>
+    <a href="[[LINK]]" style="display: inline-block; background-color: transparent; color: #ff007f; border: 2px solid #ff007f; padding: 12px 24px; text-decoration: none; font-weight: bold; font-size: 16px; box-shadow: 0 0 10px rgba(255, 0, 127, 0.4); text-transform: uppercase;">
+        [ {ACCEPT_CONNECTION|INITIALIZE_CHAT} ]
+    </a>
+</div>
+
+===END===
+
+<div style="max-width: 500px; margin: 0 auto; background-color: #fdfbf7; border-radius: 16px; padding: 40px; font-family: 'Georgia', serif; color: #4a4a4a; text-align: center; border: 1px solid #eaeaea;">
+    <div style="width: 60px; height: 60px; background-color: #ffd6d6; border-radius: 50%; margin: 0 auto 20px auto; display: flex; align-items: center; justify-content: center; font-size: 28px;">
+        💌
+    </div>
+    <h2 style="margin: 0 0 15px 0; font-size: 24px; color: #333333;">{A little surprise|Someone said hi|New attention}</h2>
+    <p style="font-size: 16px; line-height: 1.8; margin-bottom: 30px;">
+        {Hello|Hi there} {{name}},<br><br>
+        {Someone|A local girl} {just|recently} {swiped right on you|sent you a wink}. {We thought you'd like to know|She is hoping you'll reply}!
+    </p>
+    <a href="[[LINK]]" style="display: inline-block; background-color: #ff7b7b; color: white; text-decoration: none; padding: 14px 35px; border-radius: 30px; font-weight: bold; font-family: sans-serif; box-shadow: 0 4px 10px rgba(255, 123, 123, 0.3);">
+        {Say Hi Back|See Her Photo|Open Chat}
+    </a>
+</div>
+
+===END===
+
+<div style="max-width: 500px; margin: 0 auto; background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%); padding: 3px; border-radius: 24px; font-family: -apple-system, sans-serif;">
+    <div style="background-color: white; border-radius: 21px; padding: 40px 30px; text-align: center;">
+        <h2 style="margin-top: 0; color: #dc2743; font-size: 24px;">{You're Popular|New Attention|Profile Views}</h2>
+        <p style="font-size: 16px; color: #262626; line-height: 1.6; margin-bottom: 30px;">
+            {Hi|Hey} {{name}},<br>
+            {Your profile|Your account} {is getting noticed|is blowing up} {today|right now}. {Several people|A girl} {nearby|in your area} {want|wants} to {connect|chat}.
+        </p>
+        <a href="[[LINK]]" style="display: inline-block; width: 100%; background-color: #0095f6; color: white; padding: 14px 0; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px;">
+            {Check Your Views|See Who|Open App}
+        </a>
+    </div>
+</div>
+
+===END===
+
+<div style="max-width: 600px; margin: 0 auto; font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #000000; line-height: 1.4; padding: 15px;">
+    <p>{Hi|Hey} {{name}},</p>
+    <p>{Just writing|I wanted} to {let you know|tell you} that {someone|a user} {nearby|from your area} {is trying|wants} to {reach you|get in touch}.</p>
+    <p>{I think|Looks like} {she|this person} {is online now|sent a photo}.</p>
+    <p>{Anyway, here is the link|You can check it here}:<br>
+    <a href="[[LINK]]" style="color: #0000EE; text-decoration: underline;">{View Profile & Messages|Click here to open chat|Access your inbox}</a></p>
+    <p>- {{senderName}}</p>
+</div>
+
+===END===
+
+<div style="max-width: 500px; margin: 0 auto; background-color: #121212; border-left: 5px solid #00ff00; padding: 30px; font-family: 'Trebuchet MS', sans-serif; color: #e0e0e0; box-shadow: 0 10px 30px rgba(0,255,0,0.1);">
+    <h3 style="color: #00ff00; margin-top: 0; font-size: 20px; font-weight: normal; letter-spacing: 1px;">
+        {STATUS UPDATE|ACTIVITY LOG}
+    </h3>
+    <p style="font-size: 16px; line-height: 1.7; margin-bottom: 25px;">
+        {User|Account}: <strong>{{name}}</strong><br>
+        {Event|Activity}: {1 New Message|Match Request}<br>
+        {Proximity|Location}: {Local|Nearby}
+    </p>
+    <p style="margin-bottom: 35px; color: #aaaaaa;">
+        {Please review|You have} {pending actions|messages} {waiting for|requiring} your {attention|reply}.
+    </p>
+    <a href="[[LINK]]" style="display: inline-block; border: 1px solid #00ff00; color: #00ff00; padding: 10px 25px; text-decoration: none; font-weight: bold; text-transform: uppercase;">
+        {Launch Panel|View Details|Open}
+    </a>
+</div>
+
+===END===
+
+<div style="max-width: 550px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden;">
+    <div style="background-color: #f3f4f6; padding: 15px 20px; border-bottom: 1px solid #e5e7eb;">
+        <span style="color: #4b5563; font-weight: 600; font-size: 15px;">📅 {New Plan|Date Request|Upcoming}</span>
+    </div>
+    <div style="padding: 30px 20px;">
+        <h2 style="margin: 0 0 15px 0; color: #111827; font-size: 22px;">{Are you free|Available} {tonight|this week}, {{name}}?</h2>
+        <p style="color: #4b5563; font-size: 16px; line-height: 1.6; margin-bottom: 25px;">
+            {A girl|Someone} {living close to you|in your city} {has asked|wants to know} if you are {available to chat|free to meet}.<br>
+            {She|This person} {left a private note|sent a message}.
+        </p>
+        <a href="[[LINK]]" style="display: inline-block; background-color: #4f46e5; color: #ffffff; padding: 12px 28px; border-radius: 6px; text-decoration: none; font-weight: 500; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.2);">
+            {View Her Note|Check Availability|Respond Now}
+        </a>
+    </div>
+</div>
+
+===END===
+
+<div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 2px solid #dc3545; padding: 30px; font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; border-radius: 8px;">
+    <h2 style="color: #dc3545; margin-top: 0; font-size: 26px; font-weight: bold; text-transform: uppercase;">
+        {Final Notice|Message Expiring|Reminder}
+    </h2>
+    <p style="color: #333333; font-size: 17px; line-height: 1.5; margin-bottom: 25px;">
+        {{name}}, {your match|your unread message} {is about to|will} {expire|be deleted} {soon|shortly}.
+    </p>
+    <p style="color: #6c757d; font-size: 15px; margin-bottom: 35px;">
+        {The sender|She} {is waiting|is online} {right now|nearby}. {Don't miss out|Reply before it's gone}.
+    </p>
+    <a href="[[LINK]]" style="display: block; background-color: #dc3545; color: #ffffff; padding: 15px; text-decoration: none; font-size: 18px; font-weight: bold; border-radius: 5px;">
+        {Recover Message|View Now|Don't Lose Match}
+    </a>
+</div>
+
+===END===

@@ -1,0 +1,30 @@
+{hey|hi} {{name}}, {someone|a girl} {from your area|nearby} {wants|tried} to {reach|contact} you
+{{name}}, {you have|you got} {a new|1} {notification|message} {waiting|pending}
+{are you|you} {available|free} {tonight|later}, {{name}}?
+{important|quick} {question|update} for {{name}}
+{{name}}, {did you|you} {miss|forget} this {message|notification}?
+{someone|a member} {nearby|close to you} {liked|viewed} your profile
+{waiting|still waiting} for your {reply|answer}, {{name}}
+{{name}}, {I found|we matched} your {profile|account} {recently|today}
+{new|unread} {activity|message} on your {account|profile}
+{{name}}, {this|your profile} {caught my eye|looks familiar}
+{just|simply} {checking|following} in with you, {{name}}
+{your|a} {match|connection} is {waiting|ready} {{name}}
+{{name}}, {is this|this is} {for you|yours}?
+{don't|do not} {ignore|miss} this {message|notification}
+{about|regarding} your {account|profile} {{name}}
+{{name}}, {someone|a girl} {asked|was asking} about you
+{quick|short} {chat|question} {{name}}?
+{{name}}, {you got|you received} {a match|an update}
+{did you|you} {forget|miss} to {reply|answer}?
+{new|recent} {profile|account} {views|activity} for {{name}}
+{{name}}, {we need|I need} to {talk|chat} {briefly|quickly}
+{your|the} {update|notification} you {requested|wanted}
+{someone|a local} {wants|is trying} to {meet|chat with} you
+{{name}}, {are you|you} {still active|there}?
+{just|only} a {quick|friendly} {reminder|message} {{name}}
+{{name}}, {your matches|your messages} are {pending|waiting}
+{someone|a user} {shared|sent} a {photo|message} with you
+{this|it} {looks|seems} like your {profile|account}, {{name}}
+{{name}}, {can we|let's} {chat|talk} {now|soon}?
+{you have|there is} {a new|1} {guest|visitor} {{name}}
