@@ -1,8 +1,4 @@
-"""sender.py — движок отправки писем.
 
-Формирование MIME (CC/BCC), тестовая отправка, цикл массовой рассылки
-с ``threading.Event`` для stop/pause, сохранение прогресса.
-"""
 
 from __future__ import annotations
 
@@ -40,17 +36,13 @@ _A_TAG_SPLIT_RE = re.compile(r'(<a\s[^>]+>.*?</a>)', re.IGNORECASE)
 _RAW_URL_RE = re.compile(r'(https?://[^\s<]+)')
 
 def interleave_by_domain(recipients: list[Recipient]) -> list[Recipient]:
-    """Группирует получателей по домену и перемешивает их (Round-Robin),
-    чтобы одинаковые домены не шли подряд."""
     by_domain = defaultdict(list)
     for r in recipients:
         domain = r.email.split("@")[-1].lower() if "@" in r.email else "unknown"
         by_domain[domain].append(r)
         
-    # Сортируем списки доменов по убыванию длины для более равномерного распределения
     sorted_lists = sorted(by_domain.values(), key=len, reverse=True)
     
-    # Zip longest берет по одному элементу из каждого списка доменов по очереди
     interleaved = []
     for group in zip_longest(*sorted_lists):
         for r in group:
@@ -59,20 +51,16 @@ def interleave_by_domain(recipients: list[Recipient]) -> list[Recipient]:
     return interleaved
 
 def split_evenly(items: list[Recipient], n: int) -> list[list[Recipient]]:
-    """Делит список получателей на N примерно равных частей."""
     if n <= 0:
         return [items]
     k, m = divmod(len(items), n)
     return [items[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n)]
 
 
-# ── Boundary and Message-ID Generation ─────────
-
 import string
 import uuid
 import time as time_module
 
-# ── Маппинг SMTP-домена → стиль клиента ────────────────
 
 _DOMAIN_CLIENT_MAP = {
     'gmail.com': 'gmail', 'googlemail.com': 'gmail',
@@ -84,17 +72,14 @@ _DOMAIN_CLIENT_MAP = {
 }
 
 def _get_client_style(sender_email: str) -> str:
-    """Определяет стиль email-клиента по домену отправителя."""
     domain = sender_email.split('@')[-1].lower() if '@' in sender_email else ''
     return _DOMAIN_CLIENT_MAP.get(domain, 'generic')
 
 
 def get_random_boundary(sender_email: str = "") -> str:
-    """Генерирует уникальный boundary для MIME, привязанный к стилю клиента."""
     rnd = random.SystemRandom()
     style = _get_client_style(sender_email)
 
-    # Шаблоны, соответствующие реальным клиентам
     if style == 'gmail':
         templates = [
             lambda: f"{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(28))}",
@@ -116,7 +101,7 @@ def get_random_boundary(sender_email: str = "") -> str:
             lambda: f"{''.join(rnd.choice(string.digits) for _ in range(10))}_{rnd.randint(100000,999999)}",
             lambda: f"----=_Part_{''.join(rnd.choice(string.digits) for _ in range(8))}",
         ]
-    else:  # generic
+    else:
         templates = [
             lambda: f"==============_{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(16))}==",
             lambda: f"=_mixed_{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(20))}_",
@@ -126,7 +111,6 @@ def get_random_boundary(sender_email: str = "") -> str:
     return rnd.choice(templates)()
 
 def _generate_message_id(domain: str, sender_email: str = "") -> str:
-    """Генерирует Message-ID, привязанный к стилю клиента отправителя."""
     rnd = random.SystemRandom()
     style = _get_client_style(sender_email) if sender_email else 'generic'
 
@@ -149,7 +133,7 @@ def _generate_message_id(domain: str, sender_email: str = "") -> str:
         templates = [
             lambda: f"<{rnd.randint(100000000,999999999)}.{rnd.randint(100000,999999)}.{int(time_module.time())}@{domain}>",
         ]
-    else:  # generic / thunderbird
+    else:
         templates = [
             lambda: f"<{uuid.uuid4()}@{domain}>",
             lambda: f"<{int(time_module.time())}.{rnd.randint(10000,99999)}.{''.join(rnd.choice(string.ascii_letters + string.digits) for _ in range(8))}@{domain}>",
@@ -166,11 +150,8 @@ def build_message(
     cc_addrs: list[str] | None = None,
     plain_text_only: bool = False,
 ) -> Any:
-    """Формирует MIME с тотальной уникализацией (Уровень AMS Enterprise+)."""
     rnd = random.SystemRandom()
 
-    # 1. Формирование структуры
-    # Только валидные IANA charset names
     rnd_charset_str = rnd.choice(["utf-8", "UTF-8"])
     
     if plain_text_only:
@@ -183,7 +164,6 @@ def build_message(
     else:
         msg = MIMEMultipart("alternative", boundary=get_random_boundary(from_email))
         
-        # Корректная конвертация в Plain Text (без спам-шума и мусора)
         plain_body = html_to_plain_text(body) if is_html else body
         
         if is_html:
@@ -196,7 +176,6 @@ def build_message(
                 parts[i] = _RAW_URL_RE.sub(r'<a href="\1">\1</a>', parts[i])
             html_body = "".join(parts)
 
-        # RAND-1: Раздельная рандомизация encoding для plain и html
         c_plain = Charset(rnd_charset_str)
         c_plain.body_encoding = QP if rnd.random() < 0.5 else BASE64
         c_html = Charset(rnd.choice(["utf-8", "UTF-8"]))
@@ -209,15 +188,11 @@ def build_message(
             
         part_html = MIMEText(html_body, "html", _charset=c_html)
         
-        # По RFC 2046 порядок ВСЕГДА должен быть: сначала text/plain, потом text/html.
         msg.attach(part_plain)
         msg.attach(part_html)
 
-    # 2. Форматирование заголовков
     from_header = formataddr((sender_name, from_email)) if sender_name else from_email
     
-    # BUG-2 FIX: Date jitter ТОЛЬКО в прошлое (0-5 минут назад)
-    # Письма с датой в будущем — 100% красный флаг для фильтров.
     jitter_sec = rnd.randint(-300, 0)
     jitter_time = time_module.time() + jitter_sec
     date_header = formatdate(timeval=jitter_time, localtime=True)
@@ -227,8 +202,6 @@ def build_message(
 
     cc_header = ", ".join(cc_addrs) if cc_addrs else None
 
-    # BUG-3 FIX: Content-Language определяется по РЕАЛЬНОМУ содержимому
-    # Кириллица → ru, Латиница → en. Никакого рандома.
     content_lang = None
     if rnd.random() < 0.8:
         cyr = sum(1 for ch in subject + body if 0x0400 <= ord(ch) <= 0x04FF)
@@ -238,7 +211,6 @@ def build_message(
         else:
             content_lang = rnd.choice(["en", "en-US", "en-GB"])
 
-    # RAND-4: Реалистичные шаблоны порядка заголовков (вместо shuffle)
     style = _get_client_style(from_email)
     if style == 'gmail':
         order = ["MIME-Version", "Date", "Message-ID", "Subject", "From", "To"]
@@ -249,14 +221,12 @@ def build_message(
     elif style == 'yahoo':
         order = ["Date", "From", "To", "Message-ID", "Subject", "MIME-Version"]
     else:
-        # Thunderbird / generic
         order = rnd.choice([
             ["Message-ID", "Date", "MIME-Version", "From", "Subject", "To"],
             ["Date", "From", "To", "Subject", "Message-ID", "MIME-Version"],
             ["From", "Date", "Subject", "To", "Message-ID", "MIME-Version"],
         ])
 
-    # Собираем все заголовки в dict для подстановки по шаблону
     header_pool = {
         "From": from_header,
         "To": to_email,
@@ -269,17 +239,12 @@ def build_message(
     if content_lang:
         header_pool["Content-Language"] = content_lang
 
-    # Добавляем по шаблону порядка
     for key in order:
         if key in header_pool:
             msg[key] = header_pool.pop(key)
-    # Оставшиеся (Cc, Content-Language если не в шаблоне)
     for key, val in header_pool.items():
         msg[key] = val
 
-    # Примечания:
-    # 1. Мы УДАЛИЛИ X-Mailer, так как для Office365/Gmail SMTP это красный флаг фишинга.
-    # 2. Мы УДАЛИЛИ фейковый List-Unsubscribe, так как bounce на этот адрес ухудшает репутацию домена сильнее.
 
     return msg
 
@@ -289,7 +254,6 @@ def _envelope_recipients(
     cc_addrs: list[str] | None = None,
     bcc_addrs: list[str] | None = None,
 ) -> list[str]:
-    """Собирает полный список получателей конверта."""
     addrs = [to_email]
     if cc_addrs:
         addrs.extend(cc_addrs)
@@ -298,7 +262,13 @@ def _envelope_recipients(
     return addrs
 
 
-# ── Тестовая отправка ─────────────────────────────────────
+def resolve_delay(delay_sec: float, per_minute: float) -> float:
+    # ТЗ задачи 7: скорость можно задать либо задержкой (сек), либо «писем в минуту».
+    # Если указано >0 писем/мин — оно задаёт паузу (60/скорость) и имеет приоритет
+    # над ручной задержкой; иначе работает заданная задержка.
+    if per_minute and per_minute > 0:
+        return 60.0 / per_minute
+    return delay_sec
 
 
 def send_test(
@@ -308,7 +278,6 @@ def send_test(
     proxy_mgr: ProxyManager,
     logger: JsonLogger,
 ) -> tuple[bool, str]:
-    """Одиночная тестовая отправка.  Возвращает ``(ok, info_msg)``."""
     t0 = time.time()
 
     smtp_acc = smtp_mgr.get_next()
@@ -349,22 +318,19 @@ def send_test(
         elapsed = round(time.time() - t0, 2)
         smtp_acc.sent_count += 1
 
-        info = f"Sent in {elapsed}s via {smtp_acc.email}"
+        info = f"отправлено за {elapsed} сек через {smtp_acc.email}"
         if proxy_addr:
-            info += f" through {proxy_addr}"
+            info += f" (прокси {proxy_addr})"
 
-        logger.log(
-            "test_send", f"Test → {to_email}",
-            recipient=to_email, smtp=smtp_acc.email,
-            proxy=proxy_addr, subject=subject, elapsed=elapsed,
+        # Тест пишется в отдельный test-log.json, НЕ в боевой лог и НЕ в статистику.
+        logger.log_test(
+            to_email, smtp_acc.email, proxy_addr, subject, "sent", elapsed=elapsed,
         )
         return True, info
 
     except Exception as exc:
-        logger.log(
-            "test_send_error", f"Test fail → {to_email}: {exc}",
-            recipient=to_email, smtp=smtp_acc.email,
-            proxy=proxy_addr, error=str(exc),
+        logger.log_test(
+            to_email, smtp_acc.email, proxy_addr, subject, "error", error_text=str(exc),
         )
         return False, f"{exc}"
     finally:
@@ -375,15 +341,11 @@ def send_test(
                 pass
 
 
-# ── Генерация превью письма ───────────────────────────────
-
-
 def generate_preview(
     content_mgr: ContentManager,
     smtp_mgr: SmtpManager,
     to_sample: str = "recipient@example.com",
 ) -> str:
-    """Генерирует текстовый превью полностью собранного письма."""
     smtp_acc = smtp_mgr.get_next()
     from_email = smtp_acc.email if smtp_acc else "smtp@not-loaded"
 
@@ -419,9 +381,6 @@ def generate_preview(
     return "\n".join(lines)
 
 
-# ── Save / Load state ────────────────────────────────────
-
-
 def save_queue_state(
     remaining: list[Recipient],
     sent_count: int,
@@ -438,7 +397,6 @@ def save_queue_state(
 
 
 def load_queue_state() -> dict | None:
-    """Возвращает dict с ``remaining`` как ``list[Recipient]`` или ``None``."""
     if not STATE_FILE.exists():
         return None
     try:
@@ -463,15 +421,8 @@ def clear_queue_state() -> None:
         STATE_FILE.unlink(missing_ok=True)
 
 
-# ── Массовая рассылка ────────────────────────────────────
-
-
 class CampaignSender:
-    """Движок массовой рассылки.
 
-    ``stop_event`` и ``pause_event`` (``threading.Event``) обеспечивают
-    корректную остановку и паузу без крашей.
-    """
 
     def __init__(
         self,
@@ -511,11 +462,11 @@ class CampaignSender:
         self._idx: int = 0
         self._save_counter: int = 0
         self._running = False
-        self._retry_counts: dict[str, int] = {}  # email → retry count
+        self._retry_counts: dict[str, int] = {}
         self._retry_lock = threading.Lock()
-        self._max_retries = 3  # Максимум 3 попытки на одного получателя
-        self._sent_atomic = 0  # Атомарный счётчик отправленных
-        self._sent_lock = threading.Lock()  # Lock для sent_count
+        self._max_retries = 3
+        self._sent_atomic = 0
+        self._sent_lock = threading.Lock()
 
     @property
     def running(self) -> bool:
@@ -525,11 +476,9 @@ class CampaignSender:
     def paused(self) -> bool:
         return not self.pause_event.is_set()
 
-    # ── управление ───────────────────────────────────────
 
     def start(self, delay: float = 1.0, jitter: float = 0.5, max_threads: int = 0, 
               max_per_conn: int = 50, max_per_acc: int = 0) -> None:
-        """Запускает многопоточную рассылку (Global Queue)."""
         if self._running:
             return
         self._running = True
@@ -555,7 +504,6 @@ class CampaignSender:
         self.pause_event.set()
         self.stats.resume()
 
-    # ── рабочий цикл ─────────────────────────────────────
 
     def _worker_dispatcher(self, delay: float, jitter: float, max_threads: int, max_per_conn: int, max_per_acc: int) -> None:
         total = len(self.recipients)
@@ -577,21 +525,17 @@ class CampaignSender:
             
         self._emit(f"Spawning {num_workers} threads (Global Queue)...")
 
-        # Domain Interleaving
         shuffled = interleave_by_domain(self.recipients)
         
         self.global_q = queue.Queue()
         for r in shuffled:
             self.global_q.put(r)
 
-        # Start workers
         worker_threads = []
         
-        # Shared state for limits
         self._acc_sent = defaultdict(int)
         self._acc_sent_lock = threading.RLock()
         
-        # Shared lock for safe idx increment and state save
         state_lock = threading.Lock()
         
         def safe_save_progress():
@@ -611,7 +555,6 @@ class CampaignSender:
             worker_threads.append(t)
             t.start()
 
-        # Wait for all workers to finish
         for t in worker_threads:
             t.join()
 
@@ -622,7 +565,6 @@ class CampaignSender:
             self.on_finished()
             
     def _smtp_worker_thread(self, delay: float, jitter: float, max_per_conn: int, max_per_acc: int, on_progress: Callable) -> None:
-        """Рабочий поток. Привязывается к конкретному SMTP аккаунту и обрабатывает адреса."""
         conn = None
         
         def get_valid_account() -> SmtpAccount | None:
@@ -635,16 +577,15 @@ class CampaignSender:
                         return acc
             return None
         
-        # Получаем аккаунт и прокси ОДИН РАЗ при старте потока
         smtp_acc = get_valid_account()
         if not smtp_acc:
-            return  # Нет живых аккаунтов для этого потока
+            return
             
         proxy = self.proxy_mgr.get_next()
         proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
         
         sent_on_conn = 0
-        _send_time = 0.0  # Время последней отправки для adaptive delay
+        _send_time = 0.0
         
         while True:
             if self.stop_event.is_set():
@@ -659,12 +600,10 @@ class CampaignSender:
             except queue.Empty:
                 break
                 
-            # ── Задержка ДО отправки письма (имитация человека) ──
             domain_delay = get_delay(rcpt.email, base_delay=delay, jitter=jitter)
             warmup = get_warmup_factor(smtp_acc.sent_count, rcpt.email)
             actual_delay = domain_delay * warmup
             
-            # Adaptive: если прошлый ответ сервера был долгим — увеличиваем паузу
             if _send_time > 2.0:
                 actual_delay *= 1.5
                 
@@ -675,7 +614,6 @@ class CampaignSender:
                 self.global_q.put(rcpt)
                 break
                 
-            # ── Check Account Limit ──
             if max_per_acc > 0:
                 with self._acc_sent_lock:
                     if self._acc_sent[smtp_acc.email] >= max_per_acc:
@@ -684,14 +622,12 @@ class CampaignSender:
                             self.global_q.put(rcpt)
                             break
                         smtp_acc = new_acc
-                        conn = None  # force reconnect
+                        conn = None
             
-            # ── Connection Pooling ──
-            # User's max_per_conn приоритет; domain_max только при 0 (авто)
             if max_per_conn > 0:
-                effective_max = max_per_conn  # Пользователь задал — его значение
+                effective_max = max_per_conn
             else:
-                effective_max = get_max_per_conn(rcpt.email)  # Авто из профиля домена
+                effective_max = get_max_per_conn(rcpt.email)
             
             if conn is None or (effective_max > 0 and sent_on_conn >= effective_max):
                 if conn:
@@ -700,8 +636,6 @@ class CampaignSender:
                     except Exception:
                         pass
                 
-                # При превышении лимита (max_per_conn) берем СЛЕДУЮЩИЙ аккаунт
-                # Если отключим лимит (0), то будем шпарить до конца базы с одного
                 if effective_max > 0 and sent_on_conn >= effective_max:
                     smtp_acc = get_valid_account()
                     if not smtp_acc:
@@ -720,7 +654,6 @@ class CampaignSender:
                     self.stats.record_error(smtp_acc.email, proxy_addr, smtp_dead=True)
                     self.global_q.put(rcpt)
                     conn = None
-                    # Если умер при коннекте, сразу меняем аккаунт
                     smtp_acc = get_valid_account()
                     if not smtp_acc:
                         break
@@ -733,7 +666,6 @@ class CampaignSender:
             if is_control:
                 tag = f"{tag}[CONTROL] "
 
-            # ── Контент ──
             variables = {
                 "email": rcpt.email,
                 "name": rcpt.name or rcpt.email.split("@")[0],
@@ -758,13 +690,11 @@ class CampaignSender:
                 self.global_q.task_done()
                 continue
 
-            # ── CC / BCC ──
             use_cc = bool(self.cc_addrs and random.SystemRandom().randint(1, 100) <= self.cc_percent)
             use_bcc = bool(self.bcc_addrs and random.SystemRandom().randint(1, 100) <= self.bcc_percent)
             actual_cc = self.cc_addrs if use_cc else None
             actual_bcc = self.bcc_addrs if use_bcc else None
 
-            # ── Отправка ──
             try:
                 msg = build_message(
                     smtp_acc.email, rcpt.email, subject, body, is_html,
@@ -816,27 +746,23 @@ class CampaignSender:
                 )
                 self._emit(f"{tag}✗ → {rcpt.email}: {err_str[:80]}")
                 
-                # Retry с лимитом (макс. 3 попытки), а не бесконечно!
                 with self._retry_lock:
                     retries = self._retry_counts.get(rcpt.email, 0)
                     if retries < self._max_retries:
                         self._retry_counts[rcpt.email] = retries + 1
-                        self.global_q.put(rcpt)  # Вернуть в очередь
+                        self.global_q.put(rcpt)
                     else:
                         self._emit(f"{tag}⚠ {rcpt.email}: исчерпаны попытки ({self._max_retries})")
 
-            # ── Прогресс ──
             self.global_q.task_done()
             on_progress()
             
-        # Cleanup
         if conn:
             try:
                 conn.quit()
             except Exception:
                 pass
 
-    # ── helpers ──────────────────────────────────────────
 
     def _emit(self, text: str) -> None:
         if self.on_status:
@@ -852,7 +778,6 @@ class CampaignSender:
     def _save_state(self) -> None:
         if not hasattr(self, "global_q"):
             return
-        # Thread-safe копирование очереди
         remaining = []
         try:
             while True:
@@ -861,7 +786,6 @@ class CampaignSender:
                     remaining.append(item)
                 except queue.Empty:
                     break
-            # Вернуть элементы обратно
             for item in remaining:
                 self.global_q.put(item)
         except Exception:

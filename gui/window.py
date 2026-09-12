@@ -1,12 +1,4 @@
-"""
-Главное окно приложения SMTP MAILER.
 
-Инициализирует CTkTabview с пятью вкладками и маршрутизирует
-содержимое каждой вкладки в отдельный модуль gui/tab_*.py.
-
-Общие менеджеры (proxy, smtp, content, stats) создаются здесь
-и передаются во все вкладки, которым они нужны.
-"""
 
 from __future__ import annotations
 
@@ -33,29 +25,23 @@ from gui.tab_plan import PlanTab
 
 
 class App(ctk.CTk):
-    """Корневое окно приложения."""
 
     def __init__(self) -> None:
         super().__init__()
 
-        # ── Окно ──────────────────────────────────────────────
         self.title("SMTP MAILER")
         self.geometry("1400x800")
         self.minsize(1024, 768)
         self.configure(fg_color=COLOR_BG)
 
-        # Клик за пределами инпута — снимает фокус с инпута
         self.bind_all("<Button-1>", self._on_global_click)
 
-        # ── Общие менеджеры ───────────────────────────────────
         self.proxy_mgr = ProxyManager()
         self.smtp_mgr = SmtpManager()
         self.content_mgr = ContentManager()
         self.stats = SendStats()
 
-        # ── Заголовок удален ──────────────────────────────────
 
-        # ── Табы ──────────────────────────────────────────────
         self.tabview = ctk.CTkTabview(
             self,
             fg_color=COLOR_BG_SEC,
@@ -73,12 +59,10 @@ class App(ctk.CTk):
         )
         self.tabview.pack(fill="both", expand=True, padx=16, pady=(0, 16))
 
-        # Порядок вкладок фиксированный — не менять
         tab_names = ["Настройки", "Контент", "Кампания", "План", "Отправка", "Статистика"]
         for name in tab_names:
             self.tabview.add(name)
 
-        # ── Монтируем содержимое вкладок ──────────────────────
         self.tab_setup = SetupTab(
             self.tabview.tab("Настройки"),
             proxy_mgr=self.proxy_mgr,
@@ -113,55 +97,44 @@ class App(ctk.CTk):
         )
         self.tab_send.plan_tab = self.tab_plan
 
-        # ── Связь Campaign → Send (после создания обоих) ──────
         self.tab_campaign.on_queue_ready = self.tab_send.set_recipients
 
-        # ── Hover и цвет текста табов ────────────────────────
         
         self._on_tab_changed()
 
     def _on_tab_changed(self):
-        """Обновляет цвет текста табов при переключении."""
         current = self.tabview.get()
         for name, btn in self.tabview._segmented_button._buttons_dict.items():
             if name == current:
                 btn.configure(text_color=COLOR_BG)
             else:
                 btn.configure(text_color=COLOR_TEXT)
+        # При переходе на «Отправку» пересчитываем доступность СТАРТ: к этому моменту
+        # могли загрузить/проверить SMTP на «Настройках» или собрать базу на «Кампании».
+        if current == "Отправка" and getattr(self, "tab_send", None):
+            self.tab_send._refresh_start_enabled()
 
     def _on_global_click(self, event):
-        """Снимает фокус с Entry при клике за его пределами."""
         widget = event.widget
-        # Если кликнули НЕ по Entry — переводим фокус на корневое окно
         widget_class = widget.winfo_class()
         if widget_class not in ("Entry", "Text", "TEntry"):
             self.focus_set()
 
-    # ══════════════════════════════════════════════════════
-    #  UI LOCKING
-    # ══════════════════════════════════════════════════════
 
     def set_ui_locked(self, locked: bool) -> None:
-        """Блокирует или разблокирует весь UI во время рассылки."""
         self.tab_setup.set_ui_locked(locked)
         self.tab_content.set_ui_locked(locked)
         self.tab_campaign.set_ui_locked(locked)
         self.tab_plan.set_ui_locked(locked)
         self.tab_send.set_ui_locked(locked)
 
-    # ══════════════════════════════════════════════════════
-    #  PRESETS — gather / apply  (вызывается из CampaignTab)
-    # ══════════════════════════════════════════════════════
 
     def gather_full_preset(self) -> dict:
-        """Собирает ВСЕ настройки приложения в один dict."""
         data: dict = {}
 
-        # Setup
         data["proxy_file"] = self.tab_setup._proxy_file
         data["smtp_file"] = self.tab_setup._smtp_file
 
-        # Content
         data["subjects_file"] = self.tab_content._subjects_file
         data["bodies_file"] = self.tab_content._bodies_file
         data["senders_file"] = self.tab_content._senders_file
@@ -170,20 +143,16 @@ class App(ctk.CTk):
         data["link_mode"] = self.content_mgr.link_mode
         data["email_only"] = self.content_mgr.email_only
 
-        # Campaign
         data.update(self.tab_campaign.gather_preset())
 
-        # Send
         data["delay"] = self.tab_send._float(self.tab_send.delay_entry, 5.0)
         data["jitter"] = self.tab_send._float(self.tab_send.jitter_entry, 2.0)
 
         return data
 
     def apply_full_preset(self, data: dict) -> list[str]:
-        """Применяет пресет. Возвращает список предупреждений."""
         warnings: list[str] = []
 
-        # Setup — proxy
         pfile = data.get("proxy_file", "")
         if pfile:
             if Path(pfile).exists():
@@ -199,7 +168,6 @@ class App(ctk.CTk):
             else:
                 warnings.append(f"Файл прокси не найден: {pfile}")
 
-        # Setup — smtp
         sfile = data.get("smtp_file", "")
         if sfile:
             if Path(sfile).exists():
@@ -215,7 +183,6 @@ class App(ctk.CTk):
             else:
                 warnings.append(f"Файл SMTP не найден: {sfile}")
 
-        # Content — subjects
         subj = data.get("subjects_file", "")
         if subj:
             if Path(subj).exists():
@@ -228,7 +195,6 @@ class App(ctk.CTk):
             else:
                 warnings.append(f"Файл тем не найден: {subj}")
 
-        # Content — bodies
         bod = data.get("bodies_file", "")
         if bod:
             if Path(bod).exists():
@@ -241,7 +207,6 @@ class App(ctk.CTk):
             else:
                 warnings.append(f"Файл писем не найден: {bod}")
 
-        # Content — senders
         snd = data.get("senders_file", "")
         if snd:
             if Path(snd).exists():
@@ -254,7 +219,6 @@ class App(ctk.CTk):
             else:
                 warnings.append(f"Файл отправителей не найден: {snd}")
 
-        # Content — links
         for lf in data.get("link_files", []):
             if Path(lf).exists():
                 try:
@@ -267,18 +231,15 @@ class App(ctk.CTk):
                 warnings.append(f"Файл ссылок не найден: {lf}")
         self.tab_content.parent.after(0, self.tab_content._refresh_link_list)
 
-        # Content — flags
         self.content_mgr.consistent_links = data.get("consistent_links", False)
         self.content_mgr.link_mode = data.get("link_mode", "urls")
         self.content_mgr.email_only = data.get("email_only", False)
         self.tab_content.consistent_var.set(self.content_mgr.consistent_links)
         self.tab_content.email_only_var.set(self.content_mgr.email_only)
 
-        # Campaign
         w = self.tab_campaign.apply_preset(data)
         warnings.extend(w)
 
-        # Send — delay / jitter
         delay = str(data.get("delay", 5))
         jitter = str(data.get("jitter", 2))
         self.tab_send.delay_entry.delete(0, "end")

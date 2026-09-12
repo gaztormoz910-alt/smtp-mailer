@@ -60,10 +60,12 @@ host:port:user:pass
 ```
 
 ### SMTP (`smtps.txt`)
+Format: `host:port:email:password` (encryption auto-detected by port: 465 → SSL, 587 → STARTTLS, other → plain/STARTTLS). Password may contain colons.
 ```
-email:password:host:port:ssl
-email:password:host:port:tls
+smtp.gmail.com:587:user@gmail.com:password
+mail.example.com:465:sender@example.com:secret
 ```
+Optional per-account proxy: append `|>proxy` — e.g. `smtp.example.com:587:u@x.com:pw|>socks5://1.2.3.4:1080`.
 
 ### Subjects (`subjects.txt`)
 ```
@@ -84,14 +86,28 @@ john@example.com,John
 alice@test.org,Alice
 ```
 
-## Build Executable
+## Build Executable (optional)
 
-To create a standalone `.exe` (no Python required):
+Not required for normal use — the `start.bat` / `start.command` launchers are simpler and avoid build issues. To make a standalone binary:
+
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name SmtpMailer main.py
 ```
-The executable will be in the `dist/` folder.
+
+customtkinter ships asset files (themes, fonts) that PyInstaller must bundle via `--add-data`. The path separator differs per OS: `;` on Windows, `:` on macOS/Linux.
+
+**Windows:**
+```bat
+for /f %i in ('python -c "import customtkinter,os;print(os.path.dirname(customtkinter.__file__))"') do set CTK=%i
+pyinstaller --onefile --windowed --name CharlyMailer --add-data "%CTK%;customtkinter/" main.py
+```
+
+**macOS / Linux:**
+```bash
+CTK=$(python3 -c "import customtkinter,os;print(os.path.dirname(customtkinter.__file__))")
+pyinstaller --onefile --windowed --name CharlyMailer --add-data "$CTK:customtkinter/" main.py
+```
+The executable appears in the `dist/` folder. Without `--add-data` for customtkinter the built app fails to start (missing assets).
 
 ## Project Structure
 ```

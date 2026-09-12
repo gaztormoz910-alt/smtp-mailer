@@ -12,7 +12,6 @@ def replace_in_file(filepath, replacements):
 
 base_dir = r"c:\Users\Bog_1\OneDrive\Desktop\email smtp sender\gui"
 
-# --- gui/window.py ---
 replace_in_file(os.path.join(base_dir, "window.py"), [
     ('tab_names = ["Setup", "Content", "Campaign", "Send", "Stats"]', 'tab_names = ["Настройки", "Контент", "Кампания", "Отправка", "Статистика"]'),
     ('self.tabview.tab("Setup")', 'self.tabview.tab("Настройки")'),
@@ -28,7 +27,6 @@ replace_in_file(os.path.join(base_dir, "window.py"), [
     ('Link file not found:', 'Файл ссылок не найден:'),
 ])
 
-# --- gui/tab_setup.py ---
 replace_in_file(os.path.join(base_dir, "tab_setup.py"), [
     ('text="⚡  Proxy Configuration"', 'text="⚡  Настройки прокси"'),
     ('"📁 Load File"', '"📁 Загрузить файл"'),
@@ -59,7 +57,6 @@ replace_in_file(os.path.join(base_dir, "tab_setup.py"), [
     ('"Test"', '"Тест"'),
 ])
 
-# --- gui/tab_content.py ---
 replace_in_file(os.path.join(base_dir, "tab_content.py"), [
     ('text="📝  Subjects"', 'text="📝  Темы (Subjects)"'),
     ('"📁 Load"', '"📁 Загрузить"'),
@@ -97,7 +94,6 @@ replace_in_file(os.path.join(base_dir, "tab_content.py"), [
     ('text="✓  Preview generated"', 'text="✓  Предпросмотр сгенерирован"'),
 ])
 
-# --- gui/tab_campaign.py ---
 replace_in_file(os.path.join(base_dir, "tab_campaign.py"), [
     ('text="📋  Recipients Database"', 'text="📋  База получателей"'),
     ('text="📁  Load Recipients"', 'text="📁  Загрузить получателей"'),
@@ -129,7 +125,6 @@ replace_in_file(os.path.join(base_dir, "tab_campaign.py"), [
     ('f"  … and {len(self._recipients) - 10} more"', 'f"  … и еще {len(self._recipients) - 10}"'),
 ])
 
-# --- gui/tab_send.py ---
 replace_in_file(os.path.join(base_dir, "tab_send.py"), [
     ('text="🧪  Test Send"', 'text="🧪  Тестовая отправка"'),
     ('text="To:"', 'text="Кому:"'),
@@ -165,7 +160,6 @@ replace_in_file(os.path.join(base_dir, "tab_send.py"), [
     ('text="Ready  ·  Load recipients to start"', 'text="Готов  ·  Загрузите получателей для старта"'),
 ])
 
-# --- gui/tab_stats.py ---
 replace_in_file(os.path.join(base_dir, "tab_stats.py"), [
     ('text="Idle"', 'text="Ожидание"'),
     ('title="⚡ Speed"', 'title="⚡ Скорость"'),

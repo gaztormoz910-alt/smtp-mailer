@@ -1,8 +1,4 @@
-"""queue_manager.py — база получателей + control email inject.
 
-Загрузка адресатов из CSV/TXT, формирование финальной очереди
-с вставкой контрольных адресов каждые N писем (round-robin).
-"""
 
 from __future__ import annotations
 
@@ -13,7 +9,6 @@ from pathlib import Path
 
 @dataclass
 class Recipient:
-    """Один получатель (или контрольный адрес)."""
     email: str
     name: str = ""
     is_control: bool = False
@@ -35,11 +30,7 @@ class Recipient:
         )
 
 
-# ── Загрузка ──────────────────────────────────────────────
-
-
 def load_recipients_txt(filepath: str) -> list[Recipient]:
-    """Загрузка из TXT: одна строка — один email, либо email,name."""
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"Файл не найден: {path}")
@@ -64,7 +55,6 @@ def load_recipients_txt(filepath: str) -> list[Recipient]:
 
 
 def load_recipients_csv(filepath: str) -> list[Recipient]:
-    """Загрузка из CSV: колонка ``email`` обязательна, ``name`` опциональна."""
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"Файл не найден: {path}")
@@ -78,7 +68,6 @@ def load_recipients_csv(filepath: str) -> list[Recipient]:
         if not reader.fieldnames:
             return result
 
-        # ищем колонку email (регистронезависимо)
         email_col = None
         name_col = None
         for f in reader.fieldnames:
@@ -89,14 +78,10 @@ def load_recipients_csv(filepath: str) -> list[Recipient]:
                 name_col = f
 
         if email_col is None:
-            # Если даже "email" не найден, но в файле ровно 2 колонки, предполагаем, что первая это email, а вторая имя
-            if len(reader.fieldnames) == 2:
-                email_col = reader.fieldnames[0]
-                name_col = reader.fieldnames[1]
-            else:
-                raise ValueError("CSV must have an 'email' column")
-        elif name_col is None and len(reader.fieldnames) == 2:
-            # Если email найден, но имя нет (например заголовок сломался), берём вторую колонку
+            # ТЗ задачи 8: колонка email ОБЯЗАТЕЛЬНА — без неё ошибка, в том числе
+            # для 2-колоночных файлов (больше не угадываем «первая колонка = email»).
+            raise ValueError("CSV must have an 'email' column")
+        if name_col is None and len(reader.fieldnames) == 2:
             for f in reader.fieldnames:
                 if f != email_col:
                     name_col = f
@@ -112,14 +97,18 @@ def load_recipients_csv(filepath: str) -> list[Recipient]:
 
 
 def load_recipients(filepath: str) -> list[Recipient]:
-    """Автоопределение формата по расширению."""
     ext = Path(filepath).suffix.lower()
     if ext == ".csv":
         return load_recipients_csv(filepath)
     return load_recipients_txt(filepath)
 
 
-# ── Формирование очереди с control inject ─────────────────
+def preview_recipients(recipients: list[Recipient], limit: int = 5) -> tuple[list[Recipient], int]:
+    # ТЗ задачи 8: превью базы — первые `limit` строк (по умолчанию 5) и счётчик
+    # остатка, а не весь список/постраничный срез.
+    shown = list(recipients[:limit])
+    extra = max(0, len(recipients) - len(shown))
+    return shown, extra
 
 
 def build_queue(
@@ -127,14 +116,8 @@ def build_queue(
     control_emails: list[str] | None = None,
     control_every_n: int = 0,
 ) -> list[Recipient]:
-    """Строит финальную очередь с контрольными адресами.
 
-    Каждый ``control_every_n``-й обычный получатель дополняется
-    контрольным письмом.  Контрольные адреса чередуются round-robin.
 
-    Если ``control_every_n <= 0`` или ``control_emails`` пуст — возвращает
-    исходный список без изменений.
-    """
     if not control_emails or control_every_n <= 0:
         return list(recipients)
 

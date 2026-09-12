@@ -110,6 +110,44 @@
 
 ---
 
+## 🔁 Сессия доработок и финальный аудит — 2026-09-12
+
+Пройдена повторная проверка всех 11 задач ТЗ «по схеме» (гейт → негативный контроль →
+фикс → прогон; ledgers в `.unlazy/task1..task11/`). Найденные расхождения с ТЗ и их
+починка:
+
+| # | Где | Проблема | Фикс | Приоритет |
+|---|---|---|---|---|
+| A | `gui/tab_send.py` | Не было авто-проверки прокси перед стартом рассылки | `ensure_proxies_checked` + `needs_check_before_send` | 🟡 |
+| B | `core/smtp_manager.py`, `gui/tab_setup.py` | Нельзя было привязать прокси к конкретному SMTP | поле `bound_proxy`, формат `…|>proxy`, приоритет в `connect_smtp` | 🟡 |
+| C | `gui/tab_content.py` | Превью тем/имён показывало весь список | `subjects_preview_text` — первые 5 | 🟢 |
+| D | `core/content.py`, `gui/tab_content.py` | Не было развёрнутого превью тела с кнопками | `format_email_preview` + «👁 Превью»/«🔄 Обновить» | 🟢 |
+| E | `core/content.py` | Номер макроса `[[LINKn]]` брался по порядку загрузки, не по имени файла | `pool_key_from_filename` в `load_links_file` | 🔴 (путал оферы) |
+| F | `core/logger.py`, `core/stats.py`, `gui/tab_stats.py` | Лог `_send.jsonl` вместо `.json`, нет `Z`, нет плиток «В очереди/время», нет «последней активности», англ. статусы | лог `YYYY-MM-DD.json`+`Z`, плитки, `last_activity`, русские статусы + `mark_stopped` | 🟡 |
+| G | `core/logger.py`, `core/sender.py`, `gui/tab_send.py`, `gui/window.py` | Тест писался в общий лог; не было поля «писем/мин»; СТАРТ не гас без данных; англ. текст теста | `log_test`→`test-log.json`, `resolve_delay`+поле, `_refresh_start_enabled`, русский текст | 🟡 |
+| H | `core/queue_manager.py`, `gui/tab_campaign.py` | CSV из 2 колонок без `email` не давал ошибку; превью базы по 40 | email строго обязателен; `preview_recipients` — первые 5 | 🟡 |
+| I | `README.md` | Неверный формат smtps.txt (`email:password:host:port:ssl`) → SMTP не загрузились бы; PyInstaller без `--add-data` | формат `host:port:email:password`; `--name CharlyMailer` + `--add-data` customtkinter | 🔴 (ловушка в доке) |
+
+### Финальный статический аудит (2026-09-12) — чисто
+- Окружение: Python 3.13.14, pip 26.0.1, customtkinter 5.2.2, requests 2.32.3, python-dotenv, PySocks 1.7.1, tkinter 8.6 — всё импортируется.
+- Все 11 `core/`+`gui/` модулей импортируются без ошибок; весь проект проходит `py_compile`.
+- Голых `except:` нет; хардкода абсолютных путей нет; отладочных `print()` в рантайме нет.
+- `.gitignore` закрывает `data/`, `logs/`, `.env`, `Results/`, `.unlazy/` — данные и логи в git не утекают.
+
+### Известные ограничения (честно)
+- GUI (Tk mainloop) в среде проверки не запускался — логика проверена прогонами ядра и
+  инспекцией исходников; визуальный прогон окна — за владельцем (`python main.py`).
+- `CampaignSender._save_state` кратковременно осушает общую очередь и возвращает элементы
+  обратно — в теории гонка при высокой конкуренции, на практике осушение мгновенное
+  (in-memory), воркеры на `get(timeout=1.0)` дожидаются возврата. Оставлено как есть,
+  чтобы не переписывать рабочую логику без явной нужды.
+- `window._on_tab_changed` опирается на приватные внутренности CustomTkinter
+  (`_segmented_button._buttons_dict`) — работает на 5.2.2, но хрупко к смене версии.
+- «Лишние символы» в письмах (омоглифы/HTML-entities/zero-width) — это намеренная
+  анти-спам уникализация; отдельная тема, отложена владельцем.
+
+---
+
 ## Связанные документы
 
 - [[20-tasks/12-audit]] — задача аудита, в рамках которой найдены все баги

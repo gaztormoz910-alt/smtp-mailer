@@ -1,8 +1,4 @@
-"""Вкладка Campaign — база получателей, control inject, CC/BCC, пресеты.
 
-Загрузка CSV/TXT, превью, контрольные адреса, CC/BCC,
-сохранение/загрузка пресетов.
-"""
 
 from __future__ import annotations
 
@@ -15,7 +11,7 @@ import customtkinter as ctk
 
 from core.logger import JsonLogger
 from core.presets import save_preset, load_preset
-from core.queue_manager import Recipient, build_queue, load_recipients
+from core.queue_manager import Recipient, build_queue, load_recipients, preview_recipients
 from core.sender import clear_queue_state
 from gui.theme import (
     COLOR_ACCENT, COLOR_ACCENT_HVR, COLOR_BG, COLOR_BORDER,
@@ -30,7 +26,6 @@ from gui.validation import (
 
 
 class CampaignTab:
-    """Содержимое вкладки Campaign."""
 
     def __init__(
         self,
@@ -48,24 +43,20 @@ class CampaignTab:
 
         self._build_layout()
 
-    # ══════════════════════════════════════════════════════
-    #  LAYOUT
-    # ══════════════════════════════════════════════════════
 
     def _build_layout(self) -> None:
         outer = ctk.CTkFrame(self.parent, fg_color="transparent")
         outer.pack(fill="both", expand=True)
 
         outer.grid_columnconfigure(0, weight=1)
-        outer.grid_rowconfigure(0, weight=3)   # recipients
-        outer.grid_rowconfigure(1, weight=0)   # CC/BCC
-        outer.grid_rowconfigure(2, weight=1)   # control + presets
+        outer.grid_rowconfigure(0, weight=3)
+        outer.grid_rowconfigure(1, weight=0)
+        outer.grid_rowconfigure(2, weight=1)
 
         self._build_recipients(outer)
         self._build_ccbcc(outer)
         self._build_bottom(outer)
 
-    # ── Recipients ───────────────────────────────────────
 
     def _build_recipients(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -109,7 +100,6 @@ class CampaignTab:
         )
         self.count_label.pack(side="left")
 
-        # превью (заголовок)
         hdr = ctk.CTkFrame(frame, fg_color="transparent")
         hdr.pack(fill="x", padx=14, pady=(2, 0))
         ctk.CTkLabel(hdr, text="Email", width=260, font=(FONT_MONO, 10, "bold"),
@@ -126,7 +116,6 @@ class CampaignTab:
         )
         self.preview_list.pack(fill="both", expand=True, padx=14, pady=(1, 4))
 
-        # ── Пагинация БД ─────────────────────────────
         self.db_page_frame = ctk.CTkFrame(frame, fg_color="transparent")
 
         self.btn_db_prev = ctk.CTkButton(
@@ -152,7 +141,6 @@ class CampaignTab:
         )
         self.action_label.pack(fill="x", padx=14, pady=(0, 6))
 
-    # ── CC / BCC ─────────────────────────────────────────
 
     def _build_ccbcc(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -166,7 +154,6 @@ class CampaignTab:
             font=(FONT_FAMILY, 14, "bold"), text_color=COLOR_TEXT, anchor="w",
         ).pack(fill="x", padx=14, pady=(10, 4))
 
-        # CC row
         cc_row = ctk.CTkFrame(frame, fg_color="transparent")
         cc_row.pack(fill="x", padx=14, pady=(0, 3))
 
@@ -192,7 +179,6 @@ class CampaignTab:
         register_percent_validation(self.cc_pct)
         register_email_list_validation(self.cc_entry)
 
-        # BCC row
         bcc_row = ctk.CTkFrame(frame, fg_color="transparent")
         bcc_row.pack(fill="x", padx=14, pady=(0, 8))
 
@@ -218,7 +204,6 @@ class CampaignTab:
         register_percent_validation(self.bcc_pct)
         register_email_list_validation(self.bcc_entry)
 
-    # ── Bottom: Control Inject + Presets ──────────────────
 
     def _build_bottom(self, container: ctk.CTkFrame) -> None:
         wrap = ctk.CTkFrame(container, fg_color="transparent")
@@ -322,9 +307,6 @@ class CampaignTab:
         )
         self.preset_label.pack(fill="x", padx=12, pady=(0, 8))
 
-    # ══════════════════════════════════════════════════════
-    #  HANDLERS — Recipients
-    # ══════════════════════════════════════════════════════
 
     def _on_load(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -350,7 +332,6 @@ class CampaignTab:
 
     def _load_done(self, recs: list[Recipient], path: str) -> None:
         self._recipients.extend(recs)
-        # Keep track of all loaded files in a list if needed, or just append the name to _recipients_file
         if self._recipients_file:
             self._recipients_file += f"; {path}"
         else:
@@ -398,12 +379,8 @@ class CampaignTab:
         if self.on_queue_ready:
             self.on_queue_ready(queue)
 
-    # ══════════════════════════════════════════════════════
-    #  HANDLERS — Presets
-    # ══════════════════════════════════════════════════════
 
     def gather_preset(self) -> dict:
-        """Собирает текущие настройки в dict для сохранения."""
         return {
             "recipients_file": self._recipients_file,
             "control_every_n": self._int(self.inject_n_entry, 0),
@@ -415,20 +392,16 @@ class CampaignTab:
         }
 
     def apply_preset(self, data: dict) -> list[str]:
-        """Применяет настройки из dict. Возвращает список предупреждений."""
         warnings: list[str] = []
 
-        # Control inject
         self._set_entry(self.inject_n_entry, str(data.get("control_every_n", 100)))
         self._set_entry(self.ctrl_emails_entry, data.get("control_emails", ""))
 
-        # CC/BCC
         self._set_entry(self.cc_entry, data.get("cc_addrs", ""))
         self._set_entry(self.cc_pct, str(data.get("cc_percent", 0)))
         self._set_entry(self.bcc_entry, data.get("bcc_addrs", ""))
         self._set_entry(self.bcc_pct, str(data.get("bcc_percent", 0)))
 
-        # Recipients
         rfile = data.get("recipients_file", "")
         if rfile:
             if Path(rfile).exists():
@@ -447,7 +420,6 @@ class CampaignTab:
         )
         if not path:
             return
-        # Собираем из всех вкладок через App
         app = self._get_app()
         if app:
             data = app.gather_full_preset()
@@ -486,7 +458,6 @@ class CampaignTab:
             self.preset_label.configure(text=f"✗ {e}", text_color=COLOR_ERROR)
 
     def _get_app(self):
-        """Поднимается по виджетам до App."""
         w = self.parent
         while w:
             if hasattr(w, "gather_full_preset"):
@@ -494,9 +465,6 @@ class CampaignTab:
             w = getattr(w, "master", None)
         return None
 
-    # ══════════════════════════════════════════════════════
-    #  CC/BCC  API (для Send-таба)
-    # ══════════════════════════════════════════════════════
 
     def get_cc_config(self) -> tuple[list[str], int]:
         raw = self.cc_entry.get().strip()
@@ -510,16 +478,12 @@ class CampaignTab:
         pct = self._int(self.bcc_pct, 0)
         return addrs, pct
 
-    # ══════════════════════════════════════════════════════
-    #  UI LOCKING
-    # ══════════════════════════════════════════════════════
 
     def set_ui_locked(self, locked: bool) -> None:
         state = "disabled" if locked else "normal"
         self.btn_db_load.configure(state=state)
         self.btn_db_clear.configure(state=state)
         
-        # Disable pagination unless we have pages and are not locked
         self.btn_db_prev.configure(state="disabled" if (locked or self._db_page <= 0) else "normal")
         total_pages = max(1, (len(self._recipients) + self._items_per_page - 1) // self._items_per_page)
         self.btn_db_next.configure(state="disabled" if (locked or self._db_page >= total_pages - 1) else "normal")
@@ -536,9 +500,6 @@ class CampaignTab:
         self.btn_preset_save.configure(state=state)
         self.btn_preset_load.configure(state=state)
 
-    # ══════════════════════════════════════════════════════
-    #  HANDLERS
-    # ══════════════════════════════════════════════════════
 
     def _db_page_prev(self) -> None:
         if self._db_page > 0:
@@ -554,31 +515,23 @@ class CampaignTab:
     def _refresh_preview(self) -> None:
         for w in self.preview_list.winfo_children():
             w.destroy()
-            
-        start = self._db_page * self._items_per_page
-        end = start + self._items_per_page
-        page_items = self._recipients[start:end]
-            
-        for r in page_items:
+
+        # ТЗ задачи 8: превью — первые 5 строк (email, name), без постраничной навигации.
+        shown, extra = preview_recipients(self._recipients, 5)
+        for r in shown:
             row = ctk.CTkFrame(self.preview_list, fg_color="transparent")
             row.pack(fill="x", padx=2, pady=1)
             ctk.CTkLabel(row, text=r.email, width=260, font=(FONT_MONO, 10),
                          text_color=COLOR_TEXT, anchor="w").pack(side="left")
             ctk.CTkLabel(row, text=r.name or "—", width=160, font=(FONT_MONO, 10),
                          text_color=COLOR_TEXT_DIM, anchor="w").pack(side="left")
-                         
-        total_pages = max(1, (len(self._recipients) + self._items_per_page - 1) // self._items_per_page)
-        
-        if total_pages <= 1:
-            self.db_page_frame.pack_forget()
-        else:
-            self.db_page_frame.pack(fill="x", padx=14, pady=(0, 4), before=self.action_label)
-            
-        self.lbl_db_page.configure(text=f"Стр. {self._db_page + 1} из {total_pages}")
-        
-        self.btn_db_prev.configure(state="normal" if self._db_page > 0 else "disabled")
-        self.btn_db_next.configure(state="normal" if self._db_page < total_pages - 1 else "disabled")
-        
+
+        if extra > 0:
+            ctk.CTkLabel(self.preview_list, text=f"… ещё {extra}", font=(FONT_MONO, 10),
+                         text_color=COLOR_TEXT_DIM, anchor="w").pack(fill="x", padx=2, pady=1)
+
+        # Превью ограничено первыми 5 — постраничная навигация базы больше не нужна.
+        self.db_page_frame.pack_forget()
         self.preview_list._parent_canvas.yview_moveto(0)
 
     @staticmethod

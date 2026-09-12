@@ -1,10 +1,4 @@
-"""Вкладка Content — темы, тела, ссылки, имена отправителей.
 
-Layout (2×2 + sandbox):
-  ┌─ Subjects ─┐  ┌─ Bodies ──┐
-  ├─ Links ────┤  ├─ Senders ─┤
-  └─ Sandbox (full width) ────┘
-"""
 
 from __future__ import annotations
 
@@ -14,7 +8,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from core.content import ContentManager
+from core.content import ContentManager, subjects_preview_text, format_email_preview
 from core.logger import JsonLogger
 from gui.theme import (
     COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_BTN, COLOR_BTN_HVR,
@@ -24,7 +18,6 @@ from gui.theme import (
 
 
 class ContentTab:
-    """Содержимое вкладки Content."""
 
     def __init__(
         self,
@@ -35,17 +28,12 @@ class ContentTab:
         self.content_mgr = content_mgr or ContentManager()
         self.logger = JsonLogger()
 
-        # Трекинг файлов (для пресетов)
         self._subjects_file: str = ""
         self._bodies_file: str = ""
         self._senders_file: str = ""
         self._link_file_paths: list[str] = []
 
         self._build_layout()
-
-    # ══════════════════════════════════════════════════════
-    #  LAYOUT
-    # ══════════════════════════════════════════════════════
 
 
     def _copy_text(self, tb) -> None:
@@ -61,10 +49,9 @@ class ContentTab:
         outer = ctk.CTkFrame(self.parent, fg_color="transparent")
         outer.pack(fill="both", expand=True)
         outer.grid_columnconfigure(0, weight=1)
-        outer.grid_rowconfigure(0, weight=3)   # 2×2 grid
-        outer.grid_rowconfigure(1, weight=2)   # sandbox
+        outer.grid_rowconfigure(0, weight=3)
+        outer.grid_rowconfigure(1, weight=2)
 
-        # ── Top 2×2 ────────────────────────────────────
         top = ctk.CTkFrame(outer, fg_color="transparent")
         top.grid(row=0, column=0, sticky="nsew")
         top.grid_columnconfigure(0, weight=1, uniform="col")
@@ -77,12 +64,8 @@ class ContentTab:
         self._build_links(top, 1, 0)
         self._build_senders(top, 1, 1)
 
-        # ── Sandbox (full width) ──────────────────────
         self._build_sandbox(outer)
 
-    # ══════════════════════════════════════════════════════
-    #  SUBJECTS  (0,0)
-    # ══════════════════════════════════════════════════════
 
     def _build_subjects(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col, pad_right=(r == 0 and col == 0))
@@ -107,9 +90,6 @@ class ContentTab:
         self.subj_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
         self.subj_action = self._status(f)
 
-    # ══════════════════════════════════════════════════════
-    #  BODIES  (0,1)
-    # ══════════════════════════════════════════════════════
 
     def _build_bodies(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col)
@@ -130,13 +110,17 @@ class ContentTab:
         self.btn_body_copy = self._btn(row, "Копировать", lambda: self._copy_text(self.body_preview), 80, COLOR_TEXT_DIM)
         self.btn_body_copy.pack(side="right")
 
+        prow = ctk.CTkFrame(f, fg_color="transparent")
+        prow.pack(fill="x", padx=12, pady=(0, 3))
+        self.btn_body_preview = self._btn(prow, "👁 Превью", self._on_body_preview, 90, COLOR_WARN)
+        self.btn_body_preview.pack(side="left", padx=(0, 4))
+        self.btn_body_refresh = self._btn(prow, "🔄 Обновить", self._on_body_preview, 90, COLOR_WARN)
+        self.btn_body_refresh.pack(side="left")
+
         self.body_preview = self._textbox(f, h=50)
         self.body_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
         self.body_action = self._status(f)
 
-    # ══════════════════════════════════════════════════════
-    #  LINKS  (1,0)
-    # ══════════════════════════════════════════════════════
 
     def _build_links(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col, pad_right=True)
@@ -170,9 +154,6 @@ class ContentTab:
         self.link_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
         self.link_action = self._status(f)
 
-    # ══════════════════════════════════════════════════════
-    #  SENDERS  (1,1)
-    # ══════════════════════════════════════════════════════
 
     def _build_senders(self, c: ctk.CTkFrame, r: int, col: int) -> None:
         f = self._frame(c, r, col)
@@ -207,9 +188,6 @@ class ContentTab:
         self.sender_preview.pack(fill="both", expand=True, padx=12, pady=(0, 3))
         self.sender_action = self._status(f)
 
-    # ══════════════════════════════════════════════════════
-    #  SANDBOX
-    # ══════════════════════════════════════════════════════
 
     def _build_sandbox(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -256,9 +234,6 @@ class ContentTab:
         self.sandbox_out.bind("<Command-c>", lambda e: self._copy_text(self.sandbox_out))
         self.sandbox_action = self._status(frame)
 
-    # ══════════════════════════════════════════════════════
-    #  UI LOCKING
-    # ══════════════════════════════════════════════════════
 
     def set_ui_locked(self, locked: bool) -> None:
         state = "disabled" if locked else "normal"
@@ -269,6 +244,8 @@ class ContentTab:
         self.btn_body_load.configure(state=state)
         self.btn_body_clear.configure(state=state)
         self.btn_body_copy.configure(state=state)
+        self.btn_body_preview.configure(state=state)
+        self.btn_body_refresh.configure(state=state)
         
         self.btn_link_load.configure(state=state)
         self.btn_link_clear.configure(state=state)
@@ -284,9 +261,6 @@ class ContentTab:
         self.test_name.configure(state=state)
         self.btn_generate.configure(state=state)
 
-    # ══════════════════════════════════════════════════════
-    #  HANDLERS — SUBJECTS
-    # ══════════════════════════════════════════════════════
 
     def _on_load_subjects(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -311,8 +285,7 @@ class ContentTab:
     def _subj_done(self, count: int, paths: list = None) -> None:
         total = self.content_mgr.subject_count
         self.subj_counter.configure(text=f"{total} загружено")
-        lines = self.content_mgr.subjects
-        self._set_tb(self.subj_preview, "\n".join(lines) if lines else "(пусто)")
+        self._set_tb(self.subj_preview, subjects_preview_text(self.content_mgr.subjects))
         disp = f"{len(paths)} файлов" if paths and len(paths) > 1 else Path(paths[0]).name if paths else ""
         self.subj_action.configure(
             text=f"✓ Добавлено {count} из {disp} (Всего: {total})",
@@ -324,9 +297,6 @@ class ContentTab:
         self._set_tb(self.subj_preview, "")
         self.subj_action.configure(text="✓  Очищено", text_color=COLOR_TEXT_DIM)
 
-    # ══════════════════════════════════════════════════════
-    #  HANDLERS — BODIES
-    # ══════════════════════════════════════════════════════
 
     def _on_load_bodies(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -368,9 +338,32 @@ class ContentTab:
         self._set_tb(self.body_preview, "")
         self.body_action.configure(text="✓  Очищено", text_color=COLOR_TEXT_DIM)
 
-    # ══════════════════════════════════════════════════════
-    #  HANDLERS — LINKS
-    # ══════════════════════════════════════════════════════
+    def _on_body_preview(self) -> None:
+        # ТЗ задачи 4: показать РАЗВЁРНУТОЕ тело (спинтакс раскрыт, плейсхолдеры
+        # подставлены) со случайной темой — прямо в окне превью блока тел.
+        # Повторный клик («Обновить») перегенерирует случайный вариант.
+        if self.content_mgr.body_count == 0:
+            self._set_tb(self.body_preview, "(сначала загрузите тела)")
+            self.body_action.configure(text="✗  Нет тел для превью", text_color=COLOR_ERROR)
+            return
+        email = (self.test_email.get().strip() if hasattr(self, "test_email") else "") or "user@example.com"
+        name = (self.test_name.get().strip() if hasattr(self, "test_name") else "") or "John"
+        sender_name = self.content_mgr.get_random_sender_name()
+        variables = {"email": email, "name": name, "senderName": sender_name}
+        cache = {} if self.content_mgr.consistent_links else None
+        try:
+            subj = self.content_mgr.get_random_subject(variables, link_cache=cache) or "(темы не загружены)"
+            body_text, is_html = self.content_mgr.get_random_body(variables, link_cache=cache)
+        except ValueError as exc:
+            self._set_tb(self.body_preview, f"Ошибка: {exc}")
+            self.body_action.configure(text=f"✗  {exc}", text_color=COLOR_ERROR)
+            return
+        if not body_text:
+            self._set_tb(self.body_preview, "(тела не загружены)")
+            return
+        self._set_tb(self.body_preview, format_email_preview(subj, body_text, is_html, sender_name))
+        self.body_action.configure(text="✓  Развёрнутое превью тела", text_color=COLOR_ACCENT)
+
 
     def _on_load_links(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -404,7 +397,6 @@ class ContentTab:
             text=f"✓ {len(msgs)} файл(ов) · {total} шт. · Режим: {mode_label}",
             text_color=COLOR_ACCENT,
         )
-        # Обновляем подсказку
         if mode == "spintax":
             self.link_hint.configure(
                 text=".txt · спинтакс-шаблоны · каждый [[LINK]] = уникальный URL"
@@ -441,9 +433,6 @@ class ContentTab:
         text = "\n".join(lines).strip()
         self._set_tb(self.link_preview, text if text else "(пусто)")
 
-    # ══════════════════════════════════════════════════════
-    #  HANDLERS — SENDERS
-    # ══════════════════════════════════════════════════════
 
     def _on_load_senders(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -468,8 +457,8 @@ class ContentTab:
     def _senders_done(self, count: int, paths: list = None) -> None:
         total = self.content_mgr.sender_name_count
         self.sender_counter.configure(text=f"{total} загружено")
-        names = self.content_mgr.sender_names
-        self._set_tb(self.sender_preview, "\n".join(names) if names else "(пусто)")
+        # ТЗ задачи 9: превью — первые 5 имён (+ «… ещё N»), как у тем/тел.
+        self._set_tb(self.sender_preview, subjects_preview_text(self.content_mgr.sender_names))
         disp = f"{len(paths)} файлов" if paths and len(paths) > 1 else Path(paths[0]).name if paths else ""
         self.sender_action.configure(
             text=f"✓ Добавлено {count} из {disp} (Всего: {total})",
@@ -484,9 +473,6 @@ class ContentTab:
     def _on_email_only_toggle(self) -> None:
         self.content_mgr.email_only = self.email_only_var.get()
 
-    # ══════════════════════════════════════════════════════
-    #  SANDBOX
-    # ══════════════════════════════════════════════════════
 
     def _on_generate(self) -> None:
         has_subj = self.content_mgr.subject_count > 0
@@ -507,7 +493,6 @@ class ContentTab:
         parts: list[str] = []
 
         try:
-            # From
             from_info = f"Отправитель: {sender_name}" if sender_name else "Отправитель: (только email)"
             parts.append(from_info)
 
@@ -536,9 +521,6 @@ class ContentTab:
         self._set_tb(self.sandbox_out, "\n".join(parts))
         self.sandbox_action.configure(text="✓  Предпросмотр сгенерирован", text_color=COLOR_ACCENT)
 
-    # ══════════════════════════════════════════════════════
-    #  WIDGET FACTORIES
-    # ══════════════════════════════════════════════════════
 
     @staticmethod
     def _frame(parent, row, col, pad_right=False) -> ctk.CTkFrame:

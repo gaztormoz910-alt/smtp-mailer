@@ -1,7 +1,3 @@
-"""
-SMTP MAILER — точка входа.
-Запуск: python main.py
-"""
 
 from pathlib import Path
 
@@ -9,7 +5,6 @@ import customtkinter as ctk
 
 from gui.window import App
 
-# Гарантируем наличие рабочих директорий
 BASE = Path(__file__).resolve().parent
 for d in ("data", "data/presets", "logs"):
     (BASE / d).mkdir(parents=True, exist_ok=True)
@@ -32,7 +27,6 @@ def patch_scrollable_frame():
         
         spacing = self._apply_widget_scaling(corner + border)
         
-        # Увеличиваем внутренний отступ для скроллбара, чтобы он не выходил за рамки
         pad_x = 6
         pad_y = spacing
         
@@ -59,14 +53,11 @@ def patch_scrollable_frame():
         
         self._scrollbar.set = _set
         
-        # КРИТИЧЕСКИ ВАЖНО: Tkinter уже привязал оригинальный метод к канвасу,
-        # поэтому нам нужно перепривязать наш новый метод _set!
         if self._orientation == "vertical":
             self._parent_canvas.configure(yscrollcommand=_set)
         else:
             self._parent_canvas.configure(xscrollcommand=_set)
         
-        # Вызываем начальную настройку
         _set(0.0, 1.0)
 
     ctk.CTkScrollableFrame.__init__ = __init__

@@ -1,7 +1,4 @@
-"""Вкладка Setup — прокси (задача 2) + SMTP-аккаунты (задача 3).
 
-Два фрейма в две колонки: слева Proxy Configuration, справа SMTP Configuration.
-"""
 
 from __future__ import annotations
 
@@ -23,7 +20,6 @@ from gui.validation import register_int_validation, register_url_validation
 
 
 class SetupTab:
-    """Содержимое вкладки Setup."""
 
     def __init__(
         self,
@@ -36,11 +32,9 @@ class SetupTab:
         self.smtp_mgr = smtp_mgr or SmtpManager()
         self.logger = JsonLogger()
 
-        # Трекинг файлов (для пресетов)
         self._proxy_file: str = ""
         self._smtp_file: str = ""
 
-        # Трекинг виджетов
         self._proxy_label_map: dict[int, ctk.CTkLabel] = {}
         self._smtp_card_map: dict[int, dict] = {}
         self._proxy_checking = False
@@ -51,9 +45,6 @@ class SetupTab:
 
         self._build_layout()
 
-    # ══════════════════════════════════════════════════════
-    #  LAYOUT — две колонки
-    # ══════════════════════════════════════════════════════
 
     def _build_layout(self) -> None:
         container = ctk.CTkFrame(self.parent, fg_color="transparent")
@@ -66,9 +57,6 @@ class SetupTab:
         self._build_proxy_ui(container)
         self._build_smtp_ui(container)
 
-    # ══════════════════════════════════════════════════════
-    #  PROXY UI  (левая колонка)
-    # ══════════════════════════════════════════════════════
 
     def _build_proxy_ui(self, container: ctk.CTkFrame) -> None:
         self.proxy_frame = ctk.CTkFrame(
@@ -77,7 +65,6 @@ class SetupTab:
         )
         self.proxy_frame.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
 
-        # ── Заголовок ─────────────────────────────────
         ctk.CTkLabel(
             self.proxy_frame, text="⚡  Настройки прокси",
             font=(FONT_FAMILY, 15, "bold"), text_color=COLOR_TEXT, anchor="w",
@@ -87,7 +74,6 @@ class SetupTab:
             font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w",
         ).pack(fill="x", padx=18, pady=(0, 4))
 
-        # ── Строка 1: файл + URL ─────────────────────
         row1 = ctk.CTkFrame(self.proxy_frame, fg_color="transparent")
         row1.pack(fill="x", padx=16, pady=(0, 5))
 
@@ -105,7 +91,6 @@ class SetupTab:
         self.btn_px_url = self._btn(row1, "🌐 URL", self._on_px_load_url, w=80)
         self.btn_px_url.pack(side="left")
 
-        # ── Строка 2: авто-обновление ────────────────
         row2 = ctk.CTkFrame(self.proxy_frame, fg_color="transparent")
         row2.pack(fill="x", padx=16, pady=(0, 5))
 
@@ -131,7 +116,6 @@ class SetupTab:
         ctk.CTkLabel(row2, text="мин", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 10))
 
-        # ── Строка 3: действия ────────────────
         row3 = ctk.CTkFrame(self.proxy_frame, fg_color="transparent")
         row3.pack(fill="x", padx=16, pady=(0, 5))
 
@@ -156,7 +140,6 @@ class SetupTab:
                                       text_color=COLOR_TEXT_DIM)
         self.btn_px_copy.pack(side="right")
 
-        # ── Статистика ───────────────────────────────
         self.px_stats = ctk.CTkLabel(
             self.proxy_frame,
             text="Всего: 0  ·  Живых: 0  ·  Мертвых: 0",
@@ -170,7 +153,6 @@ class SetupTab:
         )
         self.px_action.pack(fill="x", padx=16, pady=(0, 4))
 
-        # ── Список прокси ────────────────────────────
         self.px_list = ctk.CTkScrollableFrame(
             self.proxy_frame, fg_color=COLOR_BG, corner_radius=8,
             border_color=COLOR_BORDER, border_width=1,
@@ -180,7 +162,6 @@ class SetupTab:
         )
         self.px_list.pack(fill="both", expand=True, padx=16, pady=(0, 14))
 
-        # ── Пагинация прокси ─────────────────────────
         self.px_page_frame = ctk.CTkFrame(self.proxy_frame, fg_color="transparent")
 
         self.btn_px_prev = ctk.CTkButton(
@@ -200,7 +181,6 @@ class SetupTab:
         )
         self.btn_px_next.pack(side="right")
 
-    # ── Proxy handlers ───────────────────────────────────
 
     def _on_px_load_file(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -250,7 +230,6 @@ class SetupTab:
         self._px_page = 0
         self._px_refresh()
         
-        # Проверяем, были ли HTTP прокси которые мы перевели в SOCKS5
         http_replaced = sum(1 for p in self.proxy_mgr.proxies if p.protocol == "socks5" and getattr(p, "_was_http", False))
         
         if http_replaced > 0:
@@ -266,8 +245,12 @@ class SetupTab:
         self.px_action.configure(text=f"✗  {msg}", text_color=COLOR_ERROR)
         self.logger.network_error(f"Proxy load error: {msg}", source="proxy")
 
-    def _on_px_check_all(self) -> None:
+    def _on_px_check_all(self, after_done=None) -> None:
         if self._proxy_checking or self.proxy_mgr.count_total == 0:
+            # Даже если проверять нечего, продолжатель (старт рассылки) обязан
+            # получить управление — иначе кампания зависнет в ожидании колбэка.
+            if after_done:
+                after_done()
             return
         self._proxy_checking = True
         self.proxy_mgr.reset_all()
@@ -303,10 +286,10 @@ class SetupTab:
         def on_done() -> None:
             def _f() -> None:
                 self._proxy_checking = False
-                self.proxy_mgr.sort_by_score()  # Сортировка: лучшие прокси первые
+                self.proxy_mgr.sort_by_score()
                 self.btn_px_check.configure(text="⚡ Проверить все", state="normal")
                 self._px_set_state("normal")
-                self._px_refresh()  # Перерисовать с новым порядком
+                self._px_refresh()
                 self._px_update_stats()
                 a, d = self.proxy_mgr.count_alive, self.proxy_mgr.count_dead
                 bl = self.proxy_mgr.count_blacklisted
@@ -315,9 +298,24 @@ class SetupTab:
                     text=f"✓  Готово — Живых: {a}  Мертвых: {d}{bl_str}", text_color=COLOR_ACCENT)
                 self.logger.info(f"Proxy check done: alive={a}, dead={d}, blacklisted={bl}",
                                  source="proxy")
+                if after_done:
+                    after_done()
             self.parent.after(0, _f)
 
         self.proxy_mgr.check_all(on_progress=on_prog, on_done=on_done)
+
+    def ensure_proxies_checked(self, on_complete) -> None:
+        # ТЗ задачи 1: «перед стартом рассылки автоматически проверяй живые
+        # прокси». Если есть непроверенные — гоняем полную проверку и стартуем
+        # кампанию в её on_done. Если пул пуст, всё уже размечено или проверка
+        # уже идёт — сразу отдаём управление, чтобы не блокировать старт.
+        from core.proxy_manager import needs_check_before_send
+        if self._proxy_checking or not needs_check_before_send(self.proxy_mgr):
+            on_complete()
+            return
+        self.px_action.configure(text="⏳  Авто-проверка прокси перед стартом…",
+                                 text_color=COLOR_WARN)
+        self._on_px_check_all(after_done=on_complete)
 
     def _on_px_remove_dead(self) -> None:
         n = self.proxy_mgr.remove_dead()
@@ -364,7 +362,6 @@ class SetupTab:
             self.px_action.configure(text="↻  Авто-обновление ВЫКЛ",
                                      text_color=COLOR_TEXT_DIM)
 
-    # ── Proxy helpers ────────────────────────────────────
 
     def _px_page_prev(self) -> None:
         if self._px_page > 0:
@@ -432,7 +429,6 @@ class SetupTab:
             else:
                 geo = " [?]"
             ping = f" {p.ping_ms}ms" if getattr(p, "ping_ms", 0) else ""
-            # DNSBL статус
             bl_status = getattr(p, "blacklist_clean", None)
             if bl_status is True:
                 bl = " ✅BL:clean"
@@ -457,9 +453,6 @@ class SetupTab:
         if state == "normal" and not self._proxy_checking:
             self.btn_px_check.configure(state="normal")
 
-    # ══════════════════════════════════════════════════════
-    #  SMTP UI  (правая колонка)
-    # ══════════════════════════════════════════════════════
 
     def _build_smtp_ui(self, container: ctk.CTkFrame) -> None:
         self.smtp_frame = ctk.CTkFrame(
@@ -468,17 +461,15 @@ class SetupTab:
         )
         self.smtp_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 8), pady=8)
 
-        # ── Заголовок ─────────────────────────────────
         ctk.CTkLabel(
             self.smtp_frame, text="📧  Настройки SMTP",
             font=(FONT_FAMILY, 15, "bold"), text_color=COLOR_TEXT, anchor="w",
         ).pack(fill="x", padx=16, pady=(14, 4))
         ctk.CTkLabel(
-            self.smtp_frame, text=".txt · формат: host:port:email:password",
+            self.smtp_frame, text=".txt · host:port:email:password · опц. свой прокси: …:pass|>socks5://host:port",
             font=(FONT_MONO, 8), text_color=COLOR_TEXT_DIM, anchor="w",
         ).pack(fill="x", padx=18, pady=(0, 4))
 
-        # ── Кнопки ───────────────────────────────────
         row1 = ctk.CTkFrame(self.smtp_frame, fg_color="transparent")
         row1.pack(fill="x", padx=16, pady=(0, 5))
 
@@ -486,7 +477,6 @@ class SetupTab:
                                      self._on_sm_load_file, w=140)
         self.btn_sm_file.pack(side="left", padx=(0, 6))
 
-        # ── Строка 2: действия ────────────────
         row2 = ctk.CTkFrame(self.smtp_frame, fg_color="transparent")
         row2.pack(fill="x", padx=16, pady=(0, 5))
 
@@ -511,7 +501,6 @@ class SetupTab:
                                       text_color=COLOR_TEXT_DIM)
         self.btn_sm_copy.pack(side="right")
 
-        # ── Статистика ───────────────────────────────
         self.sm_stats = ctk.CTkLabel(
             self.smtp_frame,
             text="Всего: 0  ·  Живых: 0  ·  Мертвых: 0",
@@ -525,7 +514,6 @@ class SetupTab:
         )
         self.sm_action.pack(fill="x", padx=16, pady=(0, 4))
 
-        # ── Список-карточки ──────────────────────────
         self.sm_list = ctk.CTkScrollableFrame(
             self.smtp_frame, fg_color=COLOR_BG, corner_radius=8,
             border_color=COLOR_BORDER, border_width=1,
@@ -535,7 +523,6 @@ class SetupTab:
         )
         self.sm_list.pack(fill="both", expand=True, padx=16, pady=(0, 14))
 
-        # ── Пагинация SMTP ───────────────────────────
         self.sm_page_frame = ctk.CTkFrame(self.smtp_frame, fg_color="transparent")
 
         self.btn_sm_prev = ctk.CTkButton(
@@ -555,7 +542,6 @@ class SetupTab:
         )
         self.btn_sm_next.pack(side="right")
 
-    # ── SMTP handlers ────────────────────────────────────
 
     def _on_sm_load_file(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -586,7 +572,6 @@ class SetupTab:
         self._sm_page = 0
         self._sm_refresh()
         
-        # Устанавливаем уникальные SMTP хосты как цели для проверки прокси
         from core.proxy_manager import set_user_smtp_targets
         set_user_smtp_targets(self.smtp_mgr.accounts)
         
@@ -608,7 +593,7 @@ class SetupTab:
         self.btn_sm_check.configure(text="0 %", state="disabled")
 
         def proxy_getter():
-            return self.proxy_mgr.get_next()  # None если нет живых прокси
+            return self.proxy_mgr.get_next()
 
         last_pct = -1
         def sm_stats_loop():
@@ -655,7 +640,6 @@ class SetupTab:
         )
 
     def _on_sm_test_single(self, acc: SmtpAccount) -> None:
-        """Тест-логин одного аккаунта в фоне."""
         card = self._smtp_card_map.get(id(acc))
         if not card:
             return
@@ -708,7 +692,6 @@ class SetupTab:
             self.parent.clipboard_clear()
             self.parent.clipboard_append(text)
 
-    # ── SMTP helpers ─────────────────────────────────────
 
     def _sm_page_prev(self) -> None:
         if self._sm_page > 0:
@@ -722,7 +705,6 @@ class SetupTab:
             self._sm_refresh()
 
     def _sm_refresh(self) -> None:
-        """Пересоздаёт карточки SMTP-аккаунтов."""
         for data in self._smtp_card_map.values():
             data["card"].destroy()
         self._smtp_card_map.clear()
@@ -749,14 +731,12 @@ class SetupTab:
         self._sm_update_stats()
 
     def _sm_create_card(self, acc: SmtpAccount) -> None:
-        """Создаёт одну карточку аккаунта внутри sm_list."""
         card = ctk.CTkFrame(
             self.sm_list, fg_color=COLOR_FRAME, corner_radius=8,
             border_color=COLOR_BORDER, border_width=1,
         )
         card.pack(fill="x", padx=4, pady=3)
 
-        # ── Верхняя строка: email + статус ────────────
         top = ctk.CTkFrame(card, fg_color="transparent")
         top.pack(fill="x", padx=10, pady=(8, 2))
 
@@ -773,13 +753,14 @@ class SetupTab:
         )
         status_lbl.pack(side="right")
 
-        # ── Средняя строка: host + encryption + sent ──
         mid = ctk.CTkFrame(card, fg_color="transparent")
         mid.pack(fill="x", padx=10, pady=1)
 
         ping_str = f" {acc.ping_ms}ms" if getattr(acc, "ping_ms", 0) else ""
+        _bp = getattr(acc, "bound_proxy", None)
+        proxy_str = f"  🔗{_bp.host}:{_bp.port}" if _bp else ""
         host_lbl = ctk.CTkLabel(
-            mid, text=f"{acc.display_host}  [{acc.encryption}]{ping_str}",
+            mid, text=f"{acc.display_host}  [{acc.encryption}]{ping_str}{proxy_str}",
             font=(FONT_MONO, 11), text_color=COLOR_TEXT_DIM, anchor="w",
         )
         host_lbl.pack(side="left")
@@ -790,7 +771,6 @@ class SetupTab:
         )
         sent_lbl.pack(side="right")
 
-        # ── Нижняя строка: test + error ───────────────
         bot = ctk.CTkFrame(card, fg_color="transparent")
         bot.pack(fill="x", padx=10, pady=(2, 8))
 
@@ -820,7 +800,6 @@ class SetupTab:
         }
 
     def _sm_update_card(self, acc: SmtpAccount) -> None:
-        """Обновляет визуал одной карточки по текущему состоянию аккаунта."""
         data = self._smtp_card_map.get(id(acc))
         if not data:
             return
@@ -830,13 +809,15 @@ class SetupTab:
         
         if acc.status.name == "UNTESTED" and acc.last_error:
             status_text = "●  Error"
-            color = "#F59E0B"  # Orange
+            color = "#F59E0B"
 
         data["status_lbl"].configure(text=status_text, text_color=color)
         data["sent_lbl"].configure(text=f"Отправлено: {acc.sent_count}")
         data["error_lbl"].configure(text=acc.last_error or "")
         ping_str = f" {acc.ping_ms}ms" if getattr(acc, "ping_ms", 0) else ""
-        data["host_lbl"].configure(text=f"{acc.display_host}  [{acc.encryption}]{ping_str}")
+        _bp = getattr(acc, "bound_proxy", None)
+        proxy_str = f"  🔗{_bp.host}:{_bp.port}" if _bp else ""
+        data["host_lbl"].configure(text=f"{acc.display_host}  [{acc.encryption}]{ping_str}{proxy_str}")
 
     def _sm_update_stats(self) -> None:
         t = self.smtp_mgr.count_total
@@ -858,9 +839,6 @@ class SetupTab:
         if state == "normal" and not self._smtp_checking:
             self.btn_sm_check.configure(state="normal")
 
-    # ══════════════════════════════════════════════════════
-    #  UI LOCKING
-    # ══════════════════════════════════════════════════════
     def set_ui_locked(self, locked: bool) -> None:
         px_state = "disabled" if (locked or self._proxy_checking) else "normal"
         self.btn_px_file.configure(state=px_state)
@@ -886,9 +864,6 @@ class SetupTab:
         total_sm_pages = max(1, (self.smtp_mgr.count_total + self._items_per_page - 1) // self._items_per_page)
         self.btn_sm_next.configure(state="disabled" if (locked or self._smtp_checking or self._sm_page >= total_sm_pages - 1) else "normal")
 
-    # ══════════════════════════════════════════════════════
-    #  ПРОКСИ (Логика)
-    # ══════════════════════════════════════════════════════
 
     @staticmethod
     def _btn(
@@ -898,7 +873,6 @@ class SetupTab:
         w: int = 100,
         text_color: str = COLOR_TEXT,
     ) -> ctk.CTkButton:
-        """Фабрика кнопок в едином стиле."""
         return ctk.CTkButton(
             parent, text=text, width=w, height=30,
             fg_color=COLOR_BTN, hover_color=COLOR_BTN_HVR,
