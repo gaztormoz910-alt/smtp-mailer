@@ -24,6 +24,12 @@ env/
 .env
 data/
 logs/
+Results/
+
+# ── Tooling / session scaffolding (unlazy, Claude Code local) ──
+.unlazy/
+.unlazy-hook-state.json
+.claude/settings.local.json
 
 # ── OS ───────────────────────────────────────────────────
 Thumbs.db

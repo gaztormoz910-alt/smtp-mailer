@@ -1,169 +1,81 @@
 # 🏗️ Архитектура SMTP MAILER
 
-> Полное описание архитектуры проекта: модули, потоки данных, многопоточность, пресеты и логирование.
+> Актуальная карта всех модулей `core/` и `gui/`, потоки данных, многопоточность,
+> пресеты и логирование. Обновлено по факту кода на 2026-09-12 (финальный аудит,
+> см. [[daily/2026-09-12]]). Ранее заметка описывала более старое состояние —
+> теперь синхронизирована с кодом.
 
 ---
 
 ## Карта модулей
 
-### `core/` — ядро приложения
+### `core/` — ядро (без GUI)
 
 | Модуль | Назначение |
 |---|---|
-| `storage.py` | Загрузка и хранение списков (emails, proxies, SMTP-аккаунты) |
-| `proxy_manager.py` | Управление прокси: ротация, проверка, статистика |
-| `smtp_manager.py` | Управление SMTP-аккаунтами: подключение, проверка, ротация |
-| `content.py` | Контент-менеджер: шаблоны, спинтакс, макросы `[[LINK]]` / `[[UNSUB]]` |
-| `queue_manager.py` | Построение очереди рассылки (email × SMTP-аккаунт) |
-| `stats.py` | Сбор статистики отправки: успехи, ошибки, bounce, CSV-экспорт |
-| `logger.py` | `JsonLogger` — потокобезопасное логирование в JSON-lines |
-| `sender.py` | `CampaignSender` — главный движок рассылки в фоновом потоке |
-| `presets.py` | Сериализация/десериализация пресетов кампании (JSON) |
+| `storage.py` | Загрузка данных: `load_lines` (строки, игнор пустых и `#`), `load_lines_from_url` (HTTP GET), `load_blocks` (тела, разделитель `===END===`, срезает markdown-ограждения), `load_csv_rows` |
+| `proxy_manager.py` | `ProxyEntry` + `ProxyManager`: парсинг 4 форматов, проверка живости **реальным TCP-тестом SMTP-серверов** через прокси, DNSBL, гео (ip-api/ipinfo), скоринг, round-robin, авто-обновление из URL |
+| `smtp_manager.py` | `SmtpAccount` + `SmtpManager` + `connect_smtp`: формат `host:port:email:password`, туннель через PySocks, поддельный EHLO по домену, SSL/STARTTLS по порту, классификация ошибок, round-robin по живым. Поле `bound_proxy` — опц. привязка прокси к аккаунту |
+| `content.py` | `ContentManager` + движок: `spin` (рекурсивный спинтакс), `substitute` (плейсхолдеры), `substitute_links` (`[[LINK]]`), `render`, `is_html`, `html_to_plain_text`; анти-спам трансформации (омоглифы, HTML-entities, CSS-шум, комментарии, zero-width); `subjects_preview_text`, `format_email_preview` |
+| `queue_manager.py` | `Recipient` + загрузка базы CSV/TXT (email обязателен) + `build_queue` (control-инжект) + `preview_recipients` |
+| `domain_config.py` | Профили отправки по группам доменов (Gmail/Outlook/Yahoo/AOL/iCloud/Zoho/GMX + дефолт): задержки, лимиты на коннект/час, порог прогрева. `get_delay`, `get_warmup_factor`, `get_max_per_conn`, `get_domain_group` |
+| `sender.py` | `CampaignSender` (многопоточный движок), `build_message` (MIME, анти-фингерпринт заголовков), `send_test`, `generate_preview`, `resolve_delay`, сохранение/загрузка `queue-state.json` |
+| `stats.py` | `SendStats` — потокобезопасные счётчики, per-SMTP (+ `last_activity`) и per-proxy метрики, `snapshot` (скорость, ETA, `started_at`, статусы RU, флаг `mark_stopped`) |
+| `logger.py` | `JsonLogger` (singleton, асинхронный писатель): боевой лог `logs/YYYY-MM-DD.json` (JSON-lines, timestamp с `Z`), тест-лог `logs/test-log.json`, общий лог `.jsonl`, экспорт JSON/CSV |
+| `presets.py` | `save_preset`/`load_preset` — пресеты кампании в `data/presets/*.json` |
+| `countries.py` | `COUNTRIES_RU`: ISO-код → русское название (гео прокси) |
 
-### `gui/` — графический интерфейс (CustomTkinter)
+Пустые `core/__init__.py`, `gui/__init__.py` — маркеры пакетов.
+
+### `gui/` — интерфейс (CustomTkinter, тёмная тема)
 
 | Модуль | Назначение |
 |---|---|
-| `theme.py` | Тема оформления: цвета, шрифты, стили виджетов |
-| `window.py` | Главное окно `App`: создание менеджеров, вкладок, пресет-меню |
-| `tab_setup.py` | Вкладка «Настройка»: загрузка файлов, прокси, SMTP |
-| `tab_content.py` | Вкладка «Контент»: тема, тело письма, вложения, макросы |
-| `tab_campaign.py` | Вкладка «Кампания»: параметры рассылки, задержки, лимиты |
-| `tab_send.py` | Вкладка «Отправка»: запуск/пауза/стоп, прогресс-бар, лог |
-| `tab_stats.py` | Вкладка «Статистика»: таблицы, графики, CSV-экспорт |
+| `window.py` | Главное окно `App`: общие менеджеры, инжект во вкладки, колбэки, полный пресет, блокировка UI, пересчёт доступности СТАРТ при смене вкладки |
+| `theme.py` | Палитра/шрифты (фон `#0a0a0a`, акцент `#4ade80`) |
+| `validation.py` | Валидаторы Entry (float, int, percent 0–100, email, список email, URL) |
+| `tab_setup.py` | «Настройки»: прокси + SMTP (загрузка, «Проверить все», карточки, пагинация, авто-проверка прокси перед стартом через `ensure_proxies_checked`) |
+| `tab_content.py` | «Контент»: темы, тела, ссылки, имена (превью первых 5), превью развёрнутого тела, песочница |
+| `tab_campaign.py` | «Кампания»: база (превью первых 5), CC/BCC + проценты, control-инжект, пресеты |
+| `tab_plan.py` | «План»: `PlanTab` — распределение писем между живыми SMTP, авто-проставление потоков/лимита |
+| `tab_send.py` | «Отправка»: тест, задержка/разброс/писем-в-минуту, СТАРТ (неактивна без базы+SMTP)/СТОП/ПАУЗА, предпросмотр, диалог возобновления |
+| `tab_stats.py` | «Статистика»: прогресс-бар, плитки (Speed/ETA/Sent/Errors/В очереди + время), таблицы SMTP (с «Актив.») и прокси, экспорт |
+
+### Скрипты в корне
+`main.py` — точка входа (создаёт `data/`, `data/presets/`, `logs/`, патчит скроллбар, запускает `App`). `start.bat`/`start.command` — лаунчеры. `translate.py`, `scrape.py`, `test_ablock_fix.py` — утилиты/тест, не часть рантайма.
 
 ---
 
 ## Поток данных
 
-```mermaid
-graph TD
-    A["App (window.py)"] -->|создаёт| PM["ProxyManager"]
-    A -->|создаёт| SM["SmtpManager"]
-    A -->|создаёт| CM["ContentManager"]
-    A -->|создаёт| SS["SendStats"]
-
-    PM -->|инжектируется| TS["tab_setup"]
-    SM -->|инжектируется| TS
-    CM -->|инжектируется| TC["tab_content"]
-    SS -->|инжектируется| TSt["tab_stats"]
-
-    TS -->|данные| CT["CampaignTab"]
-    TC -->|данные| CT
-    CT -->|строит очередь| QM["QueueManager"]
-
-    QM -->|очередь| SD["SendTab"]
-    SD -->|запускает| CS["CampaignSender"]
-    CS -->|обновляет| SS
-```
-
-### Последовательность:
-
-1. **`App`** создаёт разделяемые менеджеры: `ProxyManager`, `SmtpManager`, `ContentManager`, `SendStats`
-2. Менеджеры **инжектируются** в соответствующие вкладки через конструкторы
-3. **`CampaignTab`** собирает параметры и строит очередь через `QueueManager`
-4. **`SendTab`** запускает `CampaignSender` в рабочем потоке
-5. `CampaignSender` отправляет письма, обновляет `SendStats`
-6. GUI получает обновления через `parent.after()` callback'и
+1. `App` создаёт единые `ProxyManager`, `SmtpManager`, `ContentManager`, `SendStats` и раздаёт их вкладкам.
+2. «Кампания» строит очередь `list[Recipient]` (+ control-инжект) → колбэк `on_queue_ready` → `SendTab.set_recipients`.
+3. «Отправка» создаёт `CampaignSender`, запускает в daemon-потоке.
+4. GUI — главный поток Tk; обновления из воркеров через `parent.after(0, …)`; тяжёлые проверки — `ThreadPoolExecutor`.
+5. Остановка/пауза — `threading.Event`; задержки через `stop_event.wait(delay)` (отменяемый сон).
 
 ---
 
-## Модель многопоточности
+## Многопоточность
 
-### Основной принцип
+> GUI — в главном потоке. Вся тяжёлая работа — в daemon-потоках.
 
-> [!IMPORTANT]
-> GUI работает в главном потоке (Tk mainloop). Вся тяжёлая работа — в daemon-потоках.
-
-### CampaignSender (daemon thread)
-
-- Запускается как `threading.Thread(daemon=True)`
-- Управляется через два события:
-  - **`stop_event`** — полная остановка
-  - **`pause_event`** — приостановка (set = пауза)
-- Задержка между письмами реализована через `stop_event.wait(delay)` — отменяемый sleep
-- Обновление GUI: `parent.after(0, callback)` из рабочего потока
-
-### ProxyManager / SmtpManager — массовая проверка
-
-- `check_all()` использует `concurrent.futures.ThreadPoolExecutor`
-- Параллельная проверка всех прокси/SMTP с лимитом потоков
-
-### Защита состояния
-
-- Все разделяемые структуры данных защищены `threading.Lock`
-- `SendStats` — атомарные счётчики под блокировкой
-- `JsonLogger` — единый `write_lock` для записи в файл
-
-```
-┌─────────────────────────────────────────────┐
-│              Main Thread (Tk)               │
-│  ┌─────────┐ ┌─────────┐ ┌──────────────┐  │
-│  │ tab_send│ │tab_stats│ │  tab_setup   │  │
-│  └────┬────┘ └────┬────┘ └──────┬───────┘  │
-│       │           │             │           │
-│  parent.after()   │      ThreadPoolExecutor │
-│       │           │             │           │
-├───────┼───────────┼─────────────┼───────────┤
-│       ▼           │             ▼           │
-│  ┌─────────┐      │     ┌─────────────┐    │
-│  │Campaign │      │     │ check_all() │    │
-│  │ Sender  │──────┘     │  (proxies/  │    │
-│  │ (daemon)│             │   smtp)    │    │
-│  └─────────┘             └─────────────┘    │
-│         Worker Threads                      │
-└─────────────────────────────────────────────┘
-```
-
----
-
-## Система пресетов
-
-### Сохранение
-`App.gather_full_preset()` обходит все вкладки и собирает:
-- Пути к файлам (emails, proxies, SMTP)
-- Параметры контента (тема, тело, вложения)
-- Настройки кампании (задержки, лимиты, режимы)
-
-Результат сериализуется в **JSON** и сохраняется на диск.
-
-### Загрузка
-`App.apply_full_preset()`:
-1. Читает JSON-файл пресета
-2. Загружает указанные файлы данных
-3. Устанавливает значения UI-виджетов
-4. Обновляет состояние менеджеров
-
-> [!TIP]
-> Пресеты позволяют быстро переключаться между кампаниями без повторной настройки.
+- `CampaignSender._worker_dispatcher` поднимает по одному воркеру на живой SMTP-аккаунт (лимит `max_threads`), все тянут из общей `queue.Queue`, перемешанной по доменам (`interleave_by_domain`).
+- Разделяемое состояние под `threading.Lock`/`RLock`; `SendStats` атомарен; `JsonLogger` пишет из отдельного потока через очередь.
+- Ошибки: `5xx` → аккаунт `DEAD`; прочее → коннект сброшен, получатель в очередь (до 3 ретраев).
 
 ---
 
 ## Логирование
 
-### JsonLogger (singleton)
-
-- **Единственный экземпляр** на всё приложение (см. [[30-decisions]] — почему singleton)
-- **Потокобезопасный**: единый `write_lock` для всех потоков
-- **Формат**: JSON-lines (одна JSON-строка = одно событие)
-- **Ротация**: ежедневные файлы в `logs/` директории
-- **Структура записи**:
-
-```json
-{
-  "timestamp": "2026-07-02T04:30:00",
-  "level": "INFO",
-  "thread": "CampaignSender",
-  "event": "email_sent",
-  "data": {"to": "user@example.com", "smtp": "sender@mail.com"}
-}
-```
+- **Боевой лог**: `logs/YYYY-MM-DD.json` — JSON-lines, запись `{timestamp(Z), recipient, smtp_used, proxy_used, subject, status, error_text?, control?, had_cc?, had_bcc?}`.
+- **Тест-лог**: `logs/test-log.json` — тестовые отправки отдельно (не в статистику/боевой лог).
+- **Экспорт**: JSON (валидный массив) и CSV.
 
 ---
 
 ## Связанные документы
-
-- [[00-overview]] — обзор проекта
-- [[30-decisions]] — ключевые архитектурные решения
-- [[20-tasks/12-audit]] — аудит кода
+- [[00-overview]] — обзор и статус
+- [[30-decisions]] — ключевые решения
 - [[40-errors]] — журнал ошибок
+- [[daily/2026-09-12]] — финал проекта

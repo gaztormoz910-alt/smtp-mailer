@@ -1,13 +1,9 @@
-"""Вкладка Stats — дашборд рассылки в реальном времени.
 
-Прогресс-бар, глобальные метрики (скорость, ETA, sent, errors),
-таблицы детализации по SMTP и прокси, экспорт логов.
-UI обновляется через ``.after(1000)`` polling (потокобезопасно).
-"""
 
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from tkinter import filedialog
 
@@ -23,7 +19,6 @@ from gui.theme import (
 
 
 class StatsTab:
-    """Содержимое вкладки Stats."""
 
     def __init__(self, parent: ctk.CTkFrame, stats: SendStats | None = None) -> None:
         self.parent = parent
@@ -34,9 +29,6 @@ class StatsTab:
         self._polling_active = False
         self._build_layout()
 
-    # ══════════════════════════════════════════════════════
-    #  LAYOUT
-    # ══════════════════════════════════════════════════════
 
     def _build_layout(self) -> None:
         outer = ctk.CTkFrame(self.parent, fg_color="transparent")
@@ -47,7 +39,6 @@ class StatsTab:
         self._build_tables(outer)
         self._build_export(outer)
 
-    # ── 1. Progress ──────────────────────────────────────
 
     def _build_progress(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -80,7 +71,6 @@ class StatsTab:
         )
         self.pct_label.pack(side="right")
 
-    # ── 2. Metrics cards ─────────────────────────────────
 
     def _build_metrics(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -92,13 +82,21 @@ class StatsTab:
         row = ctk.CTkFrame(frame, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=10)
 
-        for i in range(4):
+        for i in range(5):
             row.grid_columnconfigure(i, weight=1, uniform="metric")
 
         self.m_speed = self._metric_card(row, "⚡ Speed", "0 /мин", 0)
         self.m_eta   = self._metric_card(row, "⏱  ETA", "—", 1)
         self.m_sent  = self._metric_card(row, "✓  Sent", "0", 2, val_color=COLOR_ACCENT)
         self.m_err   = self._metric_card(row, "✗  Errors", "0", 3, val_color=COLOR_ERROR)
+        self.m_queue = self._metric_card(row, "📥 В очереди", "0", 4, val_color=COLOR_WARN)
+
+        # Время начала кампании и текущее время (ТЗ задачи 6)
+        self.time_label = ctk.CTkLabel(
+            frame, text="🕒 Начало: —    ·    Сейчас: —",
+            font=(FONT_MONO, 11), text_color=COLOR_TEXT_DIM, anchor="w",
+        )
+        self.time_label.pack(fill="x", padx=14, pady=(0, 8))
 
     def _metric_card(
         self, parent, title: str, value: str, col: int,
@@ -122,7 +120,6 @@ class StatsTab:
         lbl.pack(fill="x", padx=8, pady=(0, 8))
         return lbl
 
-    # ── 3. Detail tables (SMTP + Proxy) ──────────────────
 
     def _build_tables(self, container: ctk.CTkFrame) -> None:
         wrap = ctk.CTkFrame(container, fg_color="transparent")
@@ -131,7 +128,6 @@ class StatsTab:
         wrap.grid_columnconfigure(1, weight=1, uniform="tbl")
         wrap.grid_rowconfigure(0, weight=1)
 
-        # ── SMTP ─────────────────────────────────────
         smtp_frame = ctk.CTkFrame(
             wrap, fg_color=COLOR_FRAME,
             corner_radius=10, border_color=COLOR_BORDER, border_width=1,
@@ -143,10 +139,9 @@ class StatsTab:
             font=(FONT_FAMILY, 13, "bold"), text_color=COLOR_TEXT, anchor="w",
         ).pack(fill="x", padx=12, pady=(10, 4))
 
-        # заголовок таблицы
         hdr = ctk.CTkFrame(smtp_frame, fg_color="transparent")
         hdr.pack(fill="x", padx=12, pady=(0, 2))
-        for txt, w in [("Email", 180), ("Отпр", 50), ("Ошиб", 45), ("Статус", 60)]:
+        for txt, w in [("Email", 150), ("Отпр", 45), ("Ошиб", 42), ("Статус", 58), ("Актив.", 62)]:
             ctk.CTkLabel(
                 hdr, text=txt, width=w, font=(FONT_MONO, 10, "bold"),
                 text_color=COLOR_TEXT_DIM, anchor="w",
@@ -158,7 +153,6 @@ class StatsTab:
         )
         self.smtp_table.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
-        # ── Proxy ────────────────────────────────────
         proxy_frame = ctk.CTkFrame(
             wrap, fg_color=COLOR_FRAME,
             corner_radius=10, border_color=COLOR_BORDER, border_width=1,
@@ -184,7 +178,6 @@ class StatsTab:
         )
         self.proxy_table.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
-    # ── 4. Export ────────────────────────────────────────
 
     def _build_export(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -216,43 +209,33 @@ class StatsTab:
         )
         self.export_action.pack(side="left", fill="x")
 
-    # ══════════════════════════════════════════════════════
-    #  POLLING  — потокобезопасное обновление UI
-    # ══════════════════════════════════════════════════════
 
     def start_polling(self) -> None:
-        """Запустить polling UI (вызывать при старте кампании)."""
         if not self._polling_active:
             self._polling_active = True
             self._update_ui()
 
     def stop_polling(self) -> None:
-        """Остановить polling UI (вызывать при остановке кампании). Делает одно последнее обновление."""
         self._polling_active = False
-        # Одно финальное обновление чтобы показать итоговый статус
         try:
             self._do_update_ui()
         except Exception:
             pass
 
     def _update_ui(self) -> None:
-        """Раз в секунду читает snapshot из stats и обновляет виджеты."""
         if not self._polling_active:
             return
         self._do_update_ui()
         self.parent.after(1000, self._update_ui)
 
     def _do_update_ui(self) -> None:
-        """Фактическое обновление виджетов."""
         snap = self.stats.snapshot
 
-        # ── прогресс ──────────────────────────────────
         self.status_label.configure(text=snap["status_text"])
         pct = min(snap["progress"], 1.0)
         self.progress_bar.set(pct)
         self.pct_label.configure(text=f"{pct * 100:.1f} %")
 
-        # ── метрики ───────────────────────────────────
         self.m_speed.configure(text=f"{snap['speed_per_min']} /мин")
         eta = snap["eta_min"]
         if eta > 0:
@@ -265,8 +248,12 @@ class StatsTab:
         self.m_eta.configure(text=eta_text)
         self.m_sent.configure(text=str(snap["sent"]))
         self.m_err.configure(text=str(snap["errors"]))
+        self.m_queue.configure(text=str(snap["remaining"]))
 
-        # ── SMTP-таблица ──────────────────────────────
+        self.time_label.configure(
+            text=f"🕒 Начало: {snap.get('started_at', '—')}    ·    Сейчас: {time.strftime('%H:%M:%S')}"
+        )
+
         for item in snap["smtp"]:
             key = item["email"]
             if key not in self._smtp_rows:
@@ -276,8 +263,8 @@ class StatsTab:
             row["err"].configure(text=str(item["errors"]))
             st_color = self._status_color(item["status"])
             row["status"].configure(text=item["status"], text_color=st_color)
+            row["activity"].configure(text=item.get("last_activity", "—"))
 
-        # ── Proxy-таблица ─────────────────────────────
         for item in snap["proxy"]:
             key = item["address"]
             if key not in self._proxy_rows:
@@ -289,39 +276,43 @@ class StatsTab:
             row["status"].configure(text=item["status"], text_color=st_color)
 
 
-
-    # ── создание строк таблиц ────────────────────────────
-
     def _create_smtp_row(self, email: str) -> None:
         row = ctk.CTkFrame(self.smtp_table, fg_color="transparent")
         row.pack(fill="x", padx=2, pady=1)
 
         lbl_email = ctk.CTkLabel(
-            row, text=email, width=180, font=(FONT_MONO, 10),
+            row, text=email, width=150, font=(FONT_MONO, 10),
             text_color=COLOR_TEXT, anchor="w",
         )
         lbl_email.pack(side="left")
 
         lbl_sent = ctk.CTkLabel(
-            row, text="0", width=50, font=(FONT_MONO, 10),
+            row, text="0", width=45, font=(FONT_MONO, 10),
             text_color=COLOR_ACCENT, anchor="w",
         )
         lbl_sent.pack(side="left")
 
         lbl_err = ctk.CTkLabel(
-            row, text="0", width=45, font=(FONT_MONO, 10),
+            row, text="0", width=42, font=(FONT_MONO, 10),
             text_color=COLOR_ERROR, anchor="w",
         )
         lbl_err.pack(side="left")
 
         lbl_st = ctk.CTkLabel(
-            row, text="ожидание", width=60, font=(FONT_MONO, 10),
+            row, text="ожидание", width=58, font=(FONT_MONO, 10),
             text_color=COLOR_TEXT_DIM, anchor="w",
         )
         lbl_st.pack(side="left")
 
+        lbl_act = ctk.CTkLabel(
+            row, text="—", width=62, font=(FONT_MONO, 10),
+            text_color=COLOR_TEXT_DIM, anchor="w",
+        )
+        lbl_act.pack(side="left")
+
         self._smtp_rows[email] = {
-            "frame": row, "sent": lbl_sent, "err": lbl_err, "status": lbl_st,
+            "frame": row, "sent": lbl_sent, "err": lbl_err,
+            "status": lbl_st, "activity": lbl_act,
         }
 
     def _create_proxy_row(self, address: str) -> None:
@@ -356,7 +347,6 @@ class StatsTab:
             "frame": row, "used": lbl_used, "err": lbl_err, "status": lbl_st,
         }
 
-    # ── export handlers ──────────────────────────────────
 
     def _on_export(self, fmt: str) -> None:
         logs = self.logger.list_send_logs()
@@ -364,7 +354,7 @@ class StatsTab:
             self.export_action.configure(
                 text="✗  Логи отправки не найдены", text_color=COLOR_ERROR)
             return
-        src = logs[0]  # самый свежий
+        src = logs[0]
 
         if fmt == "csv":
             dst = filedialog.asksaveasfilename(
@@ -398,7 +388,6 @@ class StatsTab:
 
         threading.Thread(target=_do, daemon=True).start()
 
-    # ── helpers ──────────────────────────────────────────
 
     @staticmethod
     def _status_color(status: str) -> str:

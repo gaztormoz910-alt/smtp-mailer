@@ -1,8 +1,4 @@
-"""Вкладка План распределения.
 
-Отображает расчет того, как письма будут распределены
-между живыми SMTP аккаунтами.
-"""
 
 from __future__ import annotations
 
@@ -22,7 +18,6 @@ if TYPE_CHECKING:
 
 
 class PlanTab:
-    """Содержимое вкладки План."""
 
     def __init__(
         self,
@@ -40,7 +35,6 @@ class PlanTab:
         outer = ctk.CTkFrame(self.parent, fg_color="transparent")
         outer.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # Header
         ctk.CTkLabel(
             outer,
             text="📊 План распределения писем",
@@ -55,14 +49,12 @@ class PlanTab:
             text_color=COLOR_TEXT_DIM
         ).pack(anchor="w", pady=(0, 20))
 
-        # Main frame
         self.info_frame = ctk.CTkFrame(
             outer, fg_color=COLOR_FRAME, corner_radius=10,
             border_color=COLOR_BORDER, border_width=1
         )
         self.info_frame.pack(fill="x", pady=(0, 20))
 
-        # Stats labels
         self.lbl_smtps = ctk.CTkLabel(
             self.info_frame, text="Живых SMTP: ?", font=(FONT_FAMILY, 14), text_color=COLOR_TEXT
         )
@@ -73,7 +65,6 @@ class PlanTab:
         )
         self.lbl_recipients.pack(anchor="w", padx=20, pady=(0, 15))
 
-        # Result frame
         res_frame = ctk.CTkFrame(self.info_frame, fg_color=COLOR_BG, corner_radius=8)
         res_frame.pack(fill="x", padx=20, pady=(0, 20))
 
@@ -84,7 +75,6 @@ class PlanTab:
         )
         self.lbl_result.pack(padx=20, pady=20)
 
-        # Update button
         self.btn_update = ctk.CTkButton(
             outer,
             text="🔄  Обновить расчет",
@@ -97,7 +87,6 @@ class PlanTab:
         self.btn_update.pack(anchor="center")
 
     def refresh_plan(self) -> None:
-        """Пересчитывает план и обновляет UI."""
         alive = self.smtp_mgr.count_alive
         recipients = len(self.send_tab._recipients)
 
@@ -157,7 +146,6 @@ class PlanTab:
 
         self.lbl_result.configure(text=text, text_color=COLOR_ACCENT)
         
-        # Автоматически обновляем настройки во вкладке Отправка
         def _set_entry(entry, value):
             entry.delete(0, "end")
             entry.insert(0, value)

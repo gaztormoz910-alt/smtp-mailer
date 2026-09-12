@@ -1,5 +1,3 @@
-"""Тест на ABLOCK-маркер: проверяем что омоглифы и entity-рандомизация
-не ломают <a> теги в HTML-телах."""
 import sys
 sys.path.insert(0, '.')
 
@@ -17,7 +15,6 @@ for trial in range(20):
     result = _replace_homoglyphs(html)
     if '__ABLOCK' in result:
         print(f"  ❌ ПРОВАЛ (trial {trial}): маркер ABLOCK утёк!")
-        # Найти где именно
         idx = result.find('__ABLOCK')
         print(f"     ...{result[max(0,idx-20):idx+30]}...")
         break
@@ -30,19 +27,17 @@ else:
 print()
 print("=== ТЕСТ 2: Entity Randomization ===")
 for trial in range(20):
-    result = _randomize_html_entities(html, rate=0.15)  # Высокий rate для надёжности теста
+    result = _randomize_html_entities(html, rate=0.15)
     if '__ENTPROT' in result:
         print(f"  ❌ ПРОВАЛ (trial {trial}): маркер ENTPROT утёк!")
         break
     if 'example.com' not in result:
         print(f"  ❌ ПРОВАЛ (trial {trial}): ссылка повреждена!")
-        # Найти <a> тег
         import re
         a_tags = re.findall(r'<a[^>]*>.*?</a>', result, re.DOTALL)
         for t in a_tags:
             print(f"     Найден <a>: {t[:80]}")
         break
-    # Проверяем что href не изменён
     if 'href="https://example.com/' not in result:
         print(f"  ❌ ПРОВАЛ (trial {trial}): href повреждён!")
         break

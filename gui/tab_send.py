@@ -1,9 +1,4 @@
-"""Вкладка Send — тестовая отправка + управление массовой рассылкой.
 
-Тест: одиночная отправка на указанный адрес.
-Кампания: СТАРТ / СТОП / ПАУЗА с настройкой задержки и jitter.
-Превью полностью собранного письма.
-"""
 
 from __future__ import annotations
 
@@ -22,6 +17,7 @@ from core.sender import (
     clear_queue_state,
     generate_preview,
     load_queue_state,
+    resolve_delay,
     send_test,
 )
 from core.smtp_manager import SmtpManager
@@ -38,7 +34,6 @@ from gui.validation import (
 
 
 class SendTab:
-    """Содержимое вкладки Send."""
 
     def __init__(
         self,
@@ -58,19 +53,17 @@ class SendTab:
         self.campaign_tab = campaign_tab
 
         self._campaign: CampaignSender | None = None
-        self._recipients: list[Recipient] = []  # заполняется из Campaign-таба
+        self._recipients: list[Recipient] = []
 
-        # Throttle для логов: буферизация, макс. 5 обновлений/сек
         self._log_buffer: deque[str] = deque(maxlen=200)
         self._log_flush_pending = False
-        self._LOG_MAX_LINES = 500  # Максимум строк в preview_box
+        self._LOG_MAX_LINES = 500
 
         self._build_layout()
         self._check_resume_state()
+        # Стартовое состояние: без базы и живых SMTP кнопка СТАРТ неактивна.
+        self._refresh_start_enabled()
 
-    # ══════════════════════════════════════════════════════
-    #  LAYOUT
-    # ══════════════════════════════════════════════════════
 
     def _build_layout(self) -> None:
         outer = ctk.CTkFrame(self.parent, fg_color="transparent")
@@ -80,7 +73,6 @@ class SendTab:
         self._build_controls(outer)
         self._build_preview(outer)
 
-    # ── 1. Test Send ─────────────────────────────────────
 
     def _build_test(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -124,7 +116,6 @@ class SendTab:
         )
         self.test_result.pack(side="left", fill="x", expand=True)
 
-    # ── 2. Campaign Controls ─────────────────────────────
 
     def _build_controls(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -138,7 +129,6 @@ class SendTab:
             font=(FONT_FAMILY, 14, "bold"), text_color=COLOR_TEXT, anchor="w",
         ).pack(fill="x", padx=14, pady=(12, 6))
 
-        # ── Задержка ──
         delay_row = ctk.CTkFrame(frame, fg_color="transparent")
         delay_row.pack(fill="x", padx=14, pady=(0, 8))
 
@@ -170,7 +160,18 @@ class SendTab:
         ctk.CTkLabel(delay_row, text="сек", font=(FONT_FAMILY, 11),
                      text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 16))
 
-        # ── Потоки и Пулинг ──
+        ctk.CTkLabel(delay_row, text="Писем/мин (0=выкл):", font=(FONT_FAMILY, 12),
+                     text_color=COLOR_TEXT_DIM).pack(side="left", padx=(0, 4))
+        self.per_min_entry = ctk.CTkEntry(
+            delay_row, width=50, height=28, placeholder_text="0",
+            font=(FONT_FAMILY, 12), fg_color=COLOR_BG,
+            text_color=COLOR_TEXT, border_color=COLOR_BORDER,
+            corner_radius=6, justify="center",
+        )
+        self.per_min_entry.pack(side="left", padx=(0, 4))
+        self.per_min_entry.insert(0, "0")
+        register_int_validation(self.per_min_entry)
+
         pooling_row = ctk.CTkFrame(frame, fg_color="transparent")
         pooling_row.pack(fill="x", padx=14, pady=(0, 8))
 
@@ -206,7 +207,6 @@ class SendTab:
         )
         self.btn_auto_limit.pack(side="left", padx=(8, 0))
 
-        # ── Кнопки ──
         btn_row = ctk.CTkFrame(frame, fg_color="transparent")
         btn_row.pack(fill="x", padx=14, pady=(0, 12))
 
@@ -245,14 +245,12 @@ class SendTab:
         )
         self.btn_pause.pack(side="left")
 
-        # ── Статус ──
         self.campaign_status = ctk.CTkLabel(
             frame, text="Готов  ·  Загрузите получателей и SMTP для старта",
             font=(FONT_FAMILY, 12), text_color=COLOR_TEXT_DIM, anchor="w",
         )
         self.campaign_status.pack(fill="x", padx=14, pady=(0, 10))
 
-    # ── 3. Preview area ──────────────────────────────────
 
     def _build_preview(self, container: ctk.CTkFrame) -> None:
         frame = ctk.CTkFrame(
@@ -287,9 +285,6 @@ class SendTab:
         self.preview_box.bind("<Control-c>", lambda e: self._copy_preview())
         self.preview_box.bind("<Command-c>", lambda e: self._copy_preview())
 
-    # ══════════════════════════════════════════════════════
-    #  UI LOCKING
-    # ══════════════════════════════════════════════════════
 
     def set_ui_locked(self, locked: bool) -> None:
         state = "disabled" if locked else "normal"
@@ -298,12 +293,25 @@ class SendTab:
         
         self.delay_entry.configure(state=state)
         self.jitter_entry.configure(state=state)
+        self.per_min_entry.configure(state=state)
         self.threads_entry.configure(state=state)
         self.conn_limit_entry.configure(state=state)
         self.btn_auto_limit.configure(state=state)
-        
+
         self.btn_preview.configure(state=state)
-        self.btn_start.configure(state=state)
+        # При блокировке — гасим СТАРТ; при разблокировке — возвращаем по наличию данных.
+        if locked:
+            self.btn_start.configure(state="disabled")
+        else:
+            self._refresh_start_enabled()
+
+    def _refresh_start_enabled(self) -> None:
+        # ТЗ задачи 7: СТАРТ активна только когда есть и база получателей, и живой
+        # SMTP. Во время самой рассылки состоянием кнопок управляют старт/стоп.
+        if self._campaign and self._campaign.running:
+            return
+        ready = len(self._recipients) > 0 and self.smtp_mgr.count_alive > 0
+        self.btn_start.configure(state="normal" if ready else "disabled")
 
     def _get_app(self):
         w = self.parent
@@ -313,14 +321,8 @@ class SendTab:
             w = getattr(w, "master", None)
         return None
 
-    # ══════════════════════════════════════════════════════
-    #  ОБРАБОТЧИКИ
-    # ══════════════════════════════════════════════════════
-
-    # ── Test ──────────────────────────────────────────────
 
     def _on_auto_limit(self) -> None:
-        """Автоматически вычисляет и подставляет оптимальный лимит для равномерного распределения."""
         alive = self.smtp_mgr.count_alive
         recs = len(self._recipients)
         if alive > 0 and recs > 0:
@@ -332,7 +334,6 @@ class SendTab:
             _set_entry(self.conn_limit_entry, str(optimal))
             _set_entry(self.threads_entry, str(alive))
             
-            # Обновляем UI во вкладке План
             if hasattr(self, 'plan_tab') and self.plan_tab:
                 self.plan_tab.refresh_plan()
 
@@ -359,13 +360,11 @@ class SendTab:
 
         threading.Thread(target=_do, daemon=True).start()
 
-    # ── Preview ──────────────────────────────────────────
 
     def _on_preview(self) -> None:
         text = generate_preview(self.content_mgr, self.smtp_mgr)
         self._set_preview(text)
 
-    # ── Start ────────────────────────────────────────────
 
     def _on_start(self) -> None:
         if not self._recipients:
@@ -379,10 +378,28 @@ class SendTab:
                 text_color=COLOR_ERROR)
             return
 
+        # ТЗ задачи 1: перед стартом автоматически проверяем прокси — мёртвые
+        # помечаются и исключаются из ротации. Кампания стартует в колбэке по
+        # завершении проверки (или сразу, если проверять нечего).
+        self.btn_start.configure(state="disabled")
+        app = self._get_app()
+        if app and hasattr(app, "tab_setup"):
+            self.campaign_status.configure(
+                text="⏳  Проверка прокси перед стартом…", text_color=COLOR_WARN)
+            app.tab_setup.ensure_proxies_checked(self._start_campaign)
+        else:
+            self._start_campaign()
+
+    def _start_campaign(self) -> None:
         delay = self._float(self.delay_entry, 5.0)
         jitter = self._float(self.jitter_entry, 2.0)
+        # «Писем в минуту» (если >0) задаёт паузу и имеет приоритет над задержкой.
+        try:
+            per_min = float(self.per_min_entry.get().strip() or "0")
+        except (ValueError, AttributeError):
+            per_min = 0.0
+        delay = resolve_delay(delay, per_min)
 
-        # CC/BCC из Campaign-таба
         cc_addrs, cc_pct = [], 0
         bcc_addrs, bcc_pct = [], 0
         if self.campaign_tab:
@@ -412,8 +429,6 @@ class SendTab:
         if alive < 1:
             alive = 1
         
-        # We no longer strictly enforce max_per_acc under the hood to prevent 
-        # dropped emails if an account dies during sending.
         max_per_acc = 0
         
         self._campaign.start(delay=delay, jitter=jitter, max_threads=max_threads, 
@@ -429,7 +444,6 @@ class SendTab:
             text=f"▶  Отправка {len(self._recipients)} получателям…{cc_info}{bcc_info}",
             text_color=COLOR_ACCENT)
 
-        # Запускаем polling статистики
         app = self._get_app()
         if app and hasattr(app, 'tab_stats'):
             app.tab_stats.start_polling()
@@ -440,11 +454,13 @@ class SendTab:
         if app:
             app.set_ui_locked(True)
 
-    # ── Stop ─────────────────────────────────────────────
 
     def _on_stop(self) -> None:
         if self._campaign:
             self._campaign.stop()
+            # Пометить именно ручную остановку, чтобы на вкладке «Статистика»
+            # показывалось «Остановлено», а не «Завершено» (ТЗ задачи 6).
+            self.stats.mark_stopped()
         self.btn_stop.configure(state="disabled")
         self.btn_pause.configure(state="disabled")
         self.btn_start.configure(state="normal")
@@ -456,7 +472,6 @@ class SendTab:
             if hasattr(app, 'tab_stats'):
                 app.tab_stats.stop_polling()
 
-    # ── Pause / Resume ───────────────────────────────────
 
     def _on_pause(self) -> None:
         if not self._campaign:
@@ -476,7 +491,6 @@ class SendTab:
             if app:
                 app.set_ui_locked(False)
 
-    # ── Campaign done callback ───────────────────────────
 
     def _on_campaign_done(self) -> None:
         self.btn_stop.configure(state="disabled")
@@ -494,7 +508,6 @@ class SendTab:
             if hasattr(app, 'tab_stats'):
                 app.tab_stats.stop_polling()
 
-    # ── Resume state check ───────────────────────────────
 
     def _check_resume_state(self) -> None:
         state = load_queue_state()
@@ -535,6 +548,7 @@ class SendTab:
             self.campaign_status.configure(
                 text=f"↻  Очередь возобновлена: {len(remaining)} получателей",
                 text_color=COLOR_ACCENT)
+            self._refresh_start_enabled()
             dialog.destroy()
 
         def _discard() -> None:
@@ -555,12 +569,8 @@ class SendTab:
             corner_radius=8, command=_discard,
         ).pack(side="left", padx=10)
 
-    # ══════════════════════════════════════════════════════
-    #  ПУБЛИЧНОЕ API (вызывается из Campaign-таба)
-    # ══════════════════════════════════════════════════════
 
     def set_recipients(self, recipients: list[Recipient]) -> None:
-        """Устанавливает список получателей из Campaign-таба."""
         self._recipients = list(recipients)
         count = len(self._recipients)
         if count:
@@ -571,10 +581,8 @@ class SendTab:
             self.campaign_status.configure(
                 text="Готов  ·  Загрузите получателей для старта",
                 text_color=COLOR_TEXT_DIM)
+        self._refresh_start_enabled()
 
-    # ══════════════════════════════════════════════════════
-    #  HELPERS
-    # ══════════════════════════════════════════════════════
 
     def _set_preview(self, text: str) -> None:
         self.preview_box.configure(state="normal")
@@ -583,31 +591,25 @@ class SendTab:
         self.preview_box.configure(state="disabled")
 
     def _append_log(self, text: str) -> None:
-        """Буферизованное обновление лога — макс. 5 раз/сек вместо каждого письма."""
         self._log_buffer.append(text)
         if not self._log_flush_pending:
             self._log_flush_pending = True
-            self.parent.after(200, self._flush_log_buffer)  # 200мс = 5 раз/сек
+            self.parent.after(200, self._flush_log_buffer)
 
     def _flush_log_buffer(self) -> None:
-        """Пакетная запись всех накопленных строк в textbox."""
         self._log_flush_pending = False
         if not self._log_buffer:
             return
 
-        # Собираем все строки за интервал
         lines = []
         while self._log_buffer:
             lines.append(self._log_buffer.popleft())
 
-        # Обновляем статус последней строкой
         self.campaign_status.configure(text=lines[-1], text_color=COLOR_ACCENT)
 
-        # Пакетная вставка
         self.preview_box.configure(state="normal")
         self.preview_box.insert("end", "\n" + "\n".join(lines))
 
-        # Ограничение 500 строк — удаляем старые
         total_lines = int(self.preview_box.index("end-1c").split(".")[0])
         if total_lines > self._LOG_MAX_LINES:
             overflow = total_lines - self._LOG_MAX_LINES

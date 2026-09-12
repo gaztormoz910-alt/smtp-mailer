@@ -1,9 +1,4 @@
-"""stats.py — потокобезопасный сборщик статистики рассылки.
 
-Хранит глобальные метрики (отправлено, ошибки, скорость, ETA)
-и детализацию по каждому SMTP-аккаунту и прокси.
-UI читает данные через ``snapshot`` без блокировок GUI.
-"""
 
 from __future__ import annotations
 
@@ -19,6 +14,7 @@ class SmtpStat:
     sent: int = 0
     errors: int = 0
     status: str = "idle"
+    last_activity: float = 0.0  # epoch последнего письма/ошибки (ТЗ: «последняя активность»)
 
 
 @dataclass
@@ -30,11 +26,7 @@ class ProxyStat:
 
 
 class SendStats:
-    """Потокобезопасный агрегатор метрик рассылки.
 
-    Фоновые потоки вызывают ``record_sent`` / ``record_error``,
-    а GUI раз в секунду читает ``snapshot`` (через ``.after()``).
-    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -44,10 +36,10 @@ class SendStats:
         self._start_time: float | None = None
         self._running: bool = False
         self._paused: bool = False
+        self._stopped: bool = False  # True если кампанию остановили вручную (не естественный конец)
         self._smtp: dict[str, SmtpStat] = {}
         self._proxy: dict[str, ProxyStat] = {}
 
-    # ── управление ───────────────────────────────────────
 
     def start(self, total: int) -> None:
         with self._lock:
@@ -57,11 +49,21 @@ class SendStats:
             self._start_time = time.time()
             self._running = True
             self._paused = False
+            self._stopped = False
 
     def stop(self) -> None:
+        # Естественное завершение (воркер дошёл до конца очереди). Ручную остановку
+        # помечает mark_stopped(); stop() НЕ сбрасывает этот флаг, чтобы «Остановлено»
+        # не превратилось в «Завершено», когда воркер в конце тоже зовёт stop().
         with self._lock:
             self._running = False
             self._paused = False
+
+    def mark_stopped(self) -> None:
+        with self._lock:
+            self._running = False
+            self._paused = False
+            self._stopped = True
 
     def pause(self) -> None:
         with self._lock:
@@ -79,10 +81,10 @@ class SendStats:
             self._start_time = None
             self._running = False
             self._paused = False
+            self._stopped = False
             self._smtp.clear()
             self._proxy.clear()
 
-    # ── запись ────────────────────────────────────────────
 
     def record_sent(self, smtp_email: str, proxy_addr: str = "") -> None:
         with self._lock:
@@ -90,6 +92,7 @@ class SendStats:
             s = self._ensure_smtp(smtp_email)
             s.sent += 1
             s.status = "active"
+            s.last_activity = time.time()
             if proxy_addr:
                 p = self._ensure_proxy(proxy_addr)
                 p.used += 1
@@ -101,17 +104,16 @@ class SendStats:
             self._errors += 1
             s = self._ensure_smtp(smtp_email)
             s.errors += 1
+            s.last_activity = time.time()
             if smtp_dead:
                 s.status = "dead"
             if proxy_addr:
                 p = self._ensure_proxy(proxy_addr)
                 p.errors += 1
 
-    # ── чтение (snapshot для UI) ─────────────────────────
 
     @property
     def snapshot(self) -> dict:
-        """Атомарный снимок всех метрик — безопасно из любого потока."""
         with self._lock:
             elapsed = (time.time() - self._start_time) if self._start_time else 0
             elapsed_min = elapsed / 60 if elapsed > 0 else 0
@@ -121,14 +123,24 @@ class SendStats:
 
             if self._running:
                 if self._paused:
-                    status_text = "Paused"
+                    status_text = "На паузе"
                 else:
                     pct = (self._sent / self._total * 100) if self._total else 0
-                    status_text = f"Sending: {self._sent} / {self._total} ({pct:.1f}%)"
+                    status_text = f"Идёт рассылка: {self._sent} / {self._total} ({pct:.1f}%)"
+            elif self._stopped:
+                status_text = "Остановлено"
             elif self._sent > 0:
-                status_text = "Finished"
+                status_text = "Завершено"
             else:
-                status_text = "Idle"
+                status_text = "Ожидание"
+
+            started_at = (
+                time.strftime("%H:%M:%S", time.localtime(self._start_time))
+                if self._start_time else "—"
+            )
+
+            def _fmt_activity(ts: float) -> str:
+                return time.strftime("%H:%M:%S", time.localtime(ts)) if ts else "—"
 
             return {
                 "status_text": status_text,
@@ -138,13 +150,16 @@ class SendStats:
                 "remaining": remaining,
                 "running": self._running,
                 "paused": self._paused,
+                "stopped": self._stopped,
+                "started_at": started_at,
                 "elapsed_sec": round(elapsed, 1),
                 "speed_per_min": round(speed, 1),
                 "eta_min": round(eta_min, 1),
                 "progress": (self._sent + self._errors) / self._total if self._total else 0.0,
                 "smtp": [
                     {"email": s.email, "host": s.host,
-                     "sent": s.sent, "errors": s.errors, "status": s.status}
+                     "sent": s.sent, "errors": s.errors, "status": s.status,
+                     "last_activity": _fmt_activity(s.last_activity)}
                     for s in self._smtp.values()
                 ],
                 "proxy": [
@@ -154,7 +169,6 @@ class SendStats:
                 ],
             }
 
-    # ── internal ─────────────────────────────────────────
 
     def _ensure_smtp(self, email: str) -> SmtpStat:
         if email not in self._smtp:

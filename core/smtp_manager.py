@@ -1,8 +1,4 @@
-"""smtp_manager.py — управление SMTP-аккаунтами и соединениями.
 
-Загрузка аккаунтов из файла, проверка логина (с поддержкой прокси
-через PySocks), ротация аккаунтов round-robin, контроль лимитов.
-"""
 
 from __future__ import annotations
 
@@ -23,9 +19,6 @@ import socks
 from core.storage import load_lines
 
 
-# ── Модели ────────────────────────────────────────────────
-
-
 class SmtpStatus(Enum):
     UNTESTED = "Untested"
     ALIVE = "Alive"
@@ -42,6 +35,9 @@ class SmtpAccount:
     sent_count: int = 0
     last_error: str = ""
     ping_ms: int = 0
+    # Опционально привязанный к аккаунту прокси (ProxyEntry). None → аккаунт
+    # работает через общий пул прокси. ТЗ задачи 2, вариант В.
+    bound_proxy: Any = None
 
     @property
     def display_host(self) -> str:
@@ -56,20 +52,15 @@ class SmtpAccount:
         return "PLAIN"
 
 
-# Разделители для автодетекта (порядок приоритета)
 _SMTP_DELIMITERS = ['|', ';', ',', '\t']
 
 import re as _re
 
 def _parse_port(raw: str) -> int | None:
-    """Извлекает номер порта из строки, убирая суффиксы вроде (SSL), /TLS и т.п.
     
-    Примеры: '587' → 587, '465(SSL)' → 465, '587/TLS' → 587, '465 SSL' → 465
-    """
     raw = raw.strip()
     if not raw:
         return None
-    # Извлекаем только цифры из начала строки
     m = _re.match(r'^(\d+)', raw)
     if not m:
         return None
@@ -80,32 +71,32 @@ def _parse_port(raw: str) -> int | None:
 
 
 def parse_smtp_line(line: str) -> SmtpAccount | None:
-    """Парсит строку SMTP-аккаунта с ЛЮБЫМ разделителем.
+    # Опциональная привязка прокси к аккаунту (ТЗ задачи 2, вариант В: общий пул —
+    # дефолт, привязка — опционально). Формат: host:port:email:password|>proxy,
+    # где proxy — любой формат из parse_proxy_line. Маркер «|>» редок в реальных
+    # логинах и разбирается ПЕРВЫМ, до обычного парсинга полей, чтобы не
+    # конфликтовать с делимитерами '|;,\t'. Нет маркера — bound_proxy=None и
+    # аккаунт идёт через общий пул.
+    line = line.strip()
+    if not line:
+        return None
+    bound_proxy = None
+    if "|>" in line:
+        acct_part, _sep, proxy_part = line.partition("|>")
+        from core.proxy_manager import parse_proxy_line
+        bound_proxy = parse_proxy_line(proxy_part.strip())
+        line = acct_part.strip()
+    acc = _parse_account_fields(line)
+    if acc is not None:
+        acc.bound_proxy = bound_proxy
+    return acc
 
-    Поддерживаемые форматы (разделитель определяется автоматически):
 
-    **4-поля** (host, port, email, password — раздельно):
-      host|port|email|password
-      host;port;email;password
-      host,port,email,password
-      host<TAB>port<TAB>email<TAB>password
-
-    **3-поля** (host:port вместе):
-      host:port|email|password
-      host:port;email;password
-      host:port,email,password
-
-    **Двоеточие** (fallback):
-      host:port:email:password
-
-    Порт может содержать суффикс: 465(SSL), 587/TLS и т.п.
-    Пароль может содержать любые символы, включая сам разделитель.
-    """
+def _parse_account_fields(line: str) -> SmtpAccount | None:
     line = line.strip()
     if not line:
         return None
 
-    # ── 1. Пробуем не-двоеточные разделители ──────────────
     for delim in _SMTP_DELIMITERS:
         if delim not in line:
             continue
@@ -113,14 +104,12 @@ def parse_smtp_line(line: str) -> SmtpAccount | None:
         if len(parts) < 3:
             continue
 
-        # ── 1a. 4-поля: host|port|email|password ──────────
         if len(parts) >= 4:
             port = _parse_port(parts[1])
 
             if port is not None:
                 host = parts[0].strip()
                 email = parts[2].strip()
-                # Пароль = всё после третьего разделителя
                 password = delim.join(parts[3:]).strip()
 
                 if host and email and password:
@@ -129,15 +118,12 @@ def parse_smtp_line(line: str) -> SmtpAccount | None:
                         email=email, password=password,
                     )
 
-        # ── 1b. 3-поля: host:port|email|password ─────────
         host_port = parts[0].strip()
         email = parts[1].strip()
         password = delim.join(parts[2:]).strip()
 
         if ':' not in host_port:
             continue
-        # Если в строке есть '@', но email-поле его не содержит —
-        # значит '@' где-то в другом месте и этот разделитель неверный
         if '@' not in email and '@' in line:
             continue
 
@@ -153,7 +139,6 @@ def parse_smtp_line(line: str) -> SmtpAccount | None:
                 email=email, password=password,
             )
 
-    # ── 2. Fallback: двоеточие (host:port:email:password) ─
     parts = line.split(":", 3)
     if len(parts) < 4:
         return None
@@ -169,8 +154,6 @@ def parse_smtp_line(line: str) -> SmtpAccount | None:
     )
 
 
-# ── Прокси-сокет (PySocks) ───────────────────────────────
-
 _PROXY_TYPE_MAP = {
     "socks5": socks.SOCKS5,
     "socks4": socks.SOCKS4,
@@ -183,13 +166,12 @@ def _make_proxy_sock(
     dest_port: int,
     timeout: int = 12,
 ) -> socket.socket:
-    """Создаёт TCP-сокет, подключённый к ``dest`` через прокси."""
     s = socks.socksocket()
     s.set_proxy(
         _PROXY_TYPE_MAP.get(proxy.protocol, socks.SOCKS5),
         proxy.host,
         proxy.port,
-        rdns=True,  # Force remote DNS resolution to prevent SOCKS 0x01 errors
+        rdns=True,
         username=proxy.username or None,
         password=proxy.password or None,
     )
@@ -198,38 +180,26 @@ def _make_proxy_sock(
     return s
 
 
-# ── Подключение к SMTP ─────────────────────────────────────────
+_CONNECT_TIMEOUT = 15
 
-_CONNECT_TIMEOUT = 15  # Увеличили таймаут для медленных прокси
-
-# Кэшированный SSL-контекст (создаётся один раз, используется многократно)
 _UNVERIFIED_CTX: ssl.SSLContext | None = None
 
 def _get_ssl_ctx() -> ssl.SSLContext:
-    """Ленивое создание SSL-контекста (thread-safe через GIL)."""
     global _UNVERIFIED_CTX
     if _UNVERIFIED_CTX is None:
         _UNVERIFIED_CTX = ssl._create_unverified_context()
     return _UNVERIFIED_CTX
 
 
-# ── Smart EHLO ─────────────────────────────────────────
-
 import string
 
 def _make_smart_ehlo(sender_email: str) -> str:
-    """Генерирует реалистичный EHLO на основе домена отправителя.
     
-    Для freemail (gmail, gmx, etc.) использует реальные паттерны,
-    которые существуют в DNS. Для кастомных доменов — генерирует
-    правдоподобные поддомены.
-    """
     rnd = random.SystemRandom()
     domain = sender_email.split("@")[-1] if "@" in sender_email else "localhost"
     
     rnd_str = lambda n: "".join(rnd.choice(string.ascii_lowercase + string.digits) for _ in range(n))
     
-    # Реальные EHLO паттерны для freemail провайдеров
     _FREEMAIL_EHLO = {
         'gmail.com': [
             lambda: f"mail-{rnd.choice(['oi','lf','pg','qt','vs','wr','yb','ua','io','il'])}{rnd.randint(1,9)}-f{rnd.randint(100,255)}.google.com",
@@ -258,7 +228,6 @@ def _make_smart_ehlo(sender_email: str) -> str:
     if domain_lower in _FREEMAIL_EHLO:
         return rnd.choice(_FREEMAIL_EHLO[domain_lower])()
     
-    # Для кастомных доменов — поддомены самого домена (правдоподобно)
     templates = [
         lambda: f"mail.{domain}",
         lambda: f"smtp.{domain}",
@@ -272,10 +241,7 @@ def _make_smart_ehlo(sender_email: str) -> str:
     return rnd.choice(templates)()
 
 
-# ── NOOP keep-alive ───────────────────────────────────
-
 def smtp_keep_alive(conn: smtplib.SMTP) -> bool:
-    """Проверяет что SMTP соединение ещё живое через NOOP."""
     try:
         code, _ = conn.noop()
         return code == 250
@@ -288,17 +254,18 @@ def connect_smtp(
     proxy: Any | None = None,
     timeout: int = _CONNECT_TIMEOUT,
 ) -> smtplib.SMTP:
-    """Устанавливает соединение → EHLO → TLS → LOGIN.
 
-    Возвращает готовый к отправке объект ``smtplib.SMTP``.
-    При любой ошибке бросает исключение.
-    """
+    # Приоритет у привязанного к аккаунту прокси; иначе — прокси из общего пула
+    # (может быть None → прямое соединение). ТЗ задачи 2, вариант В.
+    bound = getattr(account, "bound_proxy", None)
+    if bound is not None:
+        proxy = bound
+
     fake_ehlo = _make_smart_ehlo(account.email)
 
     host, port = account.host, account.port
     raw_sock = _make_proxy_sock(proxy, host, port, timeout) if proxy else None
 
-    # ── SSL (порт 465) ────────────────────────────────
     if port == 465:
         if raw_sock:
             ctx = _get_ssl_ctx()
@@ -306,7 +273,7 @@ def connect_smtp(
             smtp = smtplib.SMTP_SSL(timeout=timeout, local_hostname=fake_ehlo)
             smtp.sock = ssl_sock
             smtp.file = smtp.sock.makefile("rb")
-            smtp._host = host                       # noqa: SLF001
+            smtp._host = host
             code, _ = smtp.getreply()
             if code != 220:
                 raise smtplib.SMTPConnectError(code, b"Bad greeting")
@@ -315,13 +282,12 @@ def connect_smtp(
             smtp = smtplib.SMTP_SSL(host, port, timeout=timeout, local_hostname=fake_ehlo, context=ctx)
         smtp.ehlo()
 
-    # ── STARTTLS (порт 587) ───────────────────────────
     elif port == 587:
         if raw_sock:
             smtp = smtplib.SMTP(timeout=timeout, local_hostname=fake_ehlo)
             smtp.sock = raw_sock
             smtp.file = smtp.sock.makefile("rb")
-            smtp._host = host                       # noqa: SLF001
+            smtp._host = host
             code, _ = smtp.getreply()
             if code != 220:
                 raise smtplib.SMTPConnectError(code, b"Bad greeting")
@@ -333,16 +299,14 @@ def connect_smtp(
             smtp.starttls(context=ctx)
             smtp.ehlo()
         except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError) as e:
-            # Some servers drop connection or fail starttls, we pass it up or log it
             raise smtplib.SMTPConnectError(587, f"STARTTLS failed: {e}".encode())
 
-    # ── Без шифрования / авто-STARTTLS (порт 25 и др.) ──
     else:
         if raw_sock:
             smtp = smtplib.SMTP(timeout=timeout, local_hostname=fake_ehlo)
             smtp.sock = raw_sock
             smtp.file = smtp.sock.makefile("rb")
-            smtp._host = host                       # noqa: SLF001
+            smtp._host = host
             code, _ = smtp.getreply()
             if code != 220:
                 raise smtplib.SMTPConnectError(code, b"Bad greeting")
@@ -354,24 +318,19 @@ def connect_smtp(
             smtp.starttls(context=ctx)
             smtp.ehlo()
         except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError):
-            pass  # сервер не поддерживает STARTTLS — продолжаем plaintext
+            pass
 
     smtp.login(account.email, account.password)
     return smtp
 
 
-# ── Менеджер ──────────────────────────────────────────────
-
-
 class SmtpManager:
-    """Загрузка, проверка, ротация SMTP-аккаунтов."""
 
     def __init__(self) -> None:
         self._accounts: list[SmtpAccount] = []
         self._lock = threading.Lock()
         self._rotation_idx: int = 0
 
-    # -- свойства --------------------------------------------------
 
     @property
     def accounts(self) -> list[SmtpAccount]:
@@ -393,14 +352,12 @@ class SmtpManager:
         with self._lock:
             return sum(1 for a in self._accounts if a.status == SmtpStatus.DEAD)
 
-    # -- загрузка --------------------------------------------------
 
     def clear(self) -> None:
         with self._lock:
             self._accounts.clear()
 
     def reset_all(self) -> None:
-        """Сбрасывает результаты проверок для всех аккаунтов."""
         with self._lock:
             for acc in self._accounts:
                 acc.status = SmtpStatus.UNTESTED
@@ -409,7 +366,6 @@ class SmtpManager:
             self._rotation_idx = 0
 
     def load_from_file(self, filepath: str) -> int:
-        """Загружает аккаунты из файла ``host:port:email:password``."""
         lines = load_lines(filepath)
         added = 0
         with self._lock:
@@ -420,7 +376,6 @@ class SmtpManager:
                     added += 1
         return added
 
-    # -- удаление --------------------------------------------------
 
     def remove_dead(self) -> int:
         with self._lock:
@@ -431,27 +386,14 @@ class SmtpManager:
             self._rotation_idx = 0
             return before - len(self._accounts)
 
-    # -- проверка --------------------------------------------------
 
     def check_single(
         self,
         account: SmtpAccount,
         proxy: Any | None = None,
     ) -> bool:
-        """Тест-логин одного аккаунта.  Обновляет ``status`` и ``last_error``.
 
-        5xx → Dead (перма-бан / неверный пароль).
-        4xx / сетевая ошибка → повторная попытка.
-        Если и вторая попытка провалилась — остаётся в ротации (Untested).
         
-        Детализированная диагностика ошибок:
-        - Account Locked (заблокирован Microsoft/Google)
-        - Bad Credentials (неверный пароль/App Password)
-        - IP Blocked (бан по IP)
-        - Rate Limited (превышен лимит)
-        - TLS Failure (проблема шифрования)
-        - Connection Error (сетевая ошибка / прокси)
-        """
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
@@ -473,7 +415,6 @@ class SmtpManager:
                     msg = msg.decode(errors="replace")
                 msg_lower = msg.lower()
                 
-                # Детализация причины отказа аутентификации
                 if any(w in msg_lower for w in ("locked", "disabled", "suspended", "blocked",
                                                   "deactivated", "compromised")):
                     account.last_error = f"🔒 Account Locked: {msg}"
@@ -512,7 +453,6 @@ class SmtpManager:
                 err_lower = err.lower()
                 
                 if code and code >= 500:
-                    # Детализация 5xx
                     if any(w in err_lower for w in ("blocked", "banned", "blacklisted",
                                                       "denied", "rejected")):
                         account.last_error = f"🚫 IP Blocked ({code}): {err}"
@@ -523,7 +463,6 @@ class SmtpManager:
                     account.status = SmtpStatus.DEAD
                     return False
                 
-                # 4xx — временная ошибка
                 if any(w in err_lower for w in ("too many", "rate", "throttl")):
                     account.last_error = f"⏱️ Rate Limited: {err}"
                 elif "try again" in err_lower or "temporary" in err_lower:
@@ -556,7 +495,6 @@ class SmtpManager:
                 if attempt < max_attempts - 1:
                     time.sleep(1)
                     continue
-                # Сетевая ошибка → НЕ Dead (может быть проблема прокси, а не аккаунта)
                 account.status = SmtpStatus.UNTESTED
                 return False
 
@@ -566,9 +504,7 @@ class SmtpManager:
                 return False
         return False
 
-    _HOST_MAX_CONCURRENT = 12   # макс. одновременных соединений к одному хосту
-    # Office365/Gmail держат 10-15+ параллельных логинов.
-    # При 3 — проверка 90k аккаунтов занимает ~33ч, при 12 — ~4-5ч.
+    _HOST_MAX_CONCURRENT = 12
 
     def check_all(
         self,
@@ -577,12 +513,7 @@ class SmtpManager:
         on_progress: Callable[[int, int, SmtpAccount], None] | None = None,
         on_done: Callable[[], None] | None = None,
     ) -> None:
-        """Проверяет все аккаунты параллельно (фоновый поток).
 
-        ``proxy_getter`` — вызываемый объект, возвращающий прокси или None.
-        Per-host throttling: не более ``_HOST_MAX_CONCURRENT`` одновременных
-        соединений к одному SMTP-хосту (защита от 421 Too many connections).
-        """
 
         def _worker() -> None:
             with self._lock:
@@ -593,7 +524,6 @@ class SmtpManager:
                     on_done()
                 return
 
-            # Семафоры для ограничения параллельных соединений к одному хосту
             host_semaphores: dict[str, threading.Semaphore] = defaultdict(
                 lambda: threading.Semaphore(self._HOST_MAX_CONCURRENT)
             )
@@ -632,10 +562,8 @@ class SmtpManager:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    # -- ротация ---------------------------------------------------
 
     def get_next(self) -> SmtpAccount | None:
-        """Round-robin по живым аккаунтам без O(N) аллокаций памяти."""
         with self._lock:
             total = len(self._accounts)
             if not total:
