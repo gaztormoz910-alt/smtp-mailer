@@ -187,11 +187,20 @@ function badge(st) { return `<span class="badge-st ${st}">${STLABEL[st] || st}</
 function proxyRow(it) {
   const ping = it.ping ? `<span class="ping">${it.ping} ms</span>` : "";
   const flag = it.country ? `<span class="flag">${esc(it.country)}</span>` : "";
+  // Блэклист НЕ убивает прокси: живой-в-блоклисте остаётся живым (метка ⚑BL), get_next его
+  // просто не выбирает. Поэтому ⚑BL — метка, а не причина смерти.
   const bl = it.blacklist === false ? `<span class="ping" style="color:var(--error)">⚑BL</span>` : "";
-  // Если прокси в блоклисте — он помечен мёртвым; поясняем это в подписи.
-  const meta = it.blacklist === false
-    ? `${esc((it.proto || "").toUpperCase())} · в блоклисте (DNSBL)`
-    : `${esc((it.proto || "").toUpperCase())}${it.score ? " · score " + it.score : ""}`;
+  let meta;
+  if (it.status === "dead" && it.error) {
+    // Мёртвый прокси теперь объясняет ПОЧЕМУ (как SMTP-аккаунт с last_error). Так «171 ms +
+    // Мёртвый» перестаёт быть парадоксом: рядом стоит причина (пинг — время открытия туннеля,
+    // а мёртв — из-за провала SMTP-рукопожатия).
+    meta = `<span class="err">${esc(it.error)}</span>`;
+  } else if (it.blacklist === false) {
+    meta = `${esc((it.proto || "").toUpperCase())} · в блоклисте (DNSBL)`;
+  } else {
+    meta = `${esc((it.proto || "").toUpperCase())}${it.score ? " · score " + it.score : ""}`;
+  }
   return `<div class="li"><div class="grow"><div class="addr">${esc(it.addr)}</div>
     <div class="meta">${meta}</div></div>${flag}${bl}${ping}${badge(it.status)}</div>`;
 }
@@ -566,7 +575,12 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
   const pxBL = (i) => i % 7 === 0;  // в блоклисте (DNSBL) — теперь это МЕТКА, а не приговор
   // DNSBL — метка, а не смерть: живой-в-блоклисте ОСТАЁТСЯ живым (в UI помечен ⚑BL).
   const pxStatus = (i) => (pxFinal(i) === "dead") ? "dead" : "alive";
-  let proxies = Array.from({ length: N_PX }, (_, i) => ({ addr: `104.28.${(i % 250)}.${(i % 99) + 1}:1080`, proto: "socks5", status: pxStatus(i), ping: pxStatus(i) === "alive" ? 150 + (i % 200) : 0, country: pxStatus(i) === "alive" ? "DE" : "", blacklist: pxBL(i) ? false : true, score: pxStatus(i) === "alive" ? 80 : 0 }));
+  // Причина смерти для демо: часть мёртвых «подключились быстро, но почтовик не поздоровался»
+  // (пинг есть + бан IP) — ровно случай владельца «171 ms + Мёртвый»; остальные — прокси не отвечает.
+  const pxErr = (i) => pxStatus(i) !== "dead" ? ""
+    : (i % 8 === 1 ? "smtp.gmail.com:587 не прислал '220' — IP прокси, вероятно, в бане у почтовика"
+      : "прокси не отвечает: SOCKS-подключение отклонено (порт закрыт или прокси мёртв)");
+  let proxies = Array.from({ length: N_PX }, (_, i) => ({ addr: `104.28.${(i % 250)}.${(i % 99) + 1}:1080`, proto: "socks5", status: pxStatus(i), ping: pxStatus(i) === "alive" ? 150 + (i % 200) : (i % 8 === 1 ? 171 : 0), country: pxStatus(i) === "alive" ? "DE" : "", blacklist: pxBL(i) ? false : true, score: pxStatus(i) === "alive" ? 80 : 0, error: pxErr(i) }));
   let smtps = Array.from({ length: N_SM }, (_, i) => ({ host: `smtp.mail${i}.com:587`, email: `sender${i + 1}@mail${i % 40}.com`, enc: "STARTTLS", status: smFinal(i), ping: smFinal(i) === "alive" ? 200 + (i % 120) : 0, error: smErr(i), bound_proxy: false }));
   let pxChecked = false, smChecked = false;  // «Проверить все» переводит в true
   let pxRun = false, smRun = false;  // окно «идёт проверка» (для наблюдаемого лока UI)

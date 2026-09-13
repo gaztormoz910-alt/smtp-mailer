@@ -321,6 +321,7 @@ class Api:
             "country": p.country or "",
             "blacklist": p.blacklist_clean,  # True/False/None
             "score": p.score,
+            "error": getattr(p, "last_error", ""),  # причина смерти — как у SMTP-аккаунта
         }
 
     def _proxy_counts(self) -> dict:

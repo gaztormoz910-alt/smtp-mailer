@@ -35,6 +35,10 @@ class ProxyEntry:
     ping_ms: int = 0
     blacklist_clean: bool | None = None
     blacklist_hits: list[str] | None = None
+    # Причина, по которой прокси помечен мёртвым (пусто, если жив). Раньше её не было:
+    # проверка возвращала голый True/False, и владелец видел «171 ms + Мёртвый» без объяснения.
+    # У SMTP-аккаунта есть аналогичный last_error — прокси теперь тоже объясняет свою смерть.
+    last_error: str = ""
 
 
     @property
@@ -212,6 +216,10 @@ def _smtp_tcp_test(proxy: ProxyEntry, to_override: float | None = None) -> bool:
             unique_targets.append(t)
     targets_to_check = unique_targets[:5]
 
+    # Копим человекочитаемую причину провала: если ни одна цель не пройдёт, кладём её в
+    # proxy.last_error, чтобы UI объяснил, ПОЧЕМУ прокси мёртв, а не показывал голое «Мёртвый».
+    last_reason = "не удалось пройти SMTP-проверку ни на одном сервере"
+
     for idx, (host, port) in enumerate(targets_to_check):
         # Таймаут можно задать из UI (ползунок); иначе — прежние значения 5/10 с.
         timeout = to_override if to_override else (_CHECK_TIMEOUTS[0] if idx == 0 else _CHECK_TIMEOUTS[-1])
@@ -239,30 +247,57 @@ def _smtp_tcp_test(proxy: ProxyEntry, to_override: float | None = None) -> bool:
 
             banner = s.recv(1024)
             if banner[:3] != b"220":
+                # Туннель открылся (пинг уже записан выше!), но почтовик не поздоровался кодом 220 —
+                # обычно это значит, что IP прокси в бане у провайдера. Отсюда парадокс «быстрый
+                # пинг + мёртвый»: проверка живости — не пинг, а полное SMTP-рукопожатие.
+                got = banner[:3].decode("latin-1", "replace").strip() if banner else "пусто"
+                last_reason = f"{host}:{port} не прислал '220' (ответ: {got}) — IP прокси, вероятно, в бане у почтовика"
                 continue
 
             s.sendall(b"EHLO localhost\r\n")
             ehlo_resp = s.recv(1024)
             if ehlo_resp[:3] != b"250":
+                got = ehlo_resp[:3].decode("latin-1", "replace").strip() if ehlo_resp else "пусто"
+                last_reason = f"{host}:{port} отклонил EHLO (код: {got})"
                 continue
 
             s.sendall(b"QUIT\r\n")
 
             proxy.passed_server = f"{host}:{port}"
+            proxy.last_error = ""  # прошёл проверку — прежняя причина смерти неактуальна
             return True
         except socks.ProxyConnectionError:
+            # До самого прокси не достучались (порт закрыт / прокси мёртв) — остальные цели
+            # проверять бессмысленно, причина уже однозначна.
+            proxy.last_error = "прокси не отвечает: SOCKS-подключение отклонено (порт закрыт или прокси мёртв)"
             return False
-        except (ConnectionRefusedError, TimeoutError, OSError) as e:
-            if "proxy" in str(e).lower() or isinstance(e, TimeoutError):
-                pass
+        except socks.SOCKS5AuthError:
+            last_reason = "прокси требует логин/пароль (или пара неверна)"
             continue
-        except Exception:
+        except socks.ProxyError as e:
+            # GeneralProxyError и пр.: чаще всего на порт стучимся не тем протоколом
+            # (например, это HTTP-прокси, а мы шлём SOCKS5-рукопожатие).
+            last_reason = f"ошибка SOCKS-туннеля: {e} (возможно, это не SOCKS5-прокси)"
+            continue
+        except TimeoutError:
+            last_reason = f"таймаут {int(timeout)}s: {host}:{port} не ответил через прокси"
+            continue
+        except ConnectionRefusedError:
+            last_reason = f"{host}:{port} отклонил подключение через прокси"
+            continue
+        except OSError as e:
+            last_reason = f"сетевая ошибка на {host}:{port}: {e}"
+            continue
+        except Exception as e:
+            last_reason = f"сбой проверки на {host}:{port}: {e}"
             continue
         finally:
             try:
                 s.close()
             except Exception:
                 pass
+
+    proxy.last_error = last_reason
     return False
 
 
@@ -416,6 +451,7 @@ class ProxyManager:
                 p.country = ""
                 p.blacklist_clean = None
                 p.blacklist_hits = None
+                p.last_error = ""
 
     def load_from_lines(self, lines: list[str]) -> int:
         added = 0
