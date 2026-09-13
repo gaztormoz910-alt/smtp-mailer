@@ -145,7 +145,11 @@ _DNSBL_SERVERS = [
 
 
 def _check_dnsbl(ip: str, timeout: float = 2.0) -> tuple[bool, list[str]]:
-    
+    # Проверка по DNSBL. Важно: НЕ трогаем глобальный socket.setdefaulttimeout —
+    # он процессно-глобальный, и при параллельной проверке потоки затирали таймауты
+    # друг другу (гонка), из-за чего результаты были недетерминированными. Вместо
+    # этого все блок-листы опрашиваем ОДНОВРЕМЕННО в daemon-потоках с общим дедлайном:
+    # это и убирает гонку, и даёт ~timeout вместо суммы по всем зонам (было ~10 c).
     try:
         parts = ip.split(".")
         if len(parts) != 4:
@@ -153,26 +157,29 @@ def _check_dnsbl(ip: str, timeout: float = 2.0) -> tuple[bool, list[str]]:
         reversed_ip = ".".join(reversed(parts))
     except Exception:
         return True, []
-    
+
     hits: list[str] = []
-    original_timeout = _socket.getdefaulttimeout()
-    _socket.setdefaulttimeout(timeout)
-    try:
-        for dnsbl in _DNSBL_SERVERS:
-            query = f"{reversed_ip}.{dnsbl}"
-            try:
-                result = _socket.gethostbyname(query)
-                if result.startswith("127."):
-                    hits.append(dnsbl)
-            except _socket.gaierror:
-                pass
-            except _socket.timeout:
-                pass
-            except Exception:
-                pass
-    finally:
-        _socket.setdefaulttimeout(original_timeout)
-    
+    hits_lock = threading.Lock()
+    threads: list[threading.Thread] = []
+
+    def _q(zone: str) -> None:
+        try:
+            result = _socket.gethostbyname(f"{reversed_ip}.{zone}")
+            if result.startswith("127."):
+                with hits_lock:
+                    hits.append(zone)
+        except Exception:
+            pass
+
+    for dnsbl in _DNSBL_SERVERS:
+        th = threading.Thread(target=_q, args=(dnsbl,), daemon=True)
+        th.start()
+        threads.append(th)
+
+    deadline = time.time() + timeout
+    for th in threads:
+        th.join(max(0.0, deadline - time.time()))
+
     return len(hits) == 0, hits
 
 _USER_SMTP_TARGETS: list[tuple[str, int]] = []
@@ -196,7 +203,7 @@ _PROXY_TYPE_MAP = {
 }
 
 
-def _smtp_tcp_test(proxy: ProxyEntry) -> bool:
+def _smtp_tcp_test(proxy: ProxyEntry, to_override: float | None = None) -> bool:
 
     all_targets = _USER_SMTP_TARGETS + _SMTP_CHECK_TARGETS
     unique_targets = []
@@ -204,9 +211,10 @@ def _smtp_tcp_test(proxy: ProxyEntry) -> bool:
         if t not in unique_targets:
             unique_targets.append(t)
     targets_to_check = unique_targets[:5]
-    
+
     for idx, (host, port) in enumerate(targets_to_check):
-        timeout = _CHECK_TIMEOUTS[0] if idx == 0 else _CHECK_TIMEOUTS[-1]
+        # Таймаут можно задать из UI (ползунок); иначе — прежние значения 5/10 с.
+        timeout = to_override if to_override else (_CHECK_TIMEOUTS[0] if idx == 0 else _CHECK_TIMEOUTS[-1])
         s = socks.socksocket()
         try:
             s.set_proxy(
@@ -258,10 +266,10 @@ def _smtp_tcp_test(proxy: ProxyEntry) -> bool:
     return False
 
 
-def _check_single(proxy: ProxyEntry, on_geo_done=None) -> ProxyEntry:
+def _check_single(proxy: ProxyEntry, on_geo_done=None, timeout: float | None = None) -> ProxyEntry:
 
     for attempt in range(_CHECK_RETRIES + 1):
-        if _smtp_tcp_test(proxy):
+        if _smtp_tcp_test(proxy, timeout):
             proxy.status = ProxyStatus.ALIVE
             
             try:
@@ -331,6 +339,15 @@ class ProxyManager:
         with self._lock:
             return [p for p in self._proxies if p.status == ProxyStatus.ALIVE]
 
+    def slice(self, offset: int, limit: int) -> list[ProxyEntry]:
+        # Окно пула для постраничного показа больших списков без копирования всего
+        # (срез — O(размера окна)). Полный пул остаётся в менеджере — ротация и
+        # проверка идут по всему объёму.
+        if offset < 0:
+            offset = 0
+        with self._lock:
+            return self._proxies[offset:offset + limit]
+
     @property
     def count_total(self) -> int:
         with self._lock:
@@ -345,6 +362,20 @@ class ProxyManager:
     def count_dead(self) -> int:
         with self._lock:
             return sum(1 for p in self._proxies if p.status == ProxyStatus.DEAD)
+
+    def counts(self) -> tuple[int, int, int]:
+        # (всего, живых, мёртвых) за ОДИН проход под одним локом — вместо трёх
+        # отдельных O(n)-проходов. Нужно для дешёвого показа счётчиков на больших
+        # пулах (миллионы прокси): вызывающая сторона ещё и кэширует результат.
+        with self._lock:
+            total = len(self._proxies)
+            alive = dead = 0
+            for p in self._proxies:
+                if p.status == ProxyStatus.ALIVE:
+                    alive += 1
+                elif p.status == ProxyStatus.DEAD:
+                    dead += 1
+            return total, alive, dead
 
     @property
     def count_blacklisted(self) -> int:
@@ -400,6 +431,7 @@ class ProxyManager:
         max_workers: int = 30,
         on_progress: Callable[[int, int, ProxyEntry], None] | None = None,
         on_done: Callable[[], None] | None = None,
+        timeout: float | None = None,
     ) -> None:
 
 
@@ -413,12 +445,13 @@ class ProxyManager:
                 return
 
             checked = 0
-            with ThreadPoolExecutor(max_workers=min(max_workers, total)) as pool:
+            workers = max(1, min(max_workers, total)) if max_workers else total
+            with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {}
                 for p in targets:
                     def make_cb(pr=p):
                         return lambda: on_progress(checked, total, pr) if on_progress else None
-                    fut = pool.submit(_check_single, p, make_cb())
+                    fut = pool.submit(_check_single, p, make_cb(), timeout)
                     futures[fut] = p
                     
                 for fut in as_completed(futures):
