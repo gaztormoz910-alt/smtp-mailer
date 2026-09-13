@@ -387,9 +387,13 @@ class Api:
                 self._chk["proxies"]["total"] = total
 
         def on_done() -> None:
+            # ПОРЯДОК ВАЖЕН: сначала сбрасываем кэш счётчиков, ПОТОМ публикуем running=False.
+            # Иначе есть окно, где опрос фронта видит «проверка завершена», но ещё старый кэш
+            # (снятый ~1 c назад, до финиша хвоста) → показывало «100% при N непроверенных».
+            # Сброс до флага гарантирует: увидел running=False → счётчики точные (непровер.=0).
+            self._dirty_counts("proxies")
             with self._chk_lock:
                 self._chk["proxies"]["running"] = False
-            self._dirty_counts("proxies")  # точные финальные счётчики
 
         self.proxy_mgr.check_all(max_workers=workers, on_progress=on_prog,
                                 on_done=on_done, timeout=to)
@@ -457,9 +461,13 @@ class Api:
                 self._chk["smtp"]["total"] = total
 
         def on_done() -> None:
+            # Тот же порядок, что и у прокси: сброс кэша ДО публикации running=False, иначе
+            # опрос успевает увидеть «завершено» со старым кэшем. У SMTP часть аккаунтов может
+            # ЗАКОННО остаться UNTESTED (флаки-сеть/прокси) — тогда бар честно < 100%, пока
+            # непроверенные есть (это ровно то, что просил владелец: 100% только при 0).
+            self._dirty_counts("smtp")
             with self._chk_lock:
                 self._chk["smtp"]["running"] = False
-            self._dirty_counts("smtp")  # точные финальные счётчики
 
         # Аккаунты проверяются через общий пул прокси, если он есть (как в рассылке).
         # soft_retries: мягкий отказ логина (репутация/политика/троттлинг) — это про НАШ

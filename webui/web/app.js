@@ -58,9 +58,10 @@ function makePager(opts) {
     const from = state.total ? state.offset + 1 : 0;
     const to = Math.min(state.offset + state.limit, state.total);
     foot.querySelector(".pg-label").textContent = `${from}–${to} из ${state.total}`;
-    // _busy держит стрелки заблокированными во время проверки (иначе refresh их вернул бы).
-    foot.querySelector(".pg-prev").disabled = _busy || state.offset <= 0;
-    foot.querySelector(".pg-next").disabled = _busy || state.offset + state.limit >= state.total;
+    // Пагинация РАБОТАЕТ и во время проверки — стрелки гасим только по границам страниц,
+    // без оглядки на _busy (владелец хочет листать данные, пока идёт проверка).
+    foot.querySelector(".pg-prev").disabled = state.offset <= 0;
+    foot.querySelector(".pg-next").disabled = state.offset + state.limit >= state.total;
     foot.hidden = state.total <= state.limit;  // всё влезло на одну страницу — футер не нужен
   }
   function apply(r) {
@@ -152,6 +153,7 @@ function renderList(kind, r) {
   const untested = (r.total || 0) - (r.alive || 0) - (r.dead || 0);
   $("#" + p + "-untested").textContent = untested < 0 ? 0 : untested;
   setSetupButtons(kind, r);
+  updateProgress(p, r);  // бар/% ведём из тех же счётчиков (100% ТОЛЬКО при непроверенных=0)
   const list = $("#" + p + "-list");
   const items = r.items || [];
   if (!items.length) {
@@ -240,11 +242,12 @@ function fillRange(el) {
     });
 });
 
-// Полный лок UI на время проверки: нельзя грузить/настраивать/регулировать — только смотреть.
-// Перечень всех интерактивных элементов (кроме вкладок и прокрутки списков).
+// Лок UI на время проверки: нельзя грузить/настраивать/регулировать/стартовать рассылку.
+// ИСКЛЮЧЕНИЕ — пагинация (.pg-prev/.pg-next): листать страницы данных МОЖНО прямо во время
+// проверки (по просьбе владельца). Вкладки и прокрутка списков тоже не блокируются.
 const LOCK_SEL = [
   "[data-load]", "[data-clear]", "#px-load-url", "#px-check", "#sm-check", "#px-remove-dead", "#sm-remove-dead",
-  "#px-timeout", "#px-threads", "#sm-timeout", "#sm-threads", ".pg-prev", ".pg-next",
+  "#px-timeout", "#px-threads", "#sm-timeout", "#sm-threads",
   "#consistent", "#emailonly", "#open-preview", "#open-preview-2",
   "#cc", "#cc-pct", "#bcc", "#bcc-pct", "#control", "#control-n", "#plan-refresh",
   "#test-email", "#test-send", "#p-delay-min", "#p-delay-max", "#p-threads",
@@ -268,6 +271,30 @@ function setPct(p, pct) {
   $("#" + p + "-progress").style.width = pct + "%";
   $("#" + p + "-progress-pct").textContent = pct + "%";
 }
+// Единый источник правды для бара: считаем непроверенных (untested = всего−живых−мёртвых) и
+// решаем и видимость, и процент. Ключевое правило владельца: 100% — ТОЛЬКО когда непроверенных 0.
+function updateProgress(p, r) {
+  const total = r.total || 0, alive = r.alive || 0, dead = r.dead || 0;
+  const untested = Math.max(0, total - alive - dead);
+  const running = !!r.running, done = r.done || 0;
+  const wrap = $("#" + p + "-progress-wrap");
+  // Бар виден, когда есть данные И (идёт проверка ИЛИ хоть что-то уже проверено). Он ОСТАЁТСЯ
+  // после завершения (untested < total → показан). Свежезагруженный непроверенный пул
+  // (untested == total, проверка не идёт) и пустой пул (total 0) — бар скрыт.
+  const show = total > 0 && (running || untested < total);
+  wrap.hidden = !show;
+  if (!show) { setPct(p, 0); return; }
+  let pct;
+  if (untested === 0) {
+    pct = 100;  // 100% ТОЛЬКО когда непроверенных реально не осталось
+  } else {
+    // Пока идёт проверка — плавно по done/total (real-time); после — по доле проверенных.
+    // Пока есть хоть один непроверенный — потолок 99%, до 100 не дотягиваем.
+    const base = running ? (total ? done / total : 0) : (total - untested) / total;
+    pct = Math.min(99, Math.max(0, Math.floor(base * 100)));
+  }
+  setPct(p, pct);
+}
 function runCheck(kind) {
   const p = kind === "proxies" ? "px" : "sm";
   // Значения ползунков: таймаут (сек) и число потоков — передаём в проверку.
@@ -275,24 +302,21 @@ function runCheck(kind) {
   const timeout = +$("#" + p + "-timeout").value;
   api()["check_" + kind](threads, timeout).then((r) => {
     if (r.busy || r.empty) return;
-    $("#" + p + "-progress-wrap").hidden = false;
-    setPct(p, 0);
-    setBusy(true);  // блокируем весь UI на время проверки
-    pollCheck(kind);
+    setBusy(true);   // лок настроек/загрузки/старта (пагинация НЕ блокируется)
+    pollCheck(kind); // первый poll покажет бар и процент через updateProgress
   });
 }
 function pollCheck(kind) {
   const p = kind === "proxies" ? "px" : "sm";
-  // refresh() перерисовывает ТЕКУЩУЮ страницу (её статусы меняются по мере проверки),
-  // обновляет доступность кнопок (setSetupButtons) и возвращает running/done для %.
+  // refresh() перерисовывает ТЕКУЩУЮ страницу (её статусы и счётчики меняются по мере
+  // проверки) → renderList → updateProgress сам двигает бар. Здесь только цикл опроса.
   pagers[kind].refresh().then((st) => {
-    const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
-    setPct(p, pct);
     if (st.running) setTimeout(() => pollCheck(kind), 700);
     else {
-      setPct(p, 100);  // проверка завершена
-      setBusy(false);  // снимаем лок UI
-      setTimeout(() => { $("#" + p + "-progress-wrap").hidden = true; setPct(p, 0); }, 900);
+      // Проверка завершена. Кэш счётчиков уже сброшен на сервере (on_done), поэтому
+      // setBusy(false) → refresh даст ТОЧНЫЕ счётчики (непроверенных 0) → бар станет 100%
+      // и ОСТАНЕТСЯ. Ничего не прячем и не форсим 100 вручную — только правда из данных.
+      setBusy(false);
       refreshBadges();
     }
   });
@@ -582,13 +606,18 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
       : "прокси не отвечает: SOCKS-подключение отклонено (порт закрыт или прокси мёртв)");
   let proxies = Array.from({ length: N_PX }, (_, i) => ({ addr: `104.28.${(i % 250)}.${(i % 99) + 1}:1080`, proto: "socks5", status: pxStatus(i), ping: pxStatus(i) === "alive" ? 150 + (i % 200) : (i % 8 === 1 ? 171 : 0), country: pxStatus(i) === "alive" ? "DE" : "", blacklist: pxBL(i) ? false : true, score: pxStatus(i) === "alive" ? 80 : 0, error: pxErr(i) }));
   let smtps = Array.from({ length: N_SM }, (_, i) => ({ host: `smtp.mail${i}.com:587`, email: `sender${i + 1}@mail${i % 40}.com`, enc: "STARTTLS", status: smFinal(i), ping: smFinal(i) === "alive" ? 200 + (i % 120) : 0, error: smErr(i), bound_proxy: false }));
-  let pxChecked = false, smChecked = false;  // «Проверить все» переводит в true
+  let pxChecked = false, smChecked = false;  // «Проверить все» переводит в true (после завершения)
   let pxRun = false, smRun = false;  // окно «идёт проверка» (для наблюдаемого лока UI)
+  let pxDone = 0, smDone = 0;  // сколько уже «проверено» в демо — растёт с каждым опросом
   // clean/dirty — только для прокси (у SMTP поля blacklist нет, dirty=0). Чистый = живой и не в блэклисте.
   const cnt = (arr) => ({ total: arr.length, alive: arr.filter((x) => x.status === "alive").length, dead: arr.filter((x) => x.status === "dead").length, clean: arr.filter((x) => x.status === "alive" && x.blacklist !== false).length, dirty: arr.filter((x) => x.status === "alive" && x.blacklist === false).length });
   // До проверки пул виден как «не пров.» (untested), после — с реальными статусами.
   const viewItems = (arr, ok) => ok ? arr : arr.map((x) => ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null }));
   const viewCnt = (arr, ok) => ok ? cnt(arr) : { total: arr.length, alive: 0, dead: 0, clean: 0, dirty: 0 };
+  // Инкрементальная проверка для демо: первые n элементов «проверены», остальные — untested.
+  // Это даёт настоящую динамику бара (непроверенных n→0) и показ 100% строго при 0 непровер.
+  const cntN = (arr, n) => { const d = arr.slice(0, n); return { total: arr.length, alive: d.filter((x) => x.status === "alive").length, dead: d.filter((x) => x.status === "dead").length, clean: d.filter((x) => x.status === "alive" && x.blacklist !== false).length, dirty: d.filter((x) => x.status === "alive" && x.blacklist === false).length }; };
+  const itemsN = (arr, n) => arr.map((x, i) => i < n ? x : ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null }));
   const demoBody = `<table width="100%"><tr><td align="center"><table width="560" style="background:#fff;border-radius:12px;overflow:hidden;font-family:Arial">
     <tr><td style="background:#4ade80;padding:22px 28px;color:#08160c;font-size:22px;font-weight:800">Привет, Анна 👋</td></tr>
     <tr><td style="padding:26px 28px;color:#333;font-size:15px;line-height:1.6">Мы приготовили кое-что для тебя. Загляни, пока действует.<br><br>
@@ -606,8 +635,19 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
       return P(out);
     },
     page_recipients: (o, l) => { const w = win(recips, o, l); return P({ total: w.total, offset: w.off, limit: w.lim, rows: w.arr }); },
-    page_proxies: (o, l) => { const it = viewItems(proxies, pxChecked); const w = win(it, o, l); return P({ ...viewCnt(proxies, pxChecked), offset: w.off, limit: w.lim, items: w.arr, running: pxRun, done: pxRun ? Math.floor(proxies.length * 0.4) : (pxChecked ? proxies.length : 0) }); },
-    page_smtp: (o, l) => { const it = viewItems(smtps, smChecked); const w = win(it, o, l); return P({ ...viewCnt(smtps, smChecked), offset: w.off, limit: w.lim, items: w.arr, running: smRun, done: smRun ? Math.floor(smtps.length * 0.4) : (smChecked ? smtps.length : 0) }); },
+    page_proxies: (o, l) => {
+      // Каждый опрос во время проверки продвигает «проверено» на ~1/6 пула (за ~6 опросов до конца).
+      if (pxRun) { pxDone = Math.min(proxies.length, pxDone + Math.max(1, Math.ceil(proxies.length / 6))); if (pxDone >= proxies.length) { pxRun = false; pxChecked = true; } }
+      const n = pxChecked ? proxies.length : (pxRun ? pxDone : 0);
+      const w = win(itemsN(proxies, n), o, l);
+      return P({ ...cntN(proxies, n), offset: w.off, limit: w.lim, items: w.arr, running: pxRun, done: n });
+    },
+    page_smtp: (o, l) => {
+      if (smRun) { smDone = Math.min(smtps.length, smDone + Math.max(1, Math.ceil(smtps.length / 6))); if (smDone >= smtps.length) { smRun = false; smChecked = true; } }
+      const n = smChecked ? smtps.length : (smRun ? smDone : 0);
+      const w = win(itemsN(smtps, n), o, l);
+      return P({ ...cntN(smtps, n), offset: w.off, limit: w.lim, items: w.arr, running: smRun, done: n });
+    },
     pick_and_load: (kind) => {
       const t = { subjects: N_SUBJ, bodies: 7, senders: sndrs.length, recipients: N_REC };
       if (kind === "links") return P({ files: [{ file: "links.txt", macro: "[[LINK]]", count: N_LINK }], total: N_LINK, mode: "urls" });
@@ -621,8 +661,8 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     clear_smtp: () => { smtps = []; smChecked = false; return P({ total: 0, alive: 0, dead: 0 }); },
     remove_dead_proxies: () => { proxies = proxies.filter((x) => x.status !== "dead"); return P({ removed: 0, ...viewCnt(proxies, pxChecked) }); },
     remove_dead_smtp: () => { smtps = smtps.filter((x) => x.status !== "dead"); return P({ removed: 0, ...viewCnt(smtps, smChecked) }); },
-    check_proxies: () => { pxChecked = true; pxRun = true; setTimeout(() => { pxRun = false; }, 1500); return P({ started: true, total: proxies.length, threads: 30, timeout: 10 }); },
-    check_smtp: () => { smChecked = true; smRun = true; setTimeout(() => { smRun = false; }, 1500); return P({ started: true, total: smtps.length, threads: 30, timeout: 15 }); },
+    check_proxies: () => { pxChecked = false; pxRun = true; pxDone = 0; return P({ started: true, total: proxies.length, threads: 30, timeout: 10 }); },
+    check_smtp: () => { smChecked = false; smRun = true; smDone = 0; return P({ started: true, total: smtps.length, threads: 30, timeout: 15 }); },
     check_progress: (k) => { const ok = k === "proxies" ? pxChecked : smChecked; const arr = k === "proxies" ? proxies : smtps; return P({ running: false, done: ok ? arr.length : 0, ...viewCnt(arr, ok) }); },
     set_consistent_links: () => P({ ok: true }), set_email_only: () => P({ ok: true }),
     set_campaign_config: () => P({ ok: true, cc: 2, bcc: 1, control: 1 }),
