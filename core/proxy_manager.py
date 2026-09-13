@@ -475,17 +475,16 @@ class ProxyManager:
             total = len(self._proxies)
             if not total:
                 return None
+            # Берём только ЖИВОЙ и НЕ в блоклисте: чистый (blacklist_clean is True) или ещё
+            # непроверенный/неизвестный (None). Прокси, ДОКАЗАННО в блэклисте
+            # (blacklist_clean is False), в рассылку НЕ берём вообще — даже если чистых не
+            # осталось (по просьбе владельца: грязные прокси не использовать; тогда письмо уйдёт
+            # без прокси). Прежний фолбэк «любой живой, включая блэклист» убран.
             for _ in range(total):
                 idx = self._rotation_idx % total
                 self._rotation_idx = idx + 1
                 p = self._proxies[idx]
                 if p.status == ProxyStatus.ALIVE and p.blacklist_clean is not False:
-                    return p
-            for _ in range(total):
-                idx = self._rotation_idx % total
-                self._rotation_idx = idx + 1
-                p = self._proxies[idx]
-                if p.status == ProxyStatus.ALIVE:
                     return p
             return None
 
