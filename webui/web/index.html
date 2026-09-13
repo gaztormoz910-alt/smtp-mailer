@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SMTP MAILER</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">✉</span><b>SMTP</b><span>MAILER</span></div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="setup">Настройки<span class="badge" id="tb-setup">0</span></button>
+      <button class="tab" data-tab="content">Контент<span class="badge" id="tb-content">0</span></button>
+      <button class="tab" data-tab="campaign">Кампания<span class="badge" id="tb-campaign">0</span></button>
+      <button class="tab" data-tab="plan">План</button>
+      <button class="tab" data-tab="send">Отправка</button>
+      <button class="tab" data-tab="stats">Статистика</button>
+    </nav>
+    <div class="bridge" id="bridge"><span class="dot"></span>соединение…</div>
+  </header>
+
+  <main class="content">
+    <!-- ══ Настройки: прокси + SMTP с проверкой ══ -->
+    <section class="panel active" data-panel="setup">
+      <div class="grid2 fill">
+        <!-- Прокси -->
+        <div class="card scroll">
+          <div class="chead">
+            <div>
+              <h2><span class="ic">🛡️</span> Прокси (SOCKS)</h2>
+              <p class="sub">.txt · socks5://host:port · host:port:user:pass · HTTP → socks5</p>
+            </div>
+            <span class="count-pill">всего <b id="px-total">0</b></span>
+          </div>
+          <div class="row">
+            <button class="btn accent" data-load="proxies">📁 Загрузить</button>
+            <button class="btn primary" id="px-check" disabled>✓ Проверить все</button>
+            <button class="btn ghost" id="px-remove-dead" disabled>Убрать мёртвые</button>
+            <button class="btn ghost sm" id="px-clear" data-clear="proxies" disabled>Очистить</button>
+          </div>
+          <div class="tune">
+            <label class="tune-item">Таймаут <b id="px-timeout-val">10</b> сек
+              <input type="range" id="px-timeout" min="3" max="60" value="10" /></label>
+            <label class="tune-item">Потоки <b id="px-threads-val">30</b>
+              <input type="range" id="px-threads" min="1" max="200" value="30" /></label>
+          </div>
+          <div class="statline" style="margin-top:12px">
+            <div class="stat-chip ok"><b id="px-alive">0</b><span>Живых</span></div>
+            <div class="stat-chip bad"><b id="px-dead">0</b><span>Мёртвых</span></div>
+            <div class="stat-chip mut"><b id="px-untested">0</b><span>Не пров.</span></div>
+          </div>
+          <div class="progress-row" id="px-progress-wrap" hidden><div class="progress" style="flex:1"><i id="px-progress"></i></div><span class="pg-pct" id="px-progress-pct">0%</span></div>
+          <div class="list" id="px-list"><div class="empty">Прокси не загружены</div></div>
+          <div class="pager" id="px-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
+        </div>
+
+        <!-- SMTP -->
+        <div class="card scroll">
+          <div class="chead">
+            <div>
+              <h2><span class="ic">📧</span> SMTP-аккаунты</h2>
+              <p class="sub">.txt · host:port:email:password · опц. прокси: …|&gt;socks5://host:port</p>
+            </div>
+            <span class="count-pill">всего <b id="sm-total">0</b></span>
+          </div>
+          <div class="row">
+            <button class="btn accent" data-load="smtp">📁 Загрузить</button>
+            <button class="btn primary" id="sm-check" disabled>✓ Проверить все</button>
+            <button class="btn ghost" id="sm-remove-dead" disabled>Убрать мёртвые</button>
+            <button class="btn ghost sm" id="sm-clear" data-clear="smtp" disabled>Очистить</button>
+          </div>
+          <div class="tune">
+            <label class="tune-item">Таймаут <b id="sm-timeout-val">15</b> сек
+              <input type="range" id="sm-timeout" min="3" max="60" value="15" /></label>
+            <label class="tune-item">Потоки <b id="sm-threads-val">30</b>
+              <input type="range" id="sm-threads" min="1" max="200" value="30" /></label>
+          </div>
+          <div class="statline" style="margin-top:12px">
+            <div class="stat-chip ok"><b id="sm-alive">0</b><span>Живых</span></div>
+            <div class="stat-chip bad"><b id="sm-dead">0</b><span>Мёртвых</span></div>
+            <div class="stat-chip mut"><b id="sm-untested">0</b><span>Не пров.</span></div>
+          </div>
+          <div class="progress-row" id="sm-progress-wrap" hidden><div class="progress" style="flex:1"><i id="sm-progress"></i></div><span class="pg-pct" id="sm-progress-pct">0%</span></div>
+          <div class="list" id="sm-list"><div class="empty">SMTP-аккаунты не загружены</div></div>
+          <div class="pager" id="sm-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Контент ══ -->
+    <section class="panel" data-panel="content">
+      <div class="row" style="margin-bottom:14px;justify-content:space-between">
+        <div class="note">Загрузи темы, тела, ссылки и имена — затем жми «Предпросмотр», чтобы увидеть письмо глазами получателя.</div>
+        <button class="btn primary big" id="open-preview">👁 Предпросмотр письма</button>
+      </div>
+      <div class="grid-2x2">
+        <div class="card scroll">
+          <div class="chead"><div><h2><span class="ic">📝</span> Темы</h2>
+            <p class="sub">одна тема на строку · {{name}} {{email}} [[LINK]]</p></div>
+            <span class="count-pill"><b id="subjects-count">0</b> шт.</span></div>
+          <div class="row"><button class="btn accent" data-load="subjects">Загрузить</button>
+            <button class="btn ghost sm" data-clear="subjects">Очистить</button></div>
+          <pre class="preview" id="subjects-preview">(пусто)</pre>
+          <div class="pager" id="subjects-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
+        </div>
+        <div class="card scroll">
+          <div class="chead"><div><h2><span class="ic">📄</span> Тексты писем</h2>
+            <p class="sub">.txt/.html · разделитель ===END=== · HTML/Plain автоопределяется</p></div>
+            <span class="count-pill"><b id="bodies-count">0</b> шт.</span></div>
+          <div class="row"><button class="btn accent" data-load="bodies">Загрузить</button>
+            <button class="btn ghost sm" data-clear="bodies">Очистить</button></div>
+          <pre class="preview" id="bodies-preview">(пусто)</pre>
+          <div class="pager" id="bodies-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
+        </div>
+        <div class="card scroll">
+          <div class="chead"><div><h2><span class="ic">🔗</span> Ссылки</h2>
+            <p class="sub">номер макроса из имени файла: links2.txt → [[LINK2]]</p></div>
+            <span class="count-pill"><b id="links-count">0</b> файлов</span></div>
+          <div class="row"><button class="btn accent" data-load="links">Загрузить</button>
+            <button class="btn ghost sm" data-clear="links">Очистить</button>
+            <label class="check" style="margin-left:auto"><input type="checkbox" id="consistent" /> Единые ссылки</label></div>
+          <pre class="preview" id="links-preview">(пусто)</pre>
+          <div class="pager" id="links-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
+        </div>
+        <div class="card scroll">
+          <div class="chead"><div><h2><span class="ic">👤</span> Имена отправителей</h2>
+            <p class="sub">одно имя на строку</p></div>
+            <span class="count-pill"><b id="senders-count">0</b> шт.</span></div>
+          <div class="row"><button class="btn accent" data-load="senders">Загрузить</button>
+            <button class="btn ghost sm" data-clear="senders">Очистить</button>
+            <label class="check" style="margin-left:auto"><input type="checkbox" id="emailonly" /> Без имени</label></div>
+          <pre class="preview" id="senders-preview">(пусто)</pre>
+          <div class="pager" id="senders-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Кампания ══ -->
+    <section class="panel" data-panel="campaign">
+      <div class="split-camp">
+        <div class="card scroll">
+          <div class="chead"><div><h2><span class="ic">📋</span> База получателей</h2>
+            <p class="sub">.csv (колонка email обязательна, name опц.) или .txt</p></div>
+            <span class="count-pill"><b id="recipients-count">0</b> получателей</span></div>
+          <div class="row"><button class="btn accent" data-load="recipients">📁 Загрузить получателей</button>
+            <button class="btn ghost sm" data-clear="recipients">Очистить</button></div>
+          <div class="tbl-wrap">
+            <table class="tbl"><thead><tr><th>Email</th><th>Имя</th></tr></thead>
+              <tbody id="recipients-body"><tr><td colspan="2" style="color:var(--dim2);text-align:center;padding:26px">База не загружена</td></tr></tbody></table>
+          </div>
+          <div class="pager" id="recipients-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
+          <div class="msg" id="recipients-msg"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px;min-height:0">
+          <div class="card">
+            <h2><span class="ic">📬</span> Копии CC / BCC</h2>
+            <p class="sub">CC виден получателю, BCC — скрытая копия. % — доля писем с копией.</p>
+            <div class="field" style="margin-bottom:10px"><label>CC (через запятую)</label>
+              <div class="row"><input class="inp mono" id="cc" placeholder="cc1@mail.com, cc2@mail.com" />
+                <input class="inp num" id="cc-pct" value="0" title="% писем" /></div></div>
+            <div class="field"><label>BCC (через запятую)</label>
+              <div class="row"><input class="inp mono" id="bcc" placeholder="bcc@hidden.com" />
+                <input class="inp num" id="bcc-pct" value="0" title="% писем" /></div></div>
+          </div>
+          <div class="card">
+            <h2><span class="ic">🎯</span> Контрольные адреса</h2>
+            <p class="sub">Свой ящик подсовывается в поток, чтобы видеть доставку.</p>
+            <div class="field" style="margin-bottom:10px"><label>Адреса (через запятую)</label>
+              <input class="inp mono" id="control" placeholder="me@gmail.com, me2@mail.ru" /></div>
+            <div class="field"><label>Вставлять каждые N писем (0 = выкл)</label>
+              <input class="inp num" id="control-n" value="0" /></div>
+          </div>
+          <div class="msg ok" id="camp-cfg-msg"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ План ══ -->
+    <section class="panel" data-panel="plan">
+      <div class="card scroll" style="flex:1 1 auto">
+        <div class="chead">
+          <div><h2><span class="ic">📊</span> План распределения писем</h2>
+            <p class="sub">Как база поделится между живыми SMTP. Заполняет «потоки» и «писем/коннект».</p></div>
+          <button class="btn primary" id="plan-refresh">🔄 Рассчитать</button>
+        </div>
+        <div class="statline" style="margin-top:12px">
+          <div class="stat-chip ok"><b id="plan-alive">0</b><span>Живых SMTP</span></div>
+          <div class="stat-chip mut"><b id="plan-total">0</b><span>Получателей</span></div>
+          <div class="stat-chip warn"><b id="plan-threads">0</b><span>Потоки</span></div>
+          <div class="stat-chip warn"><b id="plan-perconn">0</b><span>Писем/коннект</span></div>
+        </div>
+        <div class="msg ok" id="plan-text" style="font-size:13px;margin-top:12px"></div>
+        <div class="tbl-wrap">
+          <table class="tbl"><thead><tr><th>SMTP-аккаунт</th><th class="num">Писем</th></tr></thead>
+            <tbody id="plan-body"><tr><td colspan="2" style="color:var(--dim2);text-align:center;padding:26px">Нажми «Рассчитать»</td></tr></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Отправка ══ -->
+    <section class="panel" data-panel="send">
+      <div class="state-banner" id="resume-banner">
+        <span class="ic">⏸️</span>
+        <div class="grow" id="resume-text">Найдена прерванная кампания.</div>
+        <button class="btn sm accent" id="resume-btn">Возобновить</button>
+        <button class="btn sm ghost" id="resume-clear">Сбросить</button>
+      </div>
+      <div class="split-send">
+        <div style="display:flex;flex-direction:column;gap:14px;min-height:0;overflow:auto">
+          <div class="card">
+            <h2><span class="ic">✈️</span> Тестовое письмо</h2>
+            <p class="sub">Отправит одно письмо на твой адрес через живой SMTP.</p>
+            <div class="row"><input class="inp mono" id="test-email" placeholder="test@yourmail.com" style="flex:1" />
+              <button class="btn accent" id="test-send">Отправить тест</button></div>
+            <div class="msg" id="test-msg"></div>
+          </div>
+          <div class="card">
+            <h2><span class="ic">⚙️</span> Параметры рассылки</h2>
+            <div class="grid2" style="gap:10px;margin-top:6px">
+              <div class="field"><label>Задержка, сек</label><input class="inp num" id="p-delay" value="1" style="width:100%"/></div>
+              <div class="field"><label>Разброс, сек</label><input class="inp num" id="p-jitter" value="0.5" style="width:100%"/></div>
+              <div class="field"><label>Писем/мин (0=выкл)</label><input class="inp num" id="p-permin" value="0" style="width:100%"/></div>
+              <div class="field"><label>Потоки (0=авто)</label><input class="inp num" id="p-threads" value="0" style="width:100%"/></div>
+              <div class="field"><label>Писем/коннект</label><input class="inp num" id="p-perconn" value="50" style="width:100%"/></div>
+              <div class="field"><label>Писем/аккаунт (0=∞)</label><input class="inp num" id="p-peracc" value="0" style="width:100%"/></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="row" style="justify-content:space-between;margin-bottom:12px">
+              <span class="pill-status stop" id="send-status"><span class="dot"></span><span id="send-status-t">Ожидание</span></span>
+              <button class="btn ghost sm" id="open-preview-2">👁 Превью</button>
+            </div>
+            <div class="row">
+              <button class="btn primary big" id="btn-start" style="flex:1">▶ СТАРТ</button>
+              <button class="btn big" id="btn-pause" disabled>⏸ Пауза</button>
+              <button class="btn danger big" id="btn-stop" disabled>⏹ Стоп</button>
+            </div>
+          </div>
+        </div>
+        <div class="card scroll">
+          <div class="chead"><div><h2><span class="ic">🖥️</span> Живой лог</h2>
+            <p class="sub">События рассылки в реальном времени</p></div>
+            <button class="btn ghost sm" id="log-clear">Очистить лог</button></div>
+          <div class="console" id="console"><div class="empty">Лог появится после старта…</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Статистика ══ -->
+    <section class="panel" data-panel="stats">
+      <div style="display:flex;flex-direction:column;gap:14px;min-height:0;flex:1">
+        <div class="row" style="justify-content:space-between">
+          <span class="pill-status stop" id="st-status"><span class="dot"></span><span id="st-status-t">Ожидание</span></span>
+          <span class="note" id="st-started">Старт: —</span>
+        </div>
+        <div class="progress" style="height:12px"><i id="st-progress"></i></div>
+        <div class="metrics">
+          <div class="metric ac"><span>Отправлено</span><b id="st-sent">0</b><small id="st-of"> из 0</small></div>
+          <div class="metric er"><span>Ошибки</span><b id="st-errors">0</b></div>
+          <div class="metric in"><span>Скорость</span><b id="st-speed">0</b><small> /мин</small></div>
+          <div class="metric"><span>Осталось</span><b id="st-remaining">0</b></div>
+          <div class="metric"><span>ETA</span><b id="st-eta">0</b><small> мин</small></div>
+        </div>
+        <div class="grid2 fill" style="min-height:0">
+          <div class="card scroll">
+            <h2><span class="ic">📧</span> По SMTP</h2>
+            <div class="tbl-wrap" style="margin-top:8px">
+              <table class="tbl"><thead><tr><th>Аккаунт</th><th class="num">✓</th><th class="num">✗</th><th>Статус</th></tr></thead>
+                <tbody id="st-smtp"><tr><td colspan="4" style="color:var(--dim2);text-align:center;padding:22px">Нет данных</td></tr></tbody></table>
+            </div>
+          </div>
+          <div class="card scroll">
+            <h2><span class="ic">🛡️</span> По прокси</h2>
+            <div class="tbl-wrap" style="margin-top:8px">
+              <table class="tbl"><thead><tr><th>Прокси</th><th class="num">Исп.</th><th class="num">✗</th><th>Статус</th></tr></thead>
+                <tbody id="st-proxy"><tr><td colspan="4" style="color:var(--dim2);text-align:center;padding:22px">Нет данных</td></tr></tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ══ МОДАЛ ПРЕВЬЮ ПИСЬМА ══ -->
+  <div class="overlay" id="preview-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <h3><span>👁</span> Предпросмотр письма</h3>
+        <button class="btn accent sm" id="pv-reroll">🎲 Другой вариант</button>
+        <button class="btn ghost sm" id="pv-close">✕ Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <aside class="pv-side">
+          <div class="pv-group"><div class="t">Тело письма</div>
+            <select class="inp" id="pv-body"><option value="-1">Случайное</option></select></div>
+          <div class="pv-group"><div class="t">Почтовый клиент</div>
+            <div class="seg" id="pv-client">
+              <button data-c="gmail" class="on">Gmail</button><button data-c="outlook">Outlook</button>
+              <button data-c="yahoo">Yahoo</button><button data-c="apple">Apple Mail</button>
+              <button data-c="mailru">Mail.ru</button><button data-c="yandex">Yandex</button>
+            </div></div>
+          <div class="pv-group"><div class="t">Устройство · Тема</div>
+            <div class="seg" id="pv-device"><button data-d="desktop" class="on">🖥️ Desktop</button><button data-d="mobile">📱 Mobile</button></div>
+            <div class="seg" id="pv-theme"><button data-t="light" class="on">☀️ Светлая</button><button data-t="dark">🌙 Тёмная</button></div>
+            <div class="seg" id="pv-images"><button data-i="on" class="on">🖼️ Картинки вкл</button><button data-i="off">Картинки выкл</button></div>
+          </div>
+          <div class="pv-group"><div class="t">Метрики</div>
+            <div class="pv-metrics">
+              <div class="pv-metric"><b id="pv-m-html">0</b><span>HTML, байт</span></div>
+              <div class="pv-metric"><b id="pv-m-text">0</b><span>Текст, симв.</span></div>
+              <div class="pv-metric"><b id="pv-m-links">0</b><span>Ссылок</span></div>
+              <div class="pv-metric"><b id="pv-m-img">0</b><span>Картинок</span></div>
+            </div>
+          </div>
+          <div class="pv-group"><div class="t">Формат</div>
+            <div class="note" id="pv-format" style="font-family:var(--mono)">—</div></div>
+        </aside>
+        <div class="pv-main" id="pv-main">
+          <div class="pv-loading" id="pv-loading">Рендер…</div>
+          <div class="client" id="pv-client-frame" style="display:none">
+            <div class="client-chrome" id="pv-chrome"><span class="cdot" style="background:#ff5f56"></span><span class="cdot" style="background:#ffbd2e"></span><span class="cdot" style="background:#27c93f"></span><span id="pv-chrome-t" style="margin-left:6px">Gmail</span></div>
+            <div class="inbox">
+              <div class="avatar" id="pv-avatar">?</div>
+              <div class="who">
+                <div class="fromline"><span class="fromname" id="pv-from">Отправитель</span><span class="time">сейчас</span></div>
+                <div class="subj" id="pv-subj">Тема</div>
+                <div class="pre" id="pv-pre">Preheader…</div>
+              </div>
+            </div>
+            <iframe class="pv-frame" id="pv-frame" title="preview" sandbox=""></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

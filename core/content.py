@@ -610,3 +610,19 @@ class ContentManager:
             return ""
         return _rnd.choice(self._sender_names)
 
+    def slice_lines(self, kind: str, offset: int, limit: int) -> list[str]:
+        # Окно списка (темы/тела/имена) без копирования всего массива — срез списка
+        # в Python это O(размера окна), а не O(всего). Нужно для постраничного показа
+        # огромных объёмов (миллионы строк) без лагов интерфейса. Полные данные при
+        # этом остаются в менеджере целиком — рассылка работает по всему объёму.
+        src = {
+            "subjects": self._subjects,
+            "senders": self._sender_names,
+            "bodies": self._bodies,
+        }.get(kind)
+        if src is None:
+            return []
+        if offset < 0:
+            offset = 0
+        return src[offset:offset + limit]
+

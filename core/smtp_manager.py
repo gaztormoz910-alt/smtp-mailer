@@ -337,6 +337,15 @@ class SmtpManager:
         with self._lock:
             return list(self._accounts)
 
+    def slice(self, offset: int, limit: int) -> list[SmtpAccount]:
+        # Окно списка аккаунтов для постраничного показа без копирования всего
+        # (срез — O(размера окна)). Полный список остаётся в менеджере — ротация и
+        # проверка идут по всему объёму.
+        if offset < 0:
+            offset = 0
+        with self._lock:
+            return self._accounts[offset:offset + limit]
+
     @property
     def count_total(self) -> int:
         with self._lock:
@@ -352,6 +361,19 @@ class SmtpManager:
         with self._lock:
             return sum(1 for a in self._accounts if a.status == SmtpStatus.DEAD)
 
+
+    def counts(self) -> tuple[int, int, int]:
+        # (всего, живых, мёртвых) за ОДИН проход под одним локом — вместо трёх
+        # отдельных O(n)-проходов. Дёшево показывать счётчики на больших списках.
+        with self._lock:
+            total = len(self._accounts)
+            alive = dead = 0
+            for a in self._accounts:
+                if a.status == SmtpStatus.ALIVE:
+                    alive += 1
+                elif a.status == SmtpStatus.DEAD:
+                    dead += 1
+            return total, alive, dead
 
     def clear(self) -> None:
         with self._lock:
@@ -391,14 +413,16 @@ class SmtpManager:
         self,
         account: SmtpAccount,
         proxy: Any | None = None,
+        timeout: int | None = None,
     ) -> bool:
 
-        
+
         max_attempts = 2
+        conn_timeout = int(timeout) if timeout else _CONNECT_TIMEOUT
         for attempt in range(max_attempts):
             try:
                 t0 = time.time()
-                smtp = connect_smtp(account, proxy=proxy)
+                smtp = connect_smtp(account, proxy=proxy, timeout=conn_timeout)
                 smtp.quit()
                 ping_ms = int((time.time() - t0) * 1000)
                 if not getattr(account, "ping_ms", 0) or ping_ms < account.ping_ms:
@@ -409,22 +433,39 @@ class SmtpManager:
                 return True
 
             except smtplib.SMTPAuthenticationError as exc:
-                account.status = SmtpStatus.DEAD
+                # ВАЖНО (см. гигиену доставляемости): ложный «мёртвый» — это навсегда
+                # потерянный живой аккаунт. «Мёртвый» ставим ТОЛЬКО когда сервер доказал,
+                # что проблема в самом аккаунте (заблокирован/отключён). Отказ по
+                # репутации/политике/троттлингу (Office365 5.7.3 «authentication
+                # unsuccessful», Gmail 5.7.9 «log in with your web browser», отключён
+                # basic-auth, «too many/rate») — это про НАШ выходной IP, а не про пароль;
+                # такой отказ через один прокси не доказывает ничего → «не пров.»
+                # (повторяемо через другой прокси). Асимметрия: ложный «не пров.» стоит
+                # одной перепроверки, ложный «мёртвый» — потерянного аккаунта.
                 msg = exc.smtp_error
                 if isinstance(msg, bytes):
                     msg = msg.decode(errors="replace")
                 msg_lower = msg.lower()
-                
-                if any(w in msg_lower for w in ("locked", "disabled", "suspended", "blocked",
-                                                  "deactivated", "compromised")):
-                    account.last_error = f"🔒 Account Locked: {msg}"
-                elif any(w in msg_lower for w in ("badcredentials", "invalid password",
-                                                    "wrong password", "incorrect")):
-                    account.last_error = f"🔑 Bad Credentials: {msg}"
-                elif "too many" in msg_lower or "rate" in msg_lower:
-                    account.last_error = f"⏱️ Rate Limited: {msg}"
+
+                if any(w in msg_lower for w in ("locked", "disabled", "suspended",
+                                                  "deactivated", "compromised", "terminated")):
+                    account.status = SmtpStatus.DEAD
+                    account.last_error = f"🔒 Аккаунт заблокирован: {msg}"
+                    return False
+
+                # Всё прочее на этапе логина — неоднозначно (обычно про IP/политику),
+                # НЕ хороним: помечаем «не пров.» с понятной причиной, разрешаем повтор.
+                if "web browser" in msg_lower or "5.7.9" in msg_lower:
+                    account.last_error = f"🛡️ Провайдер требует вход через браузер/пароль приложения (не пароль): {msg}"
+                elif "authentication unsuccessful" in msg_lower or "5.7.3" in msg_lower:
+                    account.last_error = f"🛡️ Отказ по репутации/политике IP (не пароль): {msg}"
+                elif "basic auth" in msg_lower or "disabled for" in msg_lower:
+                    account.last_error = f"🛡️ Basic-auth отключён провайдером: {msg}"
+                elif any(w in msg_lower for w in ("too many", "rate", "throttl")):
+                    account.last_error = f"⏱️ Троттлинг — повтор через другой прокси: {msg}"
                 else:
-                    account.last_error = f"Auth failed: {msg}"
+                    account.last_error = f"⚠️ Неоднозначный отказ логина (перепроверьте с чистого прокси): {msg}"
+                account.status = SmtpStatus.UNTESTED
                 return False
 
             except smtplib.SMTPConnectError as exc:
@@ -453,16 +494,19 @@ class SmtpManager:
                 err_lower = err.lower()
                 
                 if code and code >= 500:
+                    # 5xx на connect/EHLO/relay — это про НАШ выходной IP/репутацию, а не
+                    # про пароль аккаунта. Не хороним аккаунт: «не пров.» (повтор с другого
+                    # прокси). Приговор аккаунту даёт только явная блокировка на логине выше.
                     if any(w in err_lower for w in ("blocked", "banned", "blacklisted",
                                                       "denied", "rejected")):
-                        account.last_error = f"🚫 IP Blocked ({code}): {err}"
+                        account.last_error = f"🛡️ IP заблокирован сервером ({code}) — не пароль: {err}"
                     elif any(w in err_lower for w in ("relay", "not allowed")):
-                        account.last_error = f"⛔ Relay Denied ({code}): {err}"
+                        account.last_error = f"⛔ Relay запрещён с нашего IP ({code}): {err}"
                     else:
-                        account.last_error = f"Permanent ({code}): {err}"
-                    account.status = SmtpStatus.DEAD
+                        account.last_error = f"5xx на подключении ({code}) — вероятно репутация IP: {err}"
+                    account.status = SmtpStatus.UNTESTED
                     return False
-                
+
                 if any(w in err_lower for w in ("too many", "rate", "throttl")):
                     account.last_error = f"⏱️ Rate Limited: {err}"
                 elif "try again" in err_lower or "temporary" in err_lower:
@@ -512,6 +556,8 @@ class SmtpManager:
         max_workers: int = 30,
         on_progress: Callable[[int, int, SmtpAccount], None] | None = None,
         on_done: Callable[[], None] | None = None,
+        timeout: int | None = None,
+        soft_retries: int = 0,
     ) -> None:
 
 
@@ -534,13 +580,21 @@ class SmtpManager:
                 sem = host_semaphores[acc.host]
                 sem.acquire()
                 try:
-                    px = proxy_getter() if proxy_getter else None
-                    self.check_single(acc, proxy=px)
+                    # Мягкий отказ (UNTESTED — репутация/политика/троттлинг/таймаут)
+                    # повторяем ЧЕРЕЗ ДРУГОЙ прокси: тот же выход вернёт тот же ответ.
+                    # Останавливаемся на успехе (ALIVE) или доказанной смерти (DEAD).
+                    attempts = 1 + max(0, soft_retries) if proxy_getter else 1
+                    for _ in range(attempts):
+                        px = proxy_getter() if proxy_getter else None
+                        ok = self.check_single(acc, proxy=px, timeout=timeout)
+                        if ok or acc.status == SmtpStatus.DEAD:
+                            break
                 finally:
                     sem.release()
                 return acc
 
-            with ThreadPoolExecutor(max_workers=min(max_workers, total)) as pool:
+            workers = max(1, min(max_workers, total)) if max_workers else total
+            with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {pool.submit(_do, a): a for a in targets}
                 for fut in as_completed(futures):
                     acc = futures[fut]
