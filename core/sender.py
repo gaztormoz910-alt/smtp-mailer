@@ -695,6 +695,29 @@ class CampaignSender:
             actual_cc = self.cc_addrs if use_cc else None
             actual_bcc = self.bcc_addrs if use_bcc else None
 
+            # СТРОГИЙ кэп per_acc: слот на аккаунте бронируется АТОМАРНО — проверка «есть место»
+            # и увеличение счётчика происходят ПОД ОДНИМ локом, поэтому два потока не могут
+            # пробить лимит (прежняя «гонка проверил-потом-увеличил» давала перебор на +1).
+            # Освобождается при неудаче отправки (ниже, в ветке except). Если в редкой гонке
+            # между предпроверкой и этим моментом аккаунт успел заполниться — возвращаем письмо
+            # в очередь и переключаемся на под-лимитный аккаунт (переподключение сделает
+            # предпроверка+блок коннекта на следующей итерации).
+            if max_per_acc > 0:
+                with self._acc_sent_lock:
+                    _reserved = self._acc_sent[smtp_acc.email] < max_per_acc
+                    if _reserved:
+                        self._acc_sent[smtp_acc.email] += 1
+                if not _reserved:
+                    self.global_q.put(rcpt)
+                    _nxt = get_valid_account()
+                    if _nxt is not None:
+                        smtp_acc = _nxt
+                        proxy = self.proxy_mgr.get_next()
+                        proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
+                        conn = None
+                    self.global_q.task_done()
+                    continue
+
             try:
                 msg = build_message(
                     smtp_acc.email, rcpt.email, subject, body, is_html,
@@ -711,10 +734,9 @@ class CampaignSender:
                 sent_on_conn += 1
                 with self._sent_lock:
                     smtp_acc.sent_count += 1
-                if max_per_acc > 0:
-                    with self._acc_sent_lock:
-                        self._acc_sent[smtp_acc.email] += 1
-                
+                # _acc_sent[аккаунт] НЕ увеличиваем здесь — слот уже забронирован перед отправкой
+                # (строгий кэп). При успехе бронь остаётся, при неудаче ниже освобождается.
+
                 with self._sent_lock:
                     self._sent_atomic += 1
                 
@@ -727,6 +749,12 @@ class CampaignSender:
                 self._emit(f"{tag}✓ → {rcpt.email}")
 
             except Exception as exc:
+                # Письмо не ушло → освобождаем забронированный слот (строгий кэп): его займёт
+                # ретрай этого же письма или другое письмо на этом аккаунте.
+                if max_per_acc > 0:
+                    with self._acc_sent_lock:
+                        if self._acc_sent[smtp_acc.email] > 0:
+                            self._acc_sent[smtp_acc.email] -= 1
                 err_str = str(exc)
                 smtp_code = getattr(exc, "smtp_code", 0)
                 if smtp_code and smtp_code >= 500:
