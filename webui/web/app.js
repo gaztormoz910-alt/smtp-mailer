@@ -141,7 +141,13 @@ function handleLoad(kind, r) {
 function renderList(kind, r) {
   const p = kind === "proxies" ? "px" : "sm";
   $("#" + p + "-total").textContent = r.total || 0;
-  $("#" + p + "-alive").textContent = r.alive || 0;
+  if (kind === "proxies") {
+    // Прокси: живые делятся на ЧИСТЫХ (в рассылку) и В БЛЭКЛИСТЕ (не используются).
+    $("#px-clean").textContent = r.clean || 0;
+    $("#px-dirty").textContent = r.dirty || 0;
+  } else {
+    $("#sm-alive").textContent = r.alive || 0;
+  }
   $("#" + p + "-dead").textContent = r.dead || 0;
   const untested = (r.total || 0) - (r.alive || 0) - (r.dead || 0);
   $("#" + p + "-untested").textContent = untested < 0 ? 0 : untested;
@@ -564,10 +570,11 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
   let smtps = Array.from({ length: N_SM }, (_, i) => ({ host: `smtp.mail${i}.com:587`, email: `sender${i + 1}@mail${i % 40}.com`, enc: "STARTTLS", status: smFinal(i), ping: smFinal(i) === "alive" ? 200 + (i % 120) : 0, error: smErr(i), bound_proxy: false }));
   let pxChecked = false, smChecked = false;  // «Проверить все» переводит в true
   let pxRun = false, smRun = false;  // окно «идёт проверка» (для наблюдаемого лока UI)
-  const cnt = (arr) => ({ total: arr.length, alive: arr.filter((x) => x.status === "alive").length, dead: arr.filter((x) => x.status === "dead").length });
+  // clean/dirty — только для прокси (у SMTP поля blacklist нет, dirty=0). Чистый = живой и не в блэклисте.
+  const cnt = (arr) => ({ total: arr.length, alive: arr.filter((x) => x.status === "alive").length, dead: arr.filter((x) => x.status === "dead").length, clean: arr.filter((x) => x.status === "alive" && x.blacklist !== false).length, dirty: arr.filter((x) => x.status === "alive" && x.blacklist === false).length });
   // До проверки пул виден как «не пров.» (untested), после — с реальными статусами.
   const viewItems = (arr, ok) => ok ? arr : arr.map((x) => ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null }));
-  const viewCnt = (arr, ok) => ok ? cnt(arr) : { total: arr.length, alive: 0, dead: 0 };
+  const viewCnt = (arr, ok) => ok ? cnt(arr) : { total: arr.length, alive: 0, dead: 0, clean: 0, dirty: 0 };
   const demoBody = `<table width="100%"><tr><td align="center"><table width="560" style="background:#fff;border-radius:12px;overflow:hidden;font-family:Arial">
     <tr><td style="background:#4ade80;padding:22px 28px;color:#08160c;font-size:22px;font-weight:800">Привет, Анна 👋</td></tr>
     <tr><td style="padding:26px 28px;color:#333;font-size:15px;line-height:1.6">Мы приготовили кое-что для тебя. Загляни, пока действует.<br><br>
