@@ -802,8 +802,10 @@ class Api:
         win = webview.active_window()
         if win is None:
             return {"error": "no window"}
+        # Новый API pywebview: FileDialog.OPEN вместо устаревшего имени OPEN_DIALOG
+        # (старое имя ещё работало, но спамило в консоль предупреждением "deprecated").
         paths = win.create_file_dialog(
-            webview.OPEN_DIALOG, allow_multiple=True, file_types=_FILE_TYPES)
+            webview.FileDialog.OPEN, allow_multiple=True, file_types=_FILE_TYPES)
         if not paths:
             return {"cancelled": True}
         try:
