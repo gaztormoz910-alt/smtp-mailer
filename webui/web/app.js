@@ -294,13 +294,16 @@ $("#plan-refresh").addEventListener("click", refreshPlan);
 function refreshPlan() {
   api().plan().then((r) => {
     $("#plan-alive").textContent = r.alive; $("#plan-total").textContent = r.total;
-    $("#plan-threads").textContent = r.threads; $("#plan-perconn").textContent = r.per_conn;
+    // Потоки при отправке = min(живых, 50); показываем и подставляем именно это, чтобы план
+    // не обещал больше, чем реально запустится. per_conn убран из отправки (авто-лимит по
+    // домену), поэтому в плане его больше не показываем — иначе интерфейс врал бы про капот.
+    const th = Math.min(r.threads || 0, 50);
+    $("#plan-threads").textContent = th;
     $("#plan-text").textContent = r.text || "";
     const body = $("#plan-body"); body.innerHTML = "";
     if (!r.rows || !r.rows.length) { body.innerHTML = `<tr><td colspan="2" style="color:var(--dim2);text-align:center;padding:26px">—</td></tr>`; return; }
     r.rows.forEach((row) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${esc(row.email)}</td><td class="num">${row.count}</td>`; body.appendChild(tr); });
-    // План подсказывает оптимум потоков = число живых, но не выше кап-порога 50.
-    $("#p-threads").value = Math.min(r.threads || 0, 50);
+    $("#p-threads").value = th;
   });
 }
 
