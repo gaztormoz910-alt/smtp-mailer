@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Any
 
@@ -112,16 +113,19 @@ def get_delay(email: str, base_delay: float = 0.0, jitter: float = 0.0) -> float
 def get_warmup_factor(sent_count: int, email: str = "") -> float:
     
     
+    # ПЛАВНЫЙ (непрерывный) прогрев: множитель гладко сползает с ×3 (холодный аккаунт) к ×1
+    # (прогретый), БЕЗ ступенек. Экспонента спадает быстрее в начале (первые письма заметно
+    # медленнее — как и было), а к концу диапазона warmup_start*20 отправленных практически
+    # равна 1. Концы те же, что у прежней ступенчатой версии: ×3 в начале, ×1 после прогрева.
     profile = get_profile(email) if email else _DEFAULT_PROFILE
     warmup_start = profile.get("warmup_start", 10)
-    
-    if sent_count < warmup_start:
+    full = max(1, warmup_start * 20)          # после стольких писем с аккаунта — полная скорость
+    if sent_count <= 0:
         return 3.0
-    elif sent_count < warmup_start * 5:
-        return 2.0
-    elif sent_count < warmup_start * 20:
-        return 1.3
-    return 1.0
+    if sent_count >= full:
+        return 1.0
+    # 1 + 2*exp(-4*t), t = sent/full ∈ (0,1): t→0 даёт 3.0, t→1 даёт ≈1.04 (→ отсекается в 1.0).
+    return 1.0 + 2.0 * math.exp(-4.0 * sent_count / full)
 
 
 def get_max_per_conn(email: str) -> int:
