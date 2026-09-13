@@ -336,7 +336,8 @@ class Api:
         with self._chk_lock:
             chk = dict(self._chk.get("proxies", {}))
         return {**self._proxy_counts(), "offset": off, "limit": lim, "items": items,
-                "running": chk.get("running", False), "done": chk.get("done", 0)}
+                "running": chk.get("running", False), "done": chk.get("done", 0),
+                "check_total": chk.get("total", 0)}
 
     def load_proxies(self, paths: list[str]) -> dict:
         added = sum(self.proxy_mgr.load_from_file(p) for p in paths)
@@ -358,22 +359,33 @@ class Api:
         self._dirty_counts("proxies")
         return {"removed": removed, **self._proxy_counts()}
 
-    def check_proxies(self, threads: Any = None, timeout: Any = None) -> dict:
+    def remove_untested_proxies(self) -> dict:
+        removed = self.proxy_mgr.remove_untested()
+        self._dirty_counts("proxies")
+        return {"removed": removed, **self._proxy_counts()}
+
+    def check_proxies(self, threads: Any = None, timeout: Any = None, only_untested: Any = False) -> dict:
+        only_untested = bool(only_untested)
         with self._chk_lock:
             if self._chk["proxies"]["running"]:
                 return {"busy": True}
-            total = self.proxy_mgr.count_total
+            if only_untested:
+                # «Перепроверить не пров.»: цель = число непроверенных (не весь пул).
+                _t, _a, _d, _c, _dd = self.proxy_mgr.counts_full()
+                total = _t - _a - _d
+            else:
+                total = self.proxy_mgr.count_total
             if total == 0:
                 return {"empty": True}
             self._chk["proxies"] = {"running": True, "done": 0, "total": total}
         workers = _clamp(_to_int(threads, 30) or 30, 1, 2000)
         _t = _to_float(timeout, 0.0)
         to = _t if _t > 0 else None
-        # Перед ПЕРЕпроверкой стираем прошлые результаты: все прокси → «не пров.»,
-        # обнуляем пинг/страну/блоклист. Иначе на экране во время новой проверки висят
-        # СТАРЫЕ вердикты и переписываются по одному (эффект «был Живой → стал Мёртвый»).
-        # Теперь сразу чистый лист, затем заполняется свежими результатами.
-        self.proxy_mgr.reset_all()
+        # Полная перепроверка стирает прошлые результаты: все прокси → «не пров.», обнуляем
+        # пинг/страну/блоклист (иначе висят СТАРЫЕ вердикты и переписываются по одному). При
+        # «Перепроверить не пров.» НЕ сбрасываем — живых/мёртвых сохраняем, трогаем лишь «?».
+        if not only_untested:
+            self.proxy_mgr.reset_all()
         self._dirty_counts("proxies")
         # Проверка прокси гоняет TCP до реальных SMTP-хостов; добавляем хосты
         # пользовательских аккаунтов, чтобы «живой» прокси значил живой для НАШИХ серверов.
@@ -396,7 +408,7 @@ class Api:
                 self._chk["proxies"]["running"] = False
 
         self.proxy_mgr.check_all(max_workers=workers, on_progress=on_prog,
-                                on_done=on_done, timeout=to)
+                                on_done=on_done, timeout=to, only_untested=only_untested)
         return {"started": True, "total": total, "threads": workers, "timeout": to or 10}
 
     # ── SMTP ────────────────────────────────────────────────────────────
@@ -409,6 +421,7 @@ class Api:
             "ping": a.ping_ms,
             "error": a.last_error or "",
             "bound_proxy": bool(getattr(a, "bound_proxy", None)),
+            "proxy": getattr(a, "checked_via_proxy", ""),  # через какой прокси проверялся
         }
 
     def _smtp_counts(self) -> dict:
@@ -421,7 +434,8 @@ class Api:
         with self._chk_lock:
             chk = dict(self._chk.get("smtp", {}))
         return {**self._smtp_counts(), "offset": off, "limit": lim, "items": items,
-                "running": chk.get("running", False), "done": chk.get("done", 0)}
+                "running": chk.get("running", False), "done": chk.get("done", 0),
+                "check_total": chk.get("total", 0)}
 
     def load_smtp(self, paths: list[str]) -> dict:
         added = sum(self.smtp_mgr.load_from_file(p) for p in paths)
@@ -438,21 +452,33 @@ class Api:
         self._dirty_counts("smtp")
         return {"removed": removed, **self._smtp_counts()}
 
-    def check_smtp(self, threads: Any = None, timeout: Any = None) -> dict:
+    def remove_untested_smtp(self) -> dict:
+        removed = self.smtp_mgr.remove_untested()
+        self._dirty_counts("smtp")
+        return {"removed": removed, **self._smtp_counts()}
+
+    def check_smtp(self, threads: Any = None, timeout: Any = None, only_untested: Any = False) -> dict:
+        only_untested = bool(only_untested)
         with self._chk_lock:
             if self._chk["smtp"]["running"]:
                 return {"busy": True}
-            total = self.smtp_mgr.count_total
+            if only_untested:
+                # «Перепроверить не пров.»: цель = число непроверенных (не весь пул).
+                _tt, _aa, _dd = self.smtp_mgr.counts()
+                total = _tt - _aa - _dd
+            else:
+                total = self.smtp_mgr.count_total
             if total == 0:
                 return {"empty": True}
             self._chk["smtp"] = {"running": True, "done": 0, "total": total}
         workers = _clamp(_to_int(threads, 30) or 30, 1, 2000)
         _t = _to_int(timeout, 0)
         to = _t if _t > 0 else None
-        # Перед ПЕРЕпроверкой стираем прошлые результаты: все аккаунты → «не пров.»,
-        # обнуляем пинг и текст ошибки. Чистый лист, затем свежие результаты — без
-        # эффекта «висел старый вердикт и сменился на новый».
-        self.smtp_mgr.reset_all()
+        # Полная перепроверка стирает прошлые результаты: все аккаунты → «не пров.», обнуляем
+        # пинг и текст ошибки. При «Перепроверить не пров.» НЕ сбрасываем — живых/мёртвых
+        # сохраняем, перегоняем только «?».
+        if not only_untested:
+            self.smtp_mgr.reset_all()
         self._dirty_counts("smtp")
 
         def on_prog(done: int, total: int, _entry) -> None:
@@ -476,7 +502,7 @@ class Api:
         getter = self.proxy_mgr.get_next if self.proxy_mgr.count_alive else None
         self.smtp_mgr.check_all(proxy_getter=getter, max_workers=workers,
                                on_progress=on_prog, on_done=on_done, timeout=to,
-                               soft_retries=2 if getter else 0)
+                               soft_retries=2 if getter else 0, only_untested=only_untested)
         return {"started": True, "total": total, "threads": workers, "timeout": to or 15}
 
     def check_progress(self, kind: str) -> dict:

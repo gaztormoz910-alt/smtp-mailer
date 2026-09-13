@@ -479,6 +479,15 @@ class ProxyManager:
             self._rotation_idx = 0
             return before - len(self._proxies)
 
+    def remove_untested(self) -> int:
+        # Удаляет НЕПРОВЕРЕННЫЕ прокси (status UNTESTED) — отдельная кнопка «Убрать не пров.»,
+        # отдельно от «Убрать мёртвые» (та только DEAD). Живых/мёртвых не касается.
+        with self._lock:
+            before = len(self._proxies)
+            self._proxies = [p for p in self._proxies if p.status != ProxyStatus.UNTESTED]
+            self._rotation_idx = 0
+            return before - len(self._proxies)
+
 
     def check_all(
         self,
@@ -486,12 +495,16 @@ class ProxyManager:
         on_progress: Callable[[int, int, ProxyEntry], None] | None = None,
         on_done: Callable[[], None] | None = None,
         timeout: float | None = None,
+        only_untested: bool = False,
     ) -> None:
 
 
         def _worker() -> None:
             with self._lock:
-                targets = list(self._proxies)
+                # only_untested=True → перепроверяем ТОЛЬКО непроверенные (кнопка
+                # «Перепроверить не пров.»): живых/мёртвых не трогаем.
+                targets = [p for p in self._proxies
+                           if not only_untested or p.status == ProxyStatus.UNTESTED]
             total = len(targets)
             if total == 0:
                 if on_done:

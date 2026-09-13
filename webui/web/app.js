@@ -183,6 +183,23 @@ function setSetupButtons(kind, r) {
   rd.title = dead > 0
     ? `Удалить ${dead} мёртвых (непроверенные «?» не трогаем — их можно перепроверить)`
     : "Мёртвых аккаунтов нет — удалять нечего";
+  // Непроверенные «?»: их можно ПЕРЕПРОВЕРИТЬ (через рабочие прокси) или УДАЛИТЬ отдельно.
+  // Активны только когда непроверенные реально есть и не идёт проверка.
+  const untested = Math.max(0, total - alive - dead);
+  const rc = $("#" + p + "-recheck-untested");
+  if (rc) {
+    rc.disabled = !(loaded && !busyk && untested > 0);
+    rc.title = untested > 0
+      ? `Перепроверить ${untested} непроверенных заново (живых/мёртвых не трогает)`
+      : "Непроверенных нет";
+  }
+  const ru = $("#" + p + "-remove-untested");
+  if (ru) {
+    ru.disabled = !(loaded && !busyk && untested > 0);
+    ru.title = untested > 0
+      ? `Удалить ${untested} непроверенных «?» (мёртвых/живых не трогает)`
+      : "Непроверенных нет — удалять нечего";
+  }
 }
 const STLABEL = { alive: "Живой", dead: "Мёртвый", untested: "?", checking: "Проверка" };
 function badge(st) { return `<span class="badge-st ${st}">${STLABEL[st] || st}</span>`; }
@@ -209,13 +226,20 @@ function proxyRow(it) {
 function smtpRow(it) {
   const ping = it.ping ? `<span class="ping">${it.ping} ms</span>` : "";
   const err = it.error ? `<span class="err">${esc(it.error)}</span>` : `${esc(it.host)} · ${esc(it.enc)}${it.bound_proxy ? " · 🔗proxy" : ""}`;
+  // Через какой прокси проверялся аккаунт (второй строкой, приглушённо). "прямое соединение"
+  // — проверка шла без прокси. Пусто, пока аккаунт не проверялся.
+  const via = it.proxy
+    ? `<div class="meta via">🌐 проверен через ${esc(it.proxy)}</div>` : "";
   return `<div class="li"><div class="grow"><div class="addr">${esc(it.email)}</div>
-    <div class="meta">${err}</div></div>${ping}${badge(it.status)}</div>`;
+    <div class="meta">${err}</div>${via}</div>${ping}${badge(it.status)}</div>`;
 }
 
 // проверка с опросом прогресса (страница обновляется живьём)
 $("#px-check").addEventListener("click", () => runCheck("proxies"));
 $("#sm-check").addEventListener("click", () => runCheck("smtp"));
+// «Перепроверить не пров.» — перегоняет ТОЛЬКО непроверенные (живых/мёртвых не трогает).
+$("#px-recheck-untested").addEventListener("click", () => runCheck("proxies", true));
+$("#sm-recheck-untested").addEventListener("click", () => runCheck("smtp", true));
 // Загрузка прокси по URL (метод моста load_proxies_url уже был — не хватало кнопки).
 $("#px-load-url").addEventListener("click", () => {
   const url = (window.prompt("URL со списком прокси (по строке на прокси):") || "").trim();
@@ -247,6 +271,7 @@ function fillRange(el) {
 // проверки (по просьбе владельца). Вкладки и прокрутка списков тоже не блокируются.
 const LOCK_SEL = [
   "[data-load]", "[data-clear]", "#px-load-url", "#px-check", "#sm-check", "#px-remove-dead", "#sm-remove-dead",
+  "#px-recheck-untested", "#sm-recheck-untested", "#px-remove-untested", "#sm-remove-untested",
   "#px-timeout", "#px-threads", "#sm-timeout", "#sm-threads",
   "#consistent", "#emailonly", "#open-preview", "#open-preview-2",
   "#cc", "#cc-pct", "#bcc", "#bcc-pct", "#control", "#control-n", "#plan-refresh",
@@ -266,6 +291,9 @@ function setBusy(v) {
 }
 $("#px-remove-dead").addEventListener("click", () => api().remove_dead_proxies().then(() => { pagers.proxies.reload(); refreshBadges(); }));
 $("#sm-remove-dead").addEventListener("click", () => api().remove_dead_smtp().then(() => { pagers.smtp.reload(); refreshBadges(); }));
+// «Убрать не пров.» — удаляет ТОЛЬКО непроверенные (отдельно от «Убрать мёртвые»).
+$("#px-remove-untested").addEventListener("click", () => api().remove_untested_proxies().then(() => { pagers.proxies.reload(); refreshBadges(); }));
+$("#sm-remove-untested").addEventListener("click", () => api().remove_untested_smtp().then(() => { pagers.smtp.reload(); refreshBadges(); }));
 
 function setPct(p, pct) {
   $("#" + p + "-progress").style.width = pct + "%";
@@ -288,19 +316,22 @@ function updateProgress(p, r) {
   if (untested === 0) {
     pct = 100;  // 100% ТОЛЬКО когда непроверенных реально не осталось
   } else {
-    // Пока идёт проверка — плавно по done/total (real-time); после — по доле проверенных.
-    // Пока есть хоть один непроверенный — потолок 99%, до 100 не дотягиваем.
-    const base = running ? (total ? done / total : 0) : (total - untested) / total;
+    // Пока идёт проверка — плавно по done/цель (real-time); после — по доле проверенных.
+    // Цель — check_total (при «Перепроверить не пров.» это число непроверенных, а не весь
+    // пул), иначе весь пул. Пока есть хоть один непроверенный — потолок 99%.
+    const chkTotal = r.check_total || total;
+    const base = running ? (chkTotal ? done / chkTotal : 0) : (total - untested) / total;
     pct = Math.min(99, Math.max(0, Math.floor(base * 100)));
   }
   setPct(p, pct);
 }
-function runCheck(kind) {
+function runCheck(kind, onlyUntested) {
   const p = kind === "proxies" ? "px" : "sm";
   // Значения ползунков: таймаут (сек) и число потоков — передаём в проверку.
   const threads = +$("#" + p + "-threads").value;
   const timeout = +$("#" + p + "-timeout").value;
-  api()["check_" + kind](threads, timeout).then((r) => {
+  // onlyUntested=true → «Перепроверить не пров.»: сервер перегонит только «?».
+  api()["check_" + kind](threads, timeout, !!onlyUntested).then((r) => {
     if (r.busy || r.empty) return;
     setBusy(true);   // лок настроек/загрузки/старта (пагинация НЕ блокируется)
     pollCheck(kind); // первый poll покажет бар и процент через updateProgress
@@ -492,8 +523,30 @@ setInterval(() => { if (activeTab === "send" || activeTab === "stats") tick(); }
 
 // ── МОДАЛ ПРЕВЬЮ ПИСЬМА ─────────────────────────────────────────────────
 const PV = { client: "gmail", device: "desktop", theme: "light", images: "on", index: -1, data: null };
-const CLIENT_LABEL = { gmail: "Gmail", outlook: "Outlook", yahoo: "Yahoo", apple: "Apple Mail", mailru: "Mail.ru", yandex: "Yandex" };
-const CLIENT_COLOR = { gmail: "#ea4335", outlook: "#0078d4", yahoo: "#6001d2", apple: "#555", mailru: "#005ff9", yandex: "#fc3f1d" };
+// Конфиг реального интерфейса каждого клиента: бренд-цвет, логотип, поиск, папки сайдбара
+// (на языке клиента), подпись «кому», кнопки действий. По ним clientHTML() строит узнаваемый
+// хром — как на charly.cash/letter-preview, а не одна рамка на всех.
+const CLIENTS = {
+  gmail: { accent: "#c5221f", me: "я", logo: '<span class="mark">M</span>Gmail', search: "Поиск в почте",
+    folders: [["✉", "Входящие", "on"], ["★", "Помеченные"], ["🕗", "Отложенные"], ["➤", "Отправленные"], ["🗎", "Черновики"]],
+    label: "Входящие", to: "кому: я ▾", acts: [["↩", "Ответить"], ["↪", "Переслать"]] },
+  outlook: { accent: "#0f6cbd", brand: "#0f6cbd", me: "Вы", logo: '<span class="mark">◨</span>Outlook', search: "Поиск",
+    sidehdr: "Избранное",
+    folders: [["📥", "Входящие", "on"], ["➤", "Отправленные"], ["🗎", "Черновики"], ["🗑", "Удалённые"], ["🗂", "Архив"]],
+    label: "Входящие", to: "Кому: Вы", acts: [["↩", "Ответить"], ["⇉", "Ответить всем"], ["↪", "Переслать"]] },
+  yahoo: { accent: "#6001d2", brand: "#5f01d1", me: "мне", logo: 'Yahoo! <b>Почта</b>', search: "Поиск в почте",
+    folders: [["📥", "Входящие", "on"], ["●", "Непрочитанные"], ["★", "Помеченные"], ["🗎", "Черновики"], ["➤", "Отправленные"], ["⚠", "Спам"]],
+    label: "Входящие", to: "кому: мне", acts: [["↩", "Ответить"], ["↪", "Переслать"]] },
+  apple: { accent: "#1a73e8", mac: true, me: "я",
+    folders: [["📥", "Входящие", "on"], ["🚩", "Флажки"], ["➤", "Отправленные"], ["🗑", "Корзина"], ["🗂", "Архив"]],
+    label: "Входящие", to: "Кому: я", acts: [["↩", "Ответить"], ["⇉", "Ответить всем"], ["↪", "Переслать"]] },
+  mailru: { accent: "#0a5cff", me: "вам", logo: '<span class="mark">@</span>Почта&nbsp;Mail', search: "Поиск по почте",
+    folders: [["📥", "Входящие", "on"], ["➤", "Отправленные"], ["🗎", "Черновики"], ["⚠", "Спам"], ["🗑", "Корзина"]],
+    label: "Входящие", to: "кому: вам", acts: [["↩", "Ответить"], ["↪", "Переслать"]] },
+  yandex: { accent: "#ff3333", me: "вам", logo: '<span class="mark">Я</span>Почта', search: "Поиск в письмах",
+    folders: [["📥", "Входящие", "on"], ["➤", "Отправленные"], ["🗑", "Удалённые"], ["⚠", "Спам"], ["🗎", "Черновики"]],
+    label: "Входящие", to: "кому: вам", acts: [["↩", "Ответить"], ["↪", "Переслать"]] },
+};
 
 $("#open-preview").addEventListener("click", openPreview);
 $("#open-preview-2").addEventListener("click", openPreview);
@@ -501,10 +554,11 @@ $("#pv-close").addEventListener("click", () => $("#preview-overlay").classList.r
 $("#preview-overlay").addEventListener("click", (e) => { if (e.target.id === "preview-overlay") $("#preview-overlay").classList.remove("show"); });
 $("#pv-reroll").addEventListener("click", () => loadPreview());
 $("#pv-body").addEventListener("change", (e) => { PV.index = parseInt(e.target.value, 10); loadPreview(); });
-segBind("pv-client", "c", (v) => { PV.client = v; applyChrome(); });
-segBind("pv-device", "d", (v) => { PV.device = v; applyFrame(); });
-segBind("pv-theme", "t", (v) => { PV.theme = v; applyFrame(); });
-segBind("pv-images", "i", (v) => { PV.images = v; applyFrame(); });
+// Смена клиента/устройства/темы/картинок — полная перерисовка хрома клиента.
+segBind("pv-client", "c", (v) => { PV.client = v; renderPreview(); });
+segBind("pv-device", "d", (v) => { PV.device = v; renderPreview(); });
+segBind("pv-theme", "t", (v) => { PV.theme = v; renderPreview(); });
+segBind("pv-images", "i", (v) => { PV.images = v; renderPreview(); });
 function segBind(id, attr, cb) {
   $("#" + id).addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
@@ -525,34 +579,96 @@ function loadPreview() {
   $("#pv-loading").style.display = "block"; $("#pv-client-frame").style.display = "none";
   api().preview_email({ index: PV.index, name: "Анна", email: "anna@example.com" }).then((d) => {
     PV.data = d;
-    $("#pv-from").textContent = d.from_name || d.from_email;
-    $("#pv-subj").textContent = d.subject;
-    $("#pv-pre").textContent = d.preheader || "— нет preheader —";
-    $("#pv-avatar").textContent = (d.from_name || "?").trim().charAt(0).toUpperCase() || "?";
     $("#pv-format").textContent = d.format;
     const m = d.metrics || {};
     $("#pv-m-html").textContent = m.html_size || 0; $("#pv-m-text").textContent = m.text_len || 0;
     $("#pv-m-links").textContent = m.links || 0; $("#pv-m-img").textContent = m.images || 0;
     $("#pv-loading").style.display = "none"; $("#pv-client-frame").style.display = "block";
-    applyChrome(); applyFrame();
+    renderPreview();
   });
 }
-function applyChrome() {
-  $("#pv-chrome-t").textContent = CLIENT_LABEL[PV.client];
-  $("#pv-avatar").style.background = CLIENT_COLOR[PV.client] || "#7c8aa0";
-}
-function applyFrame() {
-  const frame = $("#pv-client-frame"), main = $("#pv-main");
-  const dark = PV.theme === "dark";
-  frame.classList.toggle("mobile", PV.device === "mobile");
-  frame.classList.toggle("dark", dark);
-  main.classList.toggle("dark", dark);
+// Строит РЕАЛИСТИЧНЫЙ хром выбранного клиента вокруг песочницы-iframe с телом письма.
+function renderPreview() {
   if (!PV.data) return;
-  const doc = frameDoc(PV.data.html || "", dark, PV.images === "off");
+  const dark = PV.theme === "dark", mobile = PV.device === "mobile", imagesOff = PV.images === "off";
+  const cfg = CLIENTS[PV.client] || CLIENTS.gmail;
+  const mount = $("#pv-client-frame"), main = $("#pv-main");
+  mount.classList.toggle("mobile", mobile);
+  main.classList.toggle("dark", dark);
+  mount.innerHTML = clientHTML(PV.client, cfg, PV.data, dark, mobile);
   const ifr = $("#pv-frame");
+  if (!ifr) return;
   ifr.setAttribute("sandbox", "allow-same-origin");
-  ifr.onload = () => { try { const h = ifr.contentDocument.body.scrollHeight; ifr.style.height = Math.min(Math.max(h + 6, 160), 900) + "px"; } catch (e) { ifr.style.height = "440px"; } };
-  ifr.srcdoc = doc;
+  // Подгоняем высоту iframe под содержимое письма (в тех же рамках, что и раньше).
+  ifr.onload = () => { try { const h = ifr.contentDocument.body.scrollHeight; ifr.style.height = Math.min(Math.max(h + 8, 200), 820) + "px"; } catch (e) { ifr.style.height = "460px"; } };
+  ifr.srcdoc = frameDoc(PV.data.html || "", dark, imagesOff);
+}
+function pvFolders(cfg) {
+  return (cfg.folders || []).map((f) =>
+    `<div class="m-fold${f[2] === "on" ? " on" : ""}"><span class="ic">${f[0]}</span><span>${esc(f[1])}</span></div>`).join("");
+}
+function clientHTML(key, cfg, d, dark, mobile) {
+  const fromName = esc(d.from_name || d.from_email || "Отправитель");
+  const fromEmail = esc(d.from_email || "");
+  const subject = esc(d.subject || "(без темы)");
+  const initial = ((d.from_name || d.from_email || "?").trim().charAt(0) || "?").toUpperCase();
+  const vars = `--m-accent:${cfg.accent}` + (cfg.brand ? `;--m-topbg:${cfg.brand};--m-topfg:#fff` : "");
+  const cls = `mailui ${key}${dark ? " dark" : ""}${mobile ? " mobile" : ""}`;
+  const iframe = `<div class="m-frame-wrap"><iframe id="pv-frame" class="pv-frame" title="preview" sandbox=""></iframe></div>`;
+
+  // ── Мобильный: узкая колонка почтового приложения (шапка → письмо → нижний бар) ──
+  if (mobile) {
+    const acts = (cfg.acts || []).map((a) => `<span class="i">${a[0]}</span>`).join("") + `<span class="i">🗑</span>`;
+    return `<div class="${cls}" style="${vars}">
+      <div class="m-topm">‹ ${esc(cfg.label || "Входящие")}<span class="m-me" style="margin-left:auto">${initial}</span></div>
+      <div class="m-hdr"><div class="m-ava">${initial}</div><div class="m-who">
+        <div class="m-fromrow"><span class="m-from">${fromName}</span><span class="m-date">сейчас</span></div>
+        <div class="m-to">${esc(cfg.to || "кому: я")}</div></div></div>
+      <div class="m-subj">${subject}</div>
+      ${iframe}
+      <div class="m-tools">${acts}</div>
+    </div>`;
+  }
+
+  // ── Apple Mail: мак-окно (светофор) + блок шапки From/Subject/To ──
+  if (cfg.mac) {
+    const tools = `<span class="i">🗑</span><span class="i">🚩</span><span class="i">🗂</span><span class="sp"></span>` +
+      (cfg.acts || []).map((a) => `<span class="i" title="${esc(a[1])}">${a[0]}</span>`).join("");
+    return `<div class="${cls}" style="${vars}">
+      <div class="m-top mac"><span class="dot" style="background:#ff5f56"></span><span class="dot" style="background:#ffbd2e"></span><span class="dot" style="background:#27c93f"></span><span class="title">${esc(cfg.label || "Входящие")} — 24 сообщения</span></div>
+      <div class="m-body">
+        <div class="m-side"><div class="m-sidehdr">Ящики</div>${pvFolders(cfg)}</div>
+        <div class="m-read">
+          <div class="m-tools">${tools}</div>
+          <div class="m-applehdr"><div class="m-ava">${initial}</div>
+            <div class="m-who"><div class="m-from">${fromName} <span class="addr">&lt;${fromEmail}&gt;</span></div>
+              <div class="m-subj2">${subject}</div><div class="m-to">${esc(cfg.to || "Кому: я")}</div></div>
+            <div class="m-date">Сегодня, сейчас</div></div>
+          ${iframe}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ── Обычный веб-клиент: топбар (лого+поиск) → сайдбар папок → чтение письма ──
+  const brandCls = cfg.brand ? " brand" : "";
+  const tools = `<span class="i">←</span><span class="i">🗄</span><span class="i">⚠</span><span class="i">🗑</span><span class="sp"></span><span class="i">↩</span><span class="i">↪</span><span class="i">⋮</span>`;
+  const acts = (cfg.acts || []).map((a, i) => `<span class="m-btn${i === 0 ? " pri" : ""}">${a[0]} ${esc(a[1])}</span>`).join("");
+  return `<div class="${cls}" style="${vars}">
+    <div class="m-top${brandCls}"><span class="burger">☰</span><span class="m-logo">${cfg.logo || esc(key)}</span>
+      <span class="m-search">🔍 ${esc(cfg.search || "Поиск")}</span><span class="m-me">${initial}</span></div>
+    <div class="m-body">
+      <div class="m-side"><div class="m-compose">✏️ Написать</div>${cfg.sidehdr ? `<div class="m-sidehdr">${esc(cfg.sidehdr)}</div>` : ""}${pvFolders(cfg)}</div>
+      <div class="m-read">
+        <div class="m-tools">${tools}</div>
+        <div class="m-subj">${subject} <span class="m-label">${esc(cfg.label || "Входящие")}</span></div>
+        <div class="m-hdr"><div class="m-ava">${initial}</div><div class="m-who">
+          <div class="m-fromrow"><span class="m-from">${fromName} <span class="addr">&lt;${fromEmail}&gt;</span></span><span class="m-date">сейчас</span></div>
+          <div class="m-to">${esc(cfg.to || "кому: я")}</div></div></div>
+        ${iframe}
+        <div class="m-acts">${acts}</div>
+      </div>
+    </div>`;
 }
 function frameDoc(html, dark, imagesOff) {
   const bg = dark ? "#1f2023" : "#ffffff", fg = dark ? "#e8e8ea" : "#1a1a1a";
@@ -605,19 +721,21 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     : (i % 8 === 1 ? "smtp.gmail.com:587 не прислал '220' — IP прокси, вероятно, в бане у почтовика"
       : "прокси не отвечает: SOCKS-подключение отклонено (порт закрыт или прокси мёртв)");
   let proxies = Array.from({ length: N_PX }, (_, i) => ({ addr: `104.28.${(i % 250)}.${(i % 99) + 1}:1080`, proto: "socks5", status: pxStatus(i), ping: pxStatus(i) === "alive" ? 150 + (i % 200) : (i % 8 === 1 ? 171 : 0), country: pxStatus(i) === "alive" ? "DE" : "", blacklist: pxBL(i) ? false : true, score: pxStatus(i) === "alive" ? 80 : 0, error: pxErr(i) }));
-  let smtps = Array.from({ length: N_SM }, (_, i) => ({ host: `smtp.mail${i}.com:587`, email: `sender${i + 1}@mail${i % 40}.com`, enc: "STARTTLS", status: smFinal(i), ping: smFinal(i) === "alive" ? 200 + (i % 120) : 0, error: smErr(i), bound_proxy: false }));
+  // proxy — через какой прокси аккаунт проверялся (демо): часть через пул, часть напрямую.
+  const smProxy = (i) => (i % 6 === 3 ? "прямое соединение" : `185.${20 + (i % 60)}.${i % 250}.${(i % 99) + 1}:1080`);
+  let smtps = Array.from({ length: N_SM }, (_, i) => ({ host: `smtp.mail${i}.com:587`, email: `sender${i + 1}@mail${i % 40}.com`, enc: "STARTTLS", status: smFinal(i), ping: smFinal(i) === "alive" ? 200 + (i % 120) : 0, error: smErr(i), bound_proxy: false, proxy: smProxy(i) }));
   let pxChecked = false, smChecked = false;  // «Проверить все» переводит в true (после завершения)
   let pxRun = false, smRun = false;  // окно «идёт проверка» (для наблюдаемого лока UI)
   let pxDone = 0, smDone = 0;  // сколько уже «проверено» в демо — растёт с каждым опросом
   // clean/dirty — только для прокси (у SMTP поля blacklist нет, dirty=0). Чистый = живой и не в блэклисте.
   const cnt = (arr) => ({ total: arr.length, alive: arr.filter((x) => x.status === "alive").length, dead: arr.filter((x) => x.status === "dead").length, clean: arr.filter((x) => x.status === "alive" && x.blacklist !== false).length, dirty: arr.filter((x) => x.status === "alive" && x.blacklist === false).length });
   // До проверки пул виден как «не пров.» (untested), после — с реальными статусами.
-  const viewItems = (arr, ok) => ok ? arr : arr.map((x) => ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null }));
+  const viewItems = (arr, ok) => ok ? arr : arr.map((x) => ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null, proxy: "" }));
   const viewCnt = (arr, ok) => ok ? cnt(arr) : { total: arr.length, alive: 0, dead: 0, clean: 0, dirty: 0 };
   // Инкрементальная проверка для демо: первые n элементов «проверены», остальные — untested.
   // Это даёт настоящую динамику бара (непроверенных n→0) и показ 100% строго при 0 непровер.
   const cntN = (arr, n) => { const d = arr.slice(0, n); return { total: arr.length, alive: d.filter((x) => x.status === "alive").length, dead: d.filter((x) => x.status === "dead").length, clean: d.filter((x) => x.status === "alive" && x.blacklist !== false).length, dirty: d.filter((x) => x.status === "alive" && x.blacklist === false).length }; };
-  const itemsN = (arr, n) => arr.map((x, i) => i < n ? x : ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null }));
+  const itemsN = (arr, n) => arr.map((x, i) => i < n ? x : ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null, proxy: "" }));
   const demoBody = `<table width="100%"><tr><td align="center"><table width="560" style="background:#fff;border-radius:12px;overflow:hidden;font-family:Arial">
     <tr><td style="background:#4ade80;padding:22px 28px;color:#08160c;font-size:22px;font-weight:800">Привет, Анна 👋</td></tr>
     <tr><td style="padding:26px 28px;color:#333;font-size:15px;line-height:1.6">Мы приготовили кое-что для тебя. Загляни, пока действует.<br><br>
@@ -640,13 +758,13 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
       if (pxRun) { pxDone = Math.min(proxies.length, pxDone + Math.max(1, Math.ceil(proxies.length / 6))); if (pxDone >= proxies.length) { pxRun = false; pxChecked = true; } }
       const n = pxChecked ? proxies.length : (pxRun ? pxDone : 0);
       const w = win(itemsN(proxies, n), o, l);
-      return P({ ...cntN(proxies, n), offset: w.off, limit: w.lim, items: w.arr, running: pxRun, done: n });
+      return P({ ...cntN(proxies, n), offset: w.off, limit: w.lim, items: w.arr, running: pxRun, done: n, check_total: proxies.length });
     },
     page_smtp: (o, l) => {
       if (smRun) { smDone = Math.min(smtps.length, smDone + Math.max(1, Math.ceil(smtps.length / 6))); if (smDone >= smtps.length) { smRun = false; smChecked = true; } }
       const n = smChecked ? smtps.length : (smRun ? smDone : 0);
       const w = win(itemsN(smtps, n), o, l);
-      return P({ ...cntN(smtps, n), offset: w.off, limit: w.lim, items: w.arr, running: smRun, done: n });
+      return P({ ...cntN(smtps, n), offset: w.off, limit: w.lim, items: w.arr, running: smRun, done: n, check_total: smtps.length });
     },
     pick_and_load: (kind) => {
       const t = { subjects: N_SUBJ, bodies: 7, senders: sndrs.length, recipients: N_REC };
@@ -661,8 +779,14 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     clear_smtp: () => { smtps = []; smChecked = false; return P({ total: 0, alive: 0, dead: 0 }); },
     remove_dead_proxies: () => { proxies = proxies.filter((x) => x.status !== "dead"); return P({ removed: 0, ...viewCnt(proxies, pxChecked) }); },
     remove_dead_smtp: () => { smtps = smtps.filter((x) => x.status !== "dead"); return P({ removed: 0, ...viewCnt(smtps, smChecked) }); },
-    check_proxies: () => { pxChecked = false; pxRun = true; pxDone = 0; return P({ started: true, total: proxies.length, threads: 30, timeout: 10 }); },
-    check_smtp: () => { smChecked = false; smRun = true; smDone = 0; return P({ started: true, total: smtps.length, threads: 30, timeout: 15 }); },
+    // Удаление непроверенных: в демо после полной проверки «untested» = первые статусы; для
+    // наглядности убираем элементы с итоговым статусом untested (SMTP их даёт ~20%).
+    remove_untested_proxies: () => { proxies = proxies.filter((x) => x.status !== "untested"); return P({ removed: 0, ...viewCnt(proxies, pxChecked) }); },
+    remove_untested_smtp: () => { smtps = smtps.filter((x) => x.status !== "untested"); return P({ removed: 0, ...viewCnt(smtps, smChecked) }); },
+    // Третий арг only_untested — в демо перепроверка проигрывается как обычная (логика
+    // «только непроверенные» проверяется на реальном host.py в verify_web).
+    check_proxies: (_t, _to, _ou) => { pxChecked = false; pxRun = true; pxDone = 0; return P({ started: true, total: proxies.length, threads: 30, timeout: 10 }); },
+    check_smtp: (_t, _to, _ou) => { smChecked = false; smRun = true; smDone = 0; return P({ started: true, total: smtps.length, threads: 30, timeout: 15 }); },
     check_progress: (k) => { const ok = k === "proxies" ? pxChecked : smChecked; const arr = k === "proxies" ? proxies : smtps; return P({ running: false, done: ok ? arr.length : 0, ...viewCnt(arr, ok) }); },
     set_consistent_links: () => P({ ok: true }), set_email_only: () => P({ ok: true }),
     set_campaign_config: () => P({ ok: true, cc: 2, bcc: 1, control: 1 }),
