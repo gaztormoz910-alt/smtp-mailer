@@ -377,6 +377,24 @@ class ProxyManager:
                     dead += 1
             return total, alive, dead
 
+    def counts_full(self) -> tuple[int, int, int, int, int]:
+        # (всего, живых, мёртвых, живых-ЧИСТЫХ, живых-ГРЯЗНЫХ) за ОДИН проход. Чистый = живой и
+        # НЕ доказанный блэклист (blacklist_clean True/None) — именно такие идут в рассылку;
+        # грязный = живой и в блэклисте (False) — в рассылку не берётся (get_next), но виден.
+        with self._lock:
+            total = len(self._proxies)
+            alive = dead = clean = dirty = 0
+            for p in self._proxies:
+                if p.status == ProxyStatus.ALIVE:
+                    alive += 1
+                    if p.blacklist_clean is False:
+                        dirty += 1
+                    else:
+                        clean += 1
+                elif p.status == ProxyStatus.DEAD:
+                    dead += 1
+            return total, alive, dead, clean, dirty
+
     @property
     def count_blacklisted(self) -> int:
         with self._lock:

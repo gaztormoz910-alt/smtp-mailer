@@ -47,7 +47,8 @@
               <input type="range" id="px-threads" min="1" max="200" value="30" /></label>
           </div>
           <div class="statline" style="margin-top:12px">
-            <div class="stat-chip ok"><b id="px-alive">0</b><span>Живых</span></div>
+            <div class="stat-chip ok" title="Живые и НЕ в блэклисте — только они идут в рассылку"><b id="px-clean">0</b><span>Чистых</span></div>
+            <div class="stat-chip warn" title="Живые, но в блэклисте (DNSBL) — в рассылке НЕ используются"><b id="px-dirty">0</b><span>В блэклисте</span></div>
             <div class="stat-chip bad"><b id="px-dead">0</b><span>Мёртвых</span></div>
             <div class="stat-chip mut"><b id="px-untested">0</b><span>Не пров.</span></div>
           </div>

@@ -287,8 +287,14 @@ class Api:
             if fresh_enough:
                 return dict(cached)
         # Пересчёт вне лока кэша (сам проход берёт лок менеджера).
-        total, alive, dead = mgr.counts()
-        c = {"total": total, "alive": alive, "dead": dead}
+        if kind == "proxies":
+            # Для прокси считаем ещё и разбивку живых: ЧИСТЫЕ (идут в рассылку) и ГРЯЗНЫЕ
+            # (в блэклисте — не идут). Один проход, кэшируется вместе с остальными счётчиками.
+            total, alive, dead, clean, dirty = mgr.counts_full()
+            c = {"total": total, "alive": alive, "dead": dead, "clean": clean, "dirty": dirty}
+        else:
+            total, alive, dead = mgr.counts()
+            c = {"total": total, "alive": alive, "dead": dead}
         with self._counts_lock:
             self._counts_cache[kind] = c
             self._counts_ts[kind] = time.time()
