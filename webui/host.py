@@ -679,14 +679,22 @@ class Api:
         cap = min(alive, 50) if alive else 50
         th_in = _to_int(params.get("threads"), 0)
         max_threads = cap if th_in <= 0 else min(th_in, cap)
+        # РОВНАЯ РАСКИДКА ПО ВСЕМ ЖИВЫМ АККАУНТАМ. Раньше при потоках < числа аккаунтов
+        # работали только `потоки` аккаунтов, а остальные простаивали (воркер держал свой
+        # аккаунт до конца). Теперь задаём лимит на аккаунт = ceil(писем / живых): дойдя до
+        # него, воркер round-robin переключается на следующий аккаунт — поэтому работают ВСЕ
+        # аккаунты по кругу, никто не простаивает и никто не перегружен (у каждого ≈ поровну).
+        # per_conn=0 оставляем: коннект переиспользуется в пределах профиля домена.
+        per_acc = -(-len(queue) // alive)  # ceil; alive>0 гарантирован проверкой выше
         self._sender.start(
             delay=base,
             jitter=jit,
             max_threads=max_threads,
-            max_per_conn=0,   # авто-лимит по профилю домена (поле убрано из UI)
-            max_per_acc=0,    # без лимита на аккаунт (поле убрано из UI)
+            max_per_conn=0,        # авто-лимит по профилю домена (поле убрано из UI)
+            max_per_acc=per_acc,   # ровная раскидка: ≤ ceil(писем/живых) на каждый аккаунт
         )
-        return {"started": True, "queued": len(queue)}
+        return {"started": True, "queued": len(queue), "per_acc": per_acc,
+                "threads": max_threads, "alive": alive}
 
     def pause_campaign(self) -> dict:
         if self._sender:

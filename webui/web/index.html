@@ -181,14 +181,13 @@
       <div class="card scroll" style="flex:1 1 auto">
         <div class="chead">
           <div><h2><span class="ic">📊</span> План распределения писем</h2>
-            <p class="sub">Как база поделится между живыми SMTP. Заполняет «потоки» и «писем/коннект».</p></div>
+            <p class="sub">Как база распределится между живыми SMTP-аккаунтами. Подставляет число потоков на вкладку «Отправка».</p></div>
           <button class="btn primary" id="plan-refresh">🔄 Рассчитать</button>
         </div>
         <div class="statline" style="margin-top:12px">
           <div class="stat-chip ok"><b id="plan-alive">0</b><span>Живых SMTP</span></div>
           <div class="stat-chip mut"><b id="plan-total">0</b><span>Получателей</span></div>
-          <div class="stat-chip warn"><b id="plan-threads">0</b><span>Потоки</span></div>
-          <div class="stat-chip warn"><b id="plan-perconn">0</b><span>Писем/коннект</span></div>
+          <div class="stat-chip warn"><b id="plan-threads">0</b><span>Потоки (≤ 50)</span></div>
         </div>
         <div class="msg ok" id="plan-text" style="font-size:13px;margin-top:12px"></div>
         <div class="tbl-wrap">
