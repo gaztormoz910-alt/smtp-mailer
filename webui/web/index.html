@@ -218,13 +218,11 @@
           <div class="card">
             <h2><span class="ic">⚙️</span> Параметры рассылки</h2>
             <div class="grid2" style="gap:10px;margin-top:6px">
-              <div class="field"><label>Задержка, сек</label><input class="inp num" id="p-delay" value="1" style="width:100%"/></div>
-              <div class="field"><label>Разброс, сек</label><input class="inp num" id="p-jitter" value="0.5" style="width:100%"/></div>
-              <div class="field"><label>Писем/мин (0=выкл)</label><input class="inp num" id="p-permin" value="0" style="width:100%"/></div>
-              <div class="field"><label>Потоки (0=авто)</label><input class="inp num" id="p-threads" value="0" style="width:100%"/></div>
-              <div class="field"><label>Писем/коннект</label><input class="inp num" id="p-perconn" value="50" style="width:100%"/></div>
-              <div class="field"><label>Писем/аккаунт (0=∞)</label><input class="inp num" id="p-peracc" value="0" style="width:100%"/></div>
+              <div class="field"><label>Задержка от, сек</label><input class="inp num" id="p-delay-min" type="number" min="0" step="0.5" value="2" style="width:100%"/></div>
+              <div class="field"><label>до, сек</label><input class="inp num" id="p-delay-max" type="number" min="0" step="0.5" value="8" style="width:100%"/></div>
+              <div class="field" style="grid-column:1 / -1"><label id="p-threads-lbl">Потоки (макс = живых SMTP, ≤ 50)</label><input class="inp num" id="p-threads" type="number" min="1" max="50" value="" placeholder="все живые" style="width:100%"/></div>
             </div>
+            <p class="sub" style="margin-top:10px;line-height:1.5">Перед каждым письмом — случайная пауза <b>от … до …</b> секунд, чтобы не как робот. В начале рассылки с каждого аккаунта письма идут <b>медленнее</b> (прогрев для инбокса), затем задержка плавно сходится к твоему диапазону.</p>
           </div>
           <div class="card">
             <div class="row" style="justify-content:space-between;margin-bottom:12px">
