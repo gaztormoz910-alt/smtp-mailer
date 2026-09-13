@@ -35,6 +35,7 @@
           </div>
           <div class="row">
             <button class="btn accent" data-load="proxies">📁 Загрузить</button>
+            <button class="btn accent sm" id="px-load-url">🌐 По URL</button>
             <button class="btn primary" id="px-check" disabled>✓ Проверить все</button>
             <button class="btn ghost" id="px-remove-dead" disabled>Убрать мёртвые</button>
             <button class="btn ghost sm" id="px-clear" data-clear="proxies" disabled>Очистить</button>
@@ -42,7 +43,7 @@
           <div class="tune">
             <label class="tune-item">Таймаут <b id="px-timeout-val">10</b> сек
               <input type="range" id="px-timeout" min="3" max="60" value="10" /></label>
-            <label class="tune-item">Потоки <b id="px-threads-val">30</b>
+            <label class="tune-item">Потоки (макс) <b id="px-threads-val">30</b>
               <input type="range" id="px-threads" min="1" max="200" value="30" /></label>
           </div>
           <div class="statline" style="margin-top:12px">
@@ -73,7 +74,7 @@
           <div class="tune">
             <label class="tune-item">Таймаут <b id="sm-timeout-val">15</b> сек
               <input type="range" id="sm-timeout" min="3" max="60" value="15" /></label>
-            <label class="tune-item">Потоки <b id="sm-threads-val">30</b>
+            <label class="tune-item">Потоки (макс) <b id="sm-threads-val">30</b>
               <input type="range" id="sm-threads" min="1" max="200" value="30" /></label>
           </div>
           <div class="statline" style="margin-top:12px">
@@ -170,6 +171,15 @@
               <input class="inp mono" id="control" placeholder="me@gmail.com, me2@mail.ru" /></div>
             <div class="field"><label>Вставлять каждые N писем (0 = выкл)</label>
               <input class="inp num" id="control-n" value="0" /></div>
+          </div>
+          <div class="card">
+            <h2><span class="ic">💾</span> Пресеты кампании</h2>
+            <p class="sub">Сохраняет настройки CC/BCC/контроля и флаги контента (не файлы).</p>
+            <div class="row"><input class="inp" id="preset-name" placeholder="имя пресета" style="flex:1" />
+              <button class="btn accent" id="preset-save">Сохранить</button></div>
+            <div class="row" style="margin-top:8px"><select class="inp" id="preset-list" style="flex:1"></select>
+              <button class="btn primary" id="preset-load">Загрузить</button></div>
+            <div class="msg" id="preset-msg"></div>
           </div>
           <div class="msg ok" id="camp-cfg-msg"></div>
         </div>

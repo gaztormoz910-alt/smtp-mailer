@@ -40,6 +40,7 @@ from core.sender import (
     CampaignSender, send_test as _send_test,
     load_queue_state, clear_queue_state,
 )
+from core.presets import save_preset as _save_preset, load_preset as _load_preset, PRESETS_DIR
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 _rnd = SystemRandom()
@@ -300,15 +301,11 @@ class Api:
             self._counts_cache[kind] = None
 
     # ── прокси ──────────────────────────────────────────────────────────
-    def _demote_blacklisted(self, entry) -> None:
-        # Политика владельца: «Живой» = жив И НЕ в блоклисте. Живой прокси, попавший
-        # в DNSBL (blacklist_clean is False), для рассылки бесполезен (письма улетят в
-        # спам), поэтому помечаем его МЁРТВЫМ. Неизвестный блоклист (None — проверка не
-        # удалась) и чистый (True) статус живого не трогаем.
-        if entry is not None and entry.status == ProxyStatus.ALIVE \
-                and entry.blacklist_clean is False:
-            entry.status = ProxyStatus.DEAD
-
+    # DNSBL — МЕТКА, а не приговор (политика изменена по просьбе владельца под резидентские
+    # прокси). Живой прокси в блоклисте ОСТАЁТСЯ живым: для релейной рассылки IP прокси
+    # получателю не виден (письмо уходит с IP провайдера аккаунта), а резидентские/мобильные
+    # почти всегда в Spamhaus PBL — раньше софт их всех хоронил. get_next всё равно
+    # предпочитает чистые прокси, а в UI блэклист показывается плашкой ⚑BL.
     def _proxy_item(self, p) -> dict:
         return {
             "addr": f"{p.host}:{p.port}",
@@ -376,8 +373,8 @@ class Api:
         set_user_smtp_targets(self.smtp_mgr.accounts)
 
         def on_prog(done: int, total: int, entry) -> None:
-            # Живой-но-в-блоклисте сразу понижаем до мёртвого (по ходу проверки).
-            self._demote_blacklisted(entry)
+            # Блэклист больше НЕ понижаем в «мёртвый» (см. коммент у _proxy_item):
+            # живой-в-DNSBL остаётся живым и помечается ⚑BL в интерфейсе.
             with self._chk_lock:
                 self._chk["proxies"]["done"] = done
                 self._chk["proxies"]["total"] = total
@@ -623,6 +620,60 @@ class Api:
         }
         return {"ok": True, "cc": len(self._cfg["cc"]), "bcc": len(self._cfg["bcc"]),
                 "control": len(self._cfg["control"])}
+
+    # ── пресеты кампании (настройки CC/BCC/контроль/% + флаги контента) ──
+    # Пресет сохраняет НАСТРОЙКИ кампании, а не загруженные файлы: в веб-версии данные
+    # (прокси/SMTP/темы/база) лежат в менеджерах, а не путями. JSON в data/presets/.
+    @staticmethod
+    def _safe_preset_name(name: Any) -> str:
+        s = re.sub(r"[^\w \-\(\)]+", "_", str(name or "").strip(), flags=re.UNICODE)
+        return s[:60] or "preset"
+
+    def list_campaign_presets(self) -> dict:
+        try:
+            items = sorted(p.stem for p in PRESETS_DIR.glob("*.json"))
+        except Exception:
+            items = []
+        return {"items": items}
+
+    def save_campaign_preset(self, name: Any = "") -> dict:
+        safe = self._safe_preset_name(name)
+        data = {
+            "cc": ", ".join(self._cfg["cc"]),
+            "bcc": ", ".join(self._cfg["bcc"]),
+            "cc_pct": self._cfg["cc_pct"],
+            "bcc_pct": self._cfg["bcc_pct"],
+            "control": ", ".join(self._cfg["control"]),
+            "control_every_n": self._cfg["control_every_n"],
+            "consistent_links": bool(self.content_mgr.consistent_links),
+            "email_only": bool(self.content_mgr.email_only),
+        }
+        try:
+            _save_preset(str(PRESETS_DIR / f"{safe}.json"), data)
+        except Exception as exc:
+            return {"error": str(exc)}
+        return {"ok": True, "name": safe, **self.list_campaign_presets()}
+
+    def load_campaign_preset(self, name: Any = "") -> dict:
+        safe = self._safe_preset_name(name)
+        try:
+            data = _load_preset(str(PRESETS_DIR / f"{safe}.json"))
+        except Exception as exc:
+            return {"error": str(exc)}
+        # Применяем настройки как из UI (тот же устойчивый разбор), затем флаги контента.
+        self.set_campaign_config(data)
+        self.content_mgr.consistent_links = bool(data.get("consistent_links"))
+        self.content_mgr.email_only = bool(data.get("email_only"))
+        # Возвращаем значения для заполнения полей на фронте.
+        return {
+            "ok": True, "name": safe,
+            "cc": data.get("cc", ""), "bcc": data.get("bcc", ""),
+            "cc_pct": self._cfg["cc_pct"], "bcc_pct": self._cfg["bcc_pct"],
+            "control": data.get("control", ""),
+            "control_every_n": self._cfg["control_every_n"],
+            "consistent_links": bool(self.content_mgr.consistent_links),
+            "email_only": bool(self.content_mgr.email_only),
+        }
 
     # ── отправка ────────────────────────────────────────────────────────
     def send_test(self, email: str) -> dict:

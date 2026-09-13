@@ -32,7 +32,7 @@ $("#tabs").addEventListener("click", (e) => {
 function onTabEnter(tab) {
   if (tab === "setup") { pagers.proxies.reload(); pagers.smtp.reload(); }
   else if (tab === "content") { ["subjects", "bodies", "senders", "links"].forEach((k) => pagers[k].reload()); }
-  else if (tab === "campaign") { pagers.recipients.reload(); saveCampaignCfg(); }
+  else if (tab === "campaign") { pagers.recipients.reload(); saveCampaignCfg(); refreshPresets(); }
   else if (tab === "plan") refreshPlan();
   else if (tab === "send") { refreshResumeBanner(); tick(); }
   else if (tab === "stats") tick();
@@ -199,6 +199,16 @@ function smtpRow(it) {
 // проверка с опросом прогресса (страница обновляется живьём)
 $("#px-check").addEventListener("click", () => runCheck("proxies"));
 $("#sm-check").addEventListener("click", () => runCheck("smtp"));
+// Загрузка прокси по URL (метод моста load_proxies_url уже был — не хватало кнопки).
+$("#px-load-url").addEventListener("click", () => {
+  const url = (window.prompt("URL со списком прокси (по строке на прокси):") || "").trim();
+  if (!url) return;
+  $("#px-load-url").disabled = true;
+  api().load_proxies_url(url)
+    .then((r) => { if (r && r.error) { console.error("load_proxies_url:", r.error); return; }
+      pagers.proxies.reload(); refreshBadges(); })
+    .finally(() => ($("#px-load-url").disabled = false));
+});
 // ползунки таймаута/потоков — живое число рядом + заливка трека до кружка акцентом
 function fillRange(el) {
   const min = +el.min || 0, max = +el.max || 100, v = +el.value;
@@ -218,7 +228,7 @@ function fillRange(el) {
 // Полный лок UI на время проверки: нельзя грузить/настраивать/регулировать — только смотреть.
 // Перечень всех интерактивных элементов (кроме вкладок и прокрутки списков).
 const LOCK_SEL = [
-  "[data-load]", "[data-clear]", "#px-check", "#sm-check", "#px-remove-dead", "#sm-remove-dead",
+  "[data-load]", "[data-clear]", "#px-load-url", "#px-check", "#sm-check", "#px-remove-dead", "#sm-remove-dead",
   "#px-timeout", "#px-threads", "#sm-timeout", "#sm-threads", ".pg-prev", ".pg-next",
   "#consistent", "#emailonly", "#open-preview", "#open-preview-2",
   "#cc", "#cc-pct", "#bcc", "#bcc-pct", "#control", "#control-n", "#plan-refresh",
@@ -288,6 +298,39 @@ function saveCampaignCfg() {
     control: $("#control").value, control_every_n: $("#control-n").value,
   }).then((r) => setMsg("camp-cfg-msg", `✓ CC:${r.cc} · BCC:${r.bcc} · контроль:${r.control}`, "ok"));
 }
+
+// ── Пресеты кампании (сохранение/список/загрузка настроек) ───────────────
+function fillPresetList(items, selected) {
+  const sel = $("#preset-list");
+  sel.innerHTML = (items && items.length)
+    ? items.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")
+    : `<option value="">— нет сохранённых —</option>`;
+  if (selected) sel.value = selected;
+}
+function refreshPresets() {
+  api().list_campaign_presets().then((r) => fillPresetList(r.items));
+}
+$("#preset-save").addEventListener("click", () => {
+  const name = $("#preset-name").value.trim();
+  if (!name) { setMsg("preset-msg", "Укажи имя пресета", "warn"); return; }
+  api().save_campaign_preset(name).then((r) => {
+    if (r.error) { setMsg("preset-msg", "✗ " + r.error, "err"); return; }
+    fillPresetList(r.items, r.name);
+    setMsg("preset-msg", `✓ Сохранён «${r.name}»`, "ok");
+  });
+});
+$("#preset-load").addEventListener("click", () => {
+  const name = $("#preset-list").value;
+  if (!name) { setMsg("preset-msg", "Нет пресета для загрузки", "warn"); return; }
+  api().load_campaign_preset(name).then((r) => {
+    if (r.error) { setMsg("preset-msg", "✗ " + r.error, "err"); return; }
+    $("#cc").value = r.cc || ""; $("#cc-pct").value = r.cc_pct || 0;
+    $("#bcc").value = r.bcc || ""; $("#bcc-pct").value = r.bcc_pct || 0;
+    $("#control").value = r.control || ""; $("#control-n").value = r.control_every_n || 0;
+    $("#consistent").checked = !!r.consistent_links; $("#emailonly").checked = !!r.email_only;
+    setMsg("preset-msg", `✓ Загружен «${r.name}»`, "ok");
+  });
+});
 
 // ── План ────────────────────────────────────────────────────────────────
 $("#plan-refresh").addEventListener("click", refreshPlan);
@@ -514,9 +557,9 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
   const smFinal = (i) => (i % 5 === 1 ? "dead" : i % 5 === 2 ? "untested" : "alive");
   const smErr = (i) => (smFinal(i) === "dead" ? "🔑 Bad Credentials: 535 auth failed"
     : smFinal(i) === "untested" ? "🌐 Proxy error: timed out" : "");
-  const pxBL = (i) => i % 7 === 0;  // в блоклисте (DNSBL)
-  // Политика владельца: живой-но-в-блоклисте = мёртвый. В demo сразу отражаем это в статусе.
-  const pxStatus = (i) => (pxFinal(i) === "dead" || pxBL(i)) ? "dead" : "alive";
+  const pxBL = (i) => i % 7 === 0;  // в блоклисте (DNSBL) — теперь это МЕТКА, а не приговор
+  // DNSBL — метка, а не смерть: живой-в-блоклисте ОСТАЁТСЯ живым (в UI помечен ⚑BL).
+  const pxStatus = (i) => (pxFinal(i) === "dead") ? "dead" : "alive";
   let proxies = Array.from({ length: N_PX }, (_, i) => ({ addr: `104.28.${(i % 250)}.${(i % 99) + 1}:1080`, proto: "socks5", status: pxStatus(i), ping: pxStatus(i) === "alive" ? 150 + (i % 200) : 0, country: pxStatus(i) === "alive" ? "DE" : "", blacklist: pxBL(i) ? false : true, score: pxStatus(i) === "alive" ? 80 : 0 }));
   let smtps = Array.from({ length: N_SM }, (_, i) => ({ host: `smtp.mail${i}.com:587`, email: `sender${i + 1}@mail${i % 40}.com`, enc: "STARTTLS", status: smFinal(i), ping: smFinal(i) === "alive" ? 200 + (i % 120) : 0, error: smErr(i), bound_proxy: false }));
   let pxChecked = false, smChecked = false;  // «Проверить все» переводит в true
@@ -562,6 +605,10 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     check_progress: (k) => { const ok = k === "proxies" ? pxChecked : smChecked; const arr = k === "proxies" ? proxies : smtps; return P({ running: false, done: ok ? arr.length : 0, ...viewCnt(arr, ok) }); },
     set_consistent_links: () => P({ ok: true }), set_email_only: () => P({ ok: true }),
     set_campaign_config: () => P({ ok: true, cc: 2, bcc: 1, control: 1 }),
+    list_campaign_presets: () => P({ items: ["demo-пресет"] }),
+    save_campaign_preset: (name) => P({ ok: true, name: name || "preset", items: ["demo-пресет", name || "preset"] }),
+    load_campaign_preset: (name) => P({ ok: true, name, cc: "cc@x.com", bcc: "", cc_pct: 20, bcc_pct: 0, control: "me@x.com", control_every_n: 5, consistent_links: true, email_only: false }),
+    load_proxies_url: () => P({ added: 0, total: proxies.length, alive: 0, dead: 0 }),
     body_titles: () => P({ items: bodies.map((b, i) => ({ index: i, title: b.slice(0, 40) })) }),
     preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ }),
     plan: () => P({ alive: 2, total: N_REC, rows: [{ email: "sender1@mail1.com", count: N_REC / 2 }, { email: "sender2@mail2.com", count: N_REC / 2 }], text: `2 отправителя разошлют ровно по ${N_REC / 2} писем.`, threads: 2, per_conn: N_REC / 2 }),
