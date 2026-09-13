@@ -38,6 +38,9 @@ class SmtpAccount:
     # Опционально привязанный к аккаунту прокси (ProxyEntry). None → аккаунт
     # работает через общий пул прокси. ТЗ задачи 2, вариант В.
     bound_proxy: Any = None
+    # Через какой прокси аккаунт проверялся в последний раз (для показа в UI):
+    # "host:port" или "прямое соединение". Пусто, пока не проверялся.
+    checked_via_proxy: str = ""
 
     @property
     def display_host(self) -> str:
@@ -385,6 +388,7 @@ class SmtpManager:
                 acc.status = SmtpStatus.UNTESTED
                 acc.last_error = ""
                 acc.ping_ms = 0
+                acc.checked_via_proxy = ""
             self._rotation_idx = 0
 
     def load_from_file(self, filepath: str) -> int:
@@ -408,6 +412,18 @@ class SmtpManager:
             self._rotation_idx = 0
             return before - len(self._accounts)
 
+    def remove_untested(self) -> int:
+        # Удаляет НЕПРОВЕРЕННЫЕ аккаунты (status UNTESTED) — по просьбе владельца отдельной
+        # кнопкой, чтобы не путать с «Убрать мёртвые» (та трогает только DEAD). Живых/мёртвых
+        # не касается.
+        with self._lock:
+            before = len(self._accounts)
+            self._accounts = [
+                a for a in self._accounts if a.status != SmtpStatus.UNTESTED
+            ]
+            self._rotation_idx = 0
+            return before - len(self._accounts)
+
 
     def check_single(
         self,
@@ -421,6 +437,13 @@ class SmtpManager:
         conn_timeout = int(timeout) if timeout else _CONNECT_TIMEOUT
         for attempt in range(max_attempts):
             try:
+                # Фиксируем, через какой прокси идёт проверка (для показа в UI). Приоритет —
+                # привязанный к аккаунту прокси (как в connect_smtp), иначе прокси из пула,
+                # иначе прямое соединение. Пишем на каждой попытке — остаётся последний.
+                _eff_proxy = getattr(account, "bound_proxy", None) or proxy
+                account.checked_via_proxy = (
+                    f"{_eff_proxy.host}:{_eff_proxy.port}" if _eff_proxy else "прямое соединение"
+                )
                 t0 = time.time()
                 smtp = connect_smtp(account, proxy=proxy, timeout=conn_timeout)
                 smtp.quit()
@@ -558,12 +581,16 @@ class SmtpManager:
         on_done: Callable[[], None] | None = None,
         timeout: int | None = None,
         soft_retries: int = 0,
+        only_untested: bool = False,
     ) -> None:
 
 
         def _worker() -> None:
             with self._lock:
-                targets = list(self._accounts)
+                # only_untested=True → перепроверяем ТОЛЬКО непроверенные (кнопка
+                # «Перепроверить не пров.»): живых/мёртвых не трогаем.
+                targets = [a for a in self._accounts
+                           if not only_untested or a.status == SmtpStatus.UNTESTED]
             total = len(targets)
             if not total:
                 if on_done:

@@ -158,6 +158,7 @@ body{
 .li .addr{font-family:var(--mono);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .li .meta{font-size:11px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .li .meta .err{color:var(--error)}
+.li .meta.via{opacity:.72;color:var(--dim2)}
 .badge-st{
   flex:0 0 auto; font-size:11px; font-weight:700; padding:3px 9px; border-radius:20px;
   border:1px solid transparent; white-space:nowrap;
@@ -283,26 +284,76 @@ body.busy{cursor:progress}
 
 .pv-main{background:#3a3d44;display:flex;flex-direction:column;min-height:0;overflow:auto;padding:20px;align-items:center;gap:14px}
 .pv-main.dark{background:#1c1e22}
-/* Каркас клиента: строка «инбокса» + тело */
-.client{
-  width:100%;max-width:680px;background:#fff;border-radius:12px;overflow:hidden;
-  box-shadow:0 12px 40px rgba(0,0,0,.4);color:#1a1a1a;
-}
-.client.mobile{max-width:390px}
-.client.dark{background:#1f2023;color:#e8e8ea}
-.inbox{display:flex;gap:12px;padding:15px 18px;border-bottom:1px solid #e7e7ea;align-items:flex-start}
-.client.dark .inbox{border-bottom-color:#33353a}
-.avatar{width:40px;height:40px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
-  color:#fff;font-weight:700;font-size:16px;background:#7c8aa0}
-.inbox .who{flex:1;min-width:0}
-.inbox .fromline{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
-.inbox .fromname{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.inbox .time{font-size:11px;color:#8a8f98;flex:0 0 auto}
-.inbox .subj{font-size:13.5px;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.inbox .pre{font-size:12.5px;color:#8a8f98;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.client.dark .inbox .pre,.client.dark .inbox .time{color:#9aa0ab}
-.client-chrome{display:flex;align-items:center;gap:7px;padding:8px 14px;background:#f4f5f7;border-bottom:1px solid #e7e7ea;font-size:11px;color:#6b7180}
-.client.dark .client-chrome{background:#26282d;border-bottom-color:#33353a;color:#9aa0ab}
-.client-chrome .cdot{width:9px;height:9px;border-radius:50%}
+/* Каркас превью: узнаваемый интерфейс каждого почтового клиента (как charly.cash) */
+.client{width:100%;max-width:860px;background:transparent;border-radius:12px;overflow:hidden;
+  box-shadow:0 14px 44px rgba(0,0,0,.45)}
+.client.mobile{max-width:396px}
+
+.mailui{--m-bg:#fff;--m-fg:#202124;--m-dim:#5f6368;--m-line:#e6e8eb;--m-accent:#c5221f;
+  --m-side:#f6f8fc;--m-hover:#eef1f6;--m-chip:#d3e3fd;--m-chipfg:#0b57d0;--m-topbg:#fff;--m-topfg:#202124;
+  background:var(--m-bg);color:var(--m-fg);font:13.5px/1.5 -apple-system,'Segoe UI',Roboto,Arial,sans-serif;
+  display:flex;flex-direction:column;min-height:460px;overflow:hidden}
+.mailui.dark{--m-bg:#1b1b1d;--m-fg:#e8eaed;--m-dim:#9aa0a6;--m-line:#3a3c40;--m-side:#202124;
+  --m-hover:#2a2b2e;--m-chip:#1e3a5f;--m-chipfg:#a8c7fa;--m-topbg:#1b1b1d;--m-topfg:#e8eaed}
+/* верхняя панель */
+.mailui .m-top{display:flex;align-items:center;gap:14px;padding:9px 16px;border-bottom:1px solid var(--m-line);
+  background:var(--m-topbg);color:var(--m-topfg)}
+.mailui .m-top .burger{font-size:16px;opacity:.6}
+.mailui .m-logo{font-weight:700;font-size:17px;display:flex;align-items:center;gap:7px;letter-spacing:-.2px}
+.mailui .m-logo .mark{color:var(--m-accent);font-weight:900;font-size:19px}
+.mailui .m-top.brand .m-logo .mark{color:#fff}
+.mailui .m-search{flex:1;max-width:600px;background:rgba(120,130,150,.14);border-radius:9px;padding:8px 13px;
+  color:var(--m-dim);display:flex;align-items:center;gap:9px;font-size:13px}
+.mailui .m-top.brand .m-search{background:rgba(255,255,255,.22);color:rgba(255,255,255,.9)}
+.mailui .m-me{margin-left:auto;width:30px;height:30px;border-radius:50%;background:var(--m-accent);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.mailui .m-top.brand .m-me{background:rgba(255,255,255,.28)}
+/* мак-окно (Apple Mail) */
+.mailui .m-top.mac{gap:8px;background:linear-gradient(#f7f7f7,#e9e9e9);color:#333;border-bottom:1px solid #cfcfcf}
+.mailui.dark .m-top.mac{background:linear-gradient(#3a3a3c,#2b2b2d);color:#ddd;border-bottom-color:#111}
+.mailui .m-top.mac .dot{width:12px;height:12px;border-radius:50%}
+.mailui .m-top.mac .title{margin-left:14px;font-weight:600;font-size:13px}
+/* тело: сайдбар + чтение */
+.mailui .m-body{display:flex;min-height:0;flex:1}
+.mailui .m-side{width:202px;flex:none;padding:12px 8px;border-right:1px solid var(--m-line);background:var(--m-side);overflow:auto}
+.mailui .m-compose{background:var(--m-accent);color:#fff;border-radius:18px;padding:10px 18px;font-weight:600;
+  display:inline-flex;gap:9px;align-items:center;margin:0 4px 14px}
+.mailui .m-sidehdr{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--m-dim);padding:8px 13px 4px;font-weight:700}
+.mailui .m-fold{display:flex;align-items:center;gap:13px;padding:8px 13px;border-radius:0 18px 18px 0;font-size:13.5px}
+.mailui .m-fold.on{background:var(--m-chip);color:var(--m-chipfg);font-weight:700}
+.mailui .m-fold .ic{width:18px;text-align:center;opacity:.85}
+/* область чтения */
+.mailui .m-read{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--m-bg)}
+.mailui .m-tools{display:flex;align-items:center;gap:4px;padding:8px 14px;border-bottom:1px solid var(--m-line);color:var(--m-dim)}
+.mailui .m-tools .i{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px}
+.mailui .m-tools .sp{flex:1}
+.mailui .m-subj{font-size:21px;font-weight:400;padding:18px 22px 6px;display:flex;align-items:center;gap:11px;flex-wrap:wrap;line-height:1.25}
+.mailui .m-label{font-size:11px;background:var(--m-hover);color:var(--m-dim);border-radius:5px;padding:3px 8px;font-weight:600}
+.mailui .m-hdr{display:flex;align-items:flex-start;gap:13px;padding:6px 22px 16px}
+.mailui .m-ava{width:40px;height:40px;border-radius:50%;background:var(--m-accent);color:#fff;display:flex;
+  align-items:center;justify-content:center;font-weight:700;font-size:17px;flex:none}
+.mailui .m-who{flex:1;min-width:0}
+.mailui .m-fromrow{display:flex;align-items:baseline;gap:8px}
+.mailui .m-from{font-weight:700;font-size:14px}
+.mailui .m-from .addr{font-weight:400;color:var(--m-dim);font-size:13px}
+.mailui .m-date{margin-left:auto;color:var(--m-dim);font-size:12.5px;white-space:nowrap}
+.mailui .m-to{color:var(--m-dim);font-size:12.5px;margin-top:2px}
+.mailui .m-frame-wrap{flex:1;min-height:0;overflow:auto;background:var(--m-bg)}
+.mailui iframe.pv-frame{width:100%;border:0;display:block;background:var(--m-bg)}
+.mailui .m-acts{display:flex;gap:10px;padding:14px 22px;border-top:1px solid var(--m-line);flex-wrap:wrap}
+.mailui .m-btn{border:1px solid var(--m-line);border-radius:20px;padding:8px 18px;font-weight:600;color:var(--m-fg);
+  display:inline-flex;gap:8px;align-items:center;font-size:13px}
+.mailui .m-btn.pri{background:var(--m-accent);color:#fff;border-color:transparent}
+/* Apple: блок шапки From/Subject/To */
+.mailui .m-applehdr{display:flex;gap:13px;padding:14px 22px;border-bottom:1px solid var(--m-line);align-items:flex-start}
+.mailui .m-applehdr .m-subj2{font-weight:700;font-size:15px;margin:2px 0}
+/* мобильный */
+.mailui.mobile{min-height:600px}
+.mailui.mobile .m-body{flex-direction:column}
+.mailui.mobile .m-side,.mailui.mobile .m-search,.mailui.mobile .m-acts{display:none}
+.mailui .m-topm{display:flex;align-items:center;gap:12px;padding:12px 15px;background:var(--m-topbg);
+  color:var(--m-topfg);border-bottom:1px solid var(--m-line);font-weight:600;font-size:15px}
+.mailui.mobile .m-subj{font-size:19px;padding-top:14px}
+.mailui.mobile .m-tools{justify-content:space-around}
 .pv-frame{width:100%;border:none;background:transparent;display:block}
 .pv-loading{color:#cfd2d8;font-size:13px;padding:40px}

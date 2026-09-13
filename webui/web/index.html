@@ -37,7 +37,9 @@
             <button class="btn accent" data-load="proxies">📁 Загрузить</button>
             <button class="btn accent sm" id="px-load-url">🌐 По URL</button>
             <button class="btn primary" id="px-check" disabled>✓ Проверить все</button>
+            <button class="btn ghost sm" id="px-recheck-untested" disabled>↻ Не пров.</button>
             <button class="btn ghost" id="px-remove-dead" disabled>Убрать мёртвые</button>
+            <button class="btn ghost sm" id="px-remove-untested" disabled>🗑 Не пров.</button>
             <button class="btn ghost sm" id="px-clear" data-clear="proxies" disabled>Очистить</button>
           </div>
           <div class="tune">
@@ -69,7 +71,9 @@
           <div class="row">
             <button class="btn accent" data-load="smtp">📁 Загрузить</button>
             <button class="btn primary" id="sm-check" disabled>✓ Проверить все</button>
+            <button class="btn ghost sm" id="sm-recheck-untested" disabled>↻ Не пров.</button>
             <button class="btn ghost" id="sm-remove-dead" disabled>Убрать мёртвые</button>
+            <button class="btn ghost sm" id="sm-remove-untested" disabled>🗑 Не пров.</button>
             <button class="btn ghost sm" id="sm-clear" data-clear="smtp" disabled>Очистить</button>
           </div>
           <div class="tune">
@@ -326,18 +330,8 @@
         </aside>
         <div class="pv-main" id="pv-main">
           <div class="pv-loading" id="pv-loading">Рендер…</div>
-          <div class="client" id="pv-client-frame" style="display:none">
-            <div class="client-chrome" id="pv-chrome"><span class="cdot" style="background:#ff5f56"></span><span class="cdot" style="background:#ffbd2e"></span><span class="cdot" style="background:#27c93f"></span><span id="pv-chrome-t" style="margin-left:6px">Gmail</span></div>
-            <div class="inbox">
-              <div class="avatar" id="pv-avatar">?</div>
-              <div class="who">
-                <div class="fromline"><span class="fromname" id="pv-from">Отправитель</span><span class="time">сейчас</span></div>
-                <div class="subj" id="pv-subj">Тема</div>
-                <div class="pre" id="pv-pre">Preheader…</div>
-              </div>
-            </div>
-            <iframe class="pv-frame" id="pv-frame" title="preview" sandbox=""></iframe>
-          </div>
+          <!-- Реалистичный интерфейс клиента строится в app.js (clientHTML) — свой на каждого. -->
+          <div class="client" id="pv-client-frame" style="display:none"></div>
         </div>
       </div>
     </div>
