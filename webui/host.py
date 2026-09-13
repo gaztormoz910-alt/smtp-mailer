@@ -37,7 +37,7 @@ from core.queue_manager import (
     load_recipients as _load_recipients, build_queue, Recipient,
 )
 from core.sender import (
-    CampaignSender, send_test as _send_test, resolve_delay,
+    CampaignSender, send_test as _send_test,
     load_queue_state, clear_queue_state,
 )
 
@@ -661,15 +661,30 @@ class Api:
             cc_percent=cfg["cc_pct"], bcc_percent=cfg["bcc_pct"],
             on_status=self._log_push,
         )
-        # Все параметры — из UI-полей: разбираем устойчиво, чтобы мусорный ввод не ронял.
-        delay = resolve_delay(_to_float(params.get("delay"), 1.0),
-                             _to_float(params.get("per_min"), 0.0))
+        # UI оставляет два регулятора: диапазон задержки «от A до B» и потоки (просьба
+        # владельца — «и всё»). Мусорный ввод разбираем устойчиво, чтобы не ронять мост.
+        #
+        # Задержка: движок ждёт uniform[base-jitter, base+jitter] (domain_config.get_delay
+        # при base>0), поэтому A..B ⇒ base=(A+B)/2, jitter=(B-A)/2. ПРОГРЕВ движка сохранён:
+        # он домножает задержку на warmup ×3→×1 по мере отправки — в начале письма идут
+        # медленнее (инбокс), затем сходятся к A..B. Здесь движок не трогаем.
+        a = max(0.0, _to_float(params.get("delay_min"), 2.0))
+        b = max(0.0, _to_float(params.get("delay_max"), 8.0))
+        if b < a:                      # терпим перепутанный порядок полей (от>до)
+            a, b = b, a
+        base = (a + b) / 2.0
+        jit = (b - a) / 2.0
+        # Потоки: не больше числа живых SMTP и не больше 50; 0/пусто ⇒ все живые (в пределах).
+        alive = self.smtp_mgr.count_alive
+        cap = min(alive, 50) if alive else 50
+        th_in = _to_int(params.get("threads"), 0)
+        max_threads = cap if th_in <= 0 else min(th_in, cap)
         self._sender.start(
-            delay=delay,
-            jitter=_to_float(params.get("jitter"), 0.5),
-            max_threads=max(0, _to_int(params.get("threads"), 0)),
-            max_per_conn=max(0, _to_int(params.get("per_conn"), 50)),
-            max_per_acc=max(0, _to_int(params.get("per_acc"), 0)),
+            delay=base,
+            jitter=jit,
+            max_threads=max_threads,
+            max_per_conn=0,   # авто-лимит по профилю домена (поле убрано из UI)
+            max_per_acc=0,    # без лимита на аккаунт (поле убрано из UI)
         )
         return {"started": True, "queued": len(queue)}
 

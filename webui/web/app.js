@@ -222,8 +222,8 @@ const LOCK_SEL = [
   "#px-timeout", "#px-threads", "#sm-timeout", "#sm-threads", ".pg-prev", ".pg-next",
   "#consistent", "#emailonly", "#open-preview", "#open-preview-2",
   "#cc", "#cc-pct", "#bcc", "#bcc-pct", "#control", "#control-n", "#plan-refresh",
-  "#test-email", "#test-send", "#p-delay", "#p-jitter", "#p-permin", "#p-threads",
-  "#p-perconn", "#p-peracc", "#btn-start", "#btn-pause", "#btn-stop", "#log-clear",
+  "#test-email", "#test-send", "#p-delay-min", "#p-delay-max", "#p-threads",
+  "#btn-start", "#btn-pause", "#btn-stop", "#log-clear",
   "#resume-btn", "#resume-clear",
 ];
 function setBusy(v) {
@@ -299,7 +299,8 @@ function refreshPlan() {
     const body = $("#plan-body"); body.innerHTML = "";
     if (!r.rows || !r.rows.length) { body.innerHTML = `<tr><td colspan="2" style="color:var(--dim2);text-align:center;padding:26px">—</td></tr>`; return; }
     r.rows.forEach((row) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${esc(row.email)}</td><td class="num">${row.count}</td>`; body.appendChild(tr); });
-    $("#p-threads").value = r.threads; $("#p-perconn").value = r.per_conn;
+    // План подсказывает оптимум потоков = число живых, но не выше кап-порога 50.
+    $("#p-threads").value = Math.min(r.threads || 0, 50);
   });
 }
 
@@ -312,9 +313,11 @@ $("#test-send").addEventListener("click", () => {
     .finally(() => ($("#test-send").disabled = false));
 });
 function gatherParams() {
+  // Осталось три регулятора: диапазон задержки «от…до» и число потоков.
+  // Прочее (разброс/писем-в-мин/на-коннект/на-аккаунт) убрано — дефолты задаёт мост.
   return {
-    delay: $("#p-delay").value, jitter: $("#p-jitter").value, per_min: $("#p-permin").value,
-    threads: $("#p-threads").value, per_conn: $("#p-perconn").value, per_acc: $("#p-peracc").value,
+    delay_min: $("#p-delay-min").value, delay_max: $("#p-delay-max").value,
+    threads: $("#p-threads").value,
   };
 }
 $("#btn-start").addEventListener("click", () => {
@@ -370,6 +373,12 @@ function tick() {
   api().campaign_state().then((s) => {
     const snap = s.snapshot || {};
     setStatusPill("send-status", "send-status-t", snap, s.running, s.paused);
+    // Кап потоков = min(живых SMTP, 50): подписываем «макс N» и не даём ввести больше.
+    const capN = Math.min(s.alive_smtp || 0, 50);
+    const thLbl = $("#p-threads-lbl");
+    if (thLbl) thLbl.textContent = capN ? `Потоки (макс ${capN})` : "Потоки (нет живых SMTP)";
+    const thEl = $("#p-threads");
+    if (thEl) { thEl.max = capN || 50; if (capN && thEl.value && +thEl.value > capN) thEl.value = capN; }
     $("#btn-start").disabled = s.running || !s.can_start;
     $("#btn-pause").disabled = !s.running;
     $("#btn-stop").disabled = !s.running;
