@@ -28,6 +28,7 @@ import webview
 from core.content import (
     ContentManager,
     render as render_body, is_html as is_html_body, html_to_plain_text,
+    validate_template, find_content_issues,
 )
 from core.proxy_manager import ProxyManager, ProxyStatus, set_user_smtp_targets
 from core.smtp_manager import SmtpManager, SmtpStatus
@@ -182,7 +183,8 @@ class Api:
     # берёт постранично через page_content — так мост не тащит миллион строк за раз.
     def load_subjects(self, paths: list[str]) -> dict:
         added = sum(self.content_mgr.load_subjects(p) for p in paths)
-        return {"added": added, "total": self.content_mgr.subject_count}
+        return {"added": added, "total": self.content_mgr.subject_count,
+                "issues": find_content_issues(self.content_mgr.subjects, is_subject=True)}
 
     def clear_subjects(self) -> dict:
         self.content_mgr.clear_subjects()
@@ -190,7 +192,16 @@ class Api:
 
     def load_bodies(self, paths: list[str]) -> dict:
         added = sum(self.content_mgr.load_bodies(p) for p in paths)
-        return {"added": added, "total": self.content_mgr.body_count}
+        return {"added": added, "total": self.content_mgr.body_count,
+                "issues": find_content_issues(self.content_mgr.bodies, is_subject=False)}
+
+    def content_issues(self) -> dict:
+        # Битые шаблоны по каждому виду (для предупреждения в UI): непарные скобки/«|»
+        # вне блока → уйдёт получателю сырым. Пустые списки = всё чисто.
+        return {
+            "subjects": find_content_issues(self.content_mgr.subjects, is_subject=True),
+            "bodies": find_content_issues(self.content_mgr.bodies, is_subject=False),
+        }
 
     def clear_bodies(self) -> dict:
         self.content_mgr.clear_bodies()
@@ -561,12 +572,14 @@ class Api:
 
         # Тело: можно указать конкретный индекс, иначе случайное.
         bodies = self.content_mgr.bodies
+        body_src = ""  # исходный шаблон показанного тела (для проверки на дефекты)
         if not bodies:
             body, is_html_flag = "Тела писем ещё не загружены — загрузите их во вкладке «Контент».", False
         else:
             idx = opts.get("index", -1)
             template = bodies[idx] if isinstance(idx, int) and 0 <= idx < len(bodies) \
                 else _rnd.choice(bodies)
+            body_src = template
             pools = self.content_mgr.link_pools or None
             try:
                 body = render_body(template, variables, pools, link_cache,
@@ -592,6 +605,11 @@ class Api:
                      else len(re.findall(r"https?://", text)),
             "images": len(re.findall(r"<img\b", body_html, re.I)),
         }
+        # Дефекты ПОКАЗАННЫХ шаблонов: тему проверяем по отрендеренному (что реально видно),
+        # тело — по исходному шаблону (надёжнее: ловит дефект даже если этот случайный путь
+        # его не обнажил). Если непусто — превью покажет баннер «этот шаблон уйдёт битым».
+        subject_issue = validate_template(subject)
+        body_issue = validate_template(body_src) if body_src else []
         return {
             "from_name": sender_name, "from_email": from_email,
             "subject": subject, "preheader": preheader,
@@ -599,6 +617,7 @@ class Api:
             "format": "HTML" if is_html_flag else "Обычный текст",
             "metrics": metrics,
             "bodies": len(bodies), "subjects": self.content_mgr.subject_count,
+            "subject_issue": subject_issue, "body_issue": body_issue,
         }
 
     def body_titles(self) -> dict:

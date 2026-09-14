@@ -284,6 +284,11 @@ body.busy{cursor:progress}
 
 .pv-main{background:#3a3d44;display:flex;flex-direction:column;min-height:0;overflow:auto;padding:20px;align-items:center;gap:14px}
 .pv-main.dark{background:#1c1e22}
+/* Предупреждения валидатора: жёлтая строка на карточках контента, красный баннер в превью */
+.warn-line{background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.45);color:#fbbf24;
+  border-radius:8px;padding:8px 11px;font-size:12px;margin-bottom:8px;line-height:1.4}
+.pv-warn{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.55);color:#ff9b9b;
+  border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.45;width:100%;max-width:860px}
 /* Каркас превью: узнаваемый интерфейс каждого почтового клиента (как charly.cash) */
 .client{width:100%;max-width:860px;background:transparent;border-radius:12px;overflow:hidden;
   box-shadow:0 14px 44px rgba(0,0,0,.45)}

@@ -153,6 +153,56 @@ def is_html(text: str) -> bool:
     return bool(_HTML_RE.search(text))
 
 
+_STYLE_BLOCK_RE = re.compile(r"<style[^>]*>.*?</style>", re.IGNORECASE | re.DOTALL)
+
+
+def validate_template(template: str, is_subject: bool = False) -> list[str]:
+    """Ловит дефекты спинтакса, которые уйдут ПОЛУЧАТЕЛЮ сырыми: непарные фигурные
+    скобки и «|» вне спинтакс-блока. Возвращает список кратких проблем (пусто = чисто).
+
+    Почему это нужно: движок spin() разворачивает только СБАЛАНСИРОВАННЫЕ {a|b}. Непарную
+    скобку он закрыть не может — и она вместе с «|» утекает в письмо. Раньше это происходило
+    молча (владелец видел {…|…} уже в превью/у получателя); теперь ловим ДО отправки.
+
+    Что НЕ считаем скобками спинтакса: {{name}} и пр. переменные, [[LINK]] и CSS-блоки
+    <style>{…}</style> (в этих письмах их нет, но подстраховываемся)."""
+    t = _STYLE_BLOCK_RE.sub("", template)
+    t = _MACRO_RE.sub("", t)   # {{переменные}}
+    t = _LINK_RE.sub("", t)    # [[LINK]]
+    depth = 0
+    extra_close = 0
+    top_pipe = 0
+    for ch in t:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            if depth == 0:
+                extra_close += 1
+            else:
+                depth -= 1
+        elif ch == "|" and depth == 0:
+            top_pipe += 1
+    issues: list[str] = []
+    if depth:
+        issues.append(f"незакрытая {{ ×{depth}")
+    if extra_close:
+        issues.append(f"лишняя }} ×{extra_close}")
+    if top_pipe:
+        issues.append(f"«|» вне блока ×{top_pipe}")
+    return issues
+
+
+def find_content_issues(items: list[str], is_subject: bool = False) -> list[dict]:
+    """Прогоняет validate_template по списку шаблонов. Возвращает [{n, why}] только для
+    битых (n — номер с 1, why — краткая причина). Чистые не включаются."""
+    out: list[dict] = []
+    for i, tpl in enumerate(items):
+        probs = validate_template(tpl, is_subject)
+        if probs:
+            out.append({"n": i + 1, "why": ", ".join(probs)})
+    return out
+
+
 _BR_RE = re.compile(r'<br\s*/?>', re.IGNORECASE)
 _BLOCK_END_RE = re.compile(r'</(p|div|h[1-6]|li|tr)>', re.IGNORECASE)
 _A_TAG_RE = re.compile(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
