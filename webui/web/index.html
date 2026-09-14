@@ -107,6 +107,7 @@
             <span class="count-pill"><b id="subjects-count">0</b> шт.</span></div>
           <div class="row"><button class="btn accent" data-load="subjects">Загрузить</button>
             <button class="btn ghost sm" data-clear="subjects">Очистить</button></div>
+          <div class="warn-line" id="subjects-warn" hidden></div>
           <pre class="preview" id="subjects-preview">(пусто)</pre>
           <div class="pager" id="subjects-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
         </div>
@@ -116,6 +117,7 @@
             <span class="count-pill"><b id="bodies-count">0</b> шт.</span></div>
           <div class="row"><button class="btn accent" data-load="bodies">Загрузить</button>
             <button class="btn ghost sm" data-clear="bodies">Очистить</button></div>
+          <div class="warn-line" id="bodies-warn" hidden></div>
           <pre class="preview" id="bodies-preview">(пусто)</pre>
           <div class="pager" id="bodies-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
         </div>
@@ -329,6 +331,7 @@
             <div class="note" id="pv-format" style="font-family:var(--mono)">—</div></div>
         </aside>
         <div class="pv-main" id="pv-main">
+          <div class="pv-warn" id="pv-warn" hidden></div>
           <div class="pv-loading" id="pv-loading">Рендер…</div>
           <!-- Реалистичный интерфейс клиента строится в app.js (clientHTML) — свой на каждого. -->
           <div class="client" id="pv-client-frame" style="display:none"></div>

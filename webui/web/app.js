@@ -31,7 +31,7 @@ $("#tabs").addEventListener("click", (e) => {
 
 function onTabEnter(tab) {
   if (tab === "setup") { pagers.proxies.reload(); pagers.smtp.reload(); }
-  else if (tab === "content") { ["subjects", "bodies", "senders", "links"].forEach((k) => pagers[k].reload()); }
+  else if (tab === "content") { ["subjects", "bodies", "senders", "links"].forEach((k) => pagers[k].reload()); refreshContentIssues(); }
   else if (tab === "campaign") { pagers.recipients.reload(); saveCampaignCfg(); refreshPresets(); }
   else if (tab === "plan") refreshPlan();
   else if (tab === "send") { refreshResumeBanner(); tick(); }
@@ -135,7 +135,24 @@ function handleLoad(kind, r) {
   else if (kind === "links") $("#links-count").textContent = (r.files ? r.files.length : 0);
   else if (kind === "recipients") $("#recipients-count").textContent = r.total || 0;
   if (pagers[kind]) pagers[kind].reload();  // показать первую страницу
+  if (kind === "subjects" || kind === "bodies") refreshContentIssues();
   refreshBadges();
+}
+
+// Предупреждение о битых шаблонах (непарные скобки/«|» вне блока → уйдёт получателю сырым).
+function fmtIssues(list) {
+  if (!list || !list.length) return "";
+  const parts = list.slice(0, 8).map((x) => `#${x.n} (${x.why})`);
+  const more = list.length > 8 ? ` … и ещё ${list.length - 8}` : "";
+  return `⚠ ${list.length} шаблон(ов) с ошибкой спинтакса — получатель увидит сырой «{ … | … }»: ${parts.join(", ")}${more}. Почини их, иначе брак уйдёт в письмо.`;
+}
+function refreshContentIssues() {
+  api().content_issues().then((r) => {
+    const sw = $("#subjects-warn"), bw = $("#bodies-warn");
+    const st = fmtIssues(r.subjects), bt = fmtIssues(r.bodies);
+    if (sw) { sw.textContent = st; sw.hidden = !st; }
+    if (bw) { bw.textContent = bt; bw.hidden = !bt; }
+  }).catch(() => {});
 }
 
 // ── Прокси / SMTP: рендер страницы (счётчики + окно элементов) ──────────
@@ -583,6 +600,13 @@ function loadPreview() {
     const m = d.metrics || {};
     $("#pv-m-html").textContent = m.html_size || 0; $("#pv-m-text").textContent = m.text_len || 0;
     $("#pv-m-links").textContent = m.links || 0; $("#pv-m-img").textContent = m.images || 0;
+    // Баннер: показанный шаблон (тема/тело) уйдёт получателю битым — честное предупреждение.
+    const iss = (d.subject_issue || []).concat(d.body_issue || []);
+    const w = $("#pv-warn");
+    if (w) {
+      if (iss.length) { w.hidden = false; w.textContent = "⚠ Показанный шаблон УЙДЁТ ПОЛУЧАТЕЛЮ БИТЫМ (ошибка спинтакса: " + iss.join(", ") + "). Именно так письмо и придёт — сырой «{ … | … }». Почини шаблон в контенте."; }
+      else { w.hidden = true; }
+    }
     $("#pv-loading").style.display = "none"; $("#pv-client-frame").style.display = "block";
     renderPreview();
   });
@@ -795,7 +819,9 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     load_campaign_preset: (name) => P({ ok: true, name, cc: "cc@x.com", bcc: "", cc_pct: 20, bcc_pct: 0, control: "me@x.com", control_every_n: 5, consistent_links: true, email_only: false }),
     load_proxies_url: () => P({ added: 0, total: proxies.length, alive: 0, dead: 0 }),
     body_titles: () => P({ items: bodies.map((b, i) => ({ index: i, title: b.slice(0, 40) })) }),
-    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ }),
+    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [] }),
+    // Демо: показываем предупреждение о битом теле #3, чтобы жёлтая строка на карточке была видна.
+    content_issues: () => P({ subjects: [], bodies: [{ n: 3, why: "незакрытая { ×1 (демо)" }] }),
     plan: () => P({ alive: 2, total: N_REC, rows: [{ email: "sender1@mail1.com", count: N_REC / 2 }, { email: "sender2@mail2.com", count: N_REC / 2 }], text: `2 отправителя разошлют ровно по ${N_REC / 2} писем.`, threads: 2, per_conn: N_REC / 2 }),
     send_test: () => P({ ok: true, info: "отправлено за 1.8 сек через sender1@mail1.com" }),
     queue_state: () => P({ exists: false }),
