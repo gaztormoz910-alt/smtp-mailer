@@ -43,6 +43,13 @@ from core.sender import (
 )
 from core.presets import save_preset as _save_preset, load_preset as _load_preset, PRESETS_DIR
 
+# Локальный скорер письма (открываемость/кликабельность/доставляемость + контраст).
+# Импорт устойчив и к запуску пакетом (webui.host), и из каталога webui.
+try:
+    from webui.letter_score import score_letter as _score_letter
+except ImportError:  # запуск с CWD=webui
+    from letter_score import score_letter as _score_letter
+
 WEB_DIR = Path(__file__).resolve().parent / "web"
 _rnd = SystemRandom()
 
@@ -655,6 +662,14 @@ class Api:
         # его не обнажил). Если непусто — превью покажет баннер «этот шаблон уйдёт битым».
         subject_issue = validate_template(subject)
         body_issue = validate_template(body_src) if body_src else []
+        # Честный локальный разбор ПОКАЗАННОГО письма: открываемость/кликабельность/
+        # доставляемость + контраст (не «пустое» ли оно). Тему берём отрендеренную,
+        # тело — по видимому тексту (что реально попадёт в ящик).
+        try:
+            score = _score_letter(subject, text, html=body_html,
+                                  is_html=is_html_flag, vertical="dating") if bodies else None
+        except Exception as exc:  # скорер не должен ронять превью
+            score = {"error": str(exc)}
         return {
             "from_name": sender_name, "from_email": from_email,
             "subject": subject, "preheader": preheader,
@@ -663,7 +678,50 @@ class Api:
             "metrics": metrics,
             "bodies": len(bodies), "subjects": self.content_mgr.subject_count,
             "subject_issue": subject_issue, "body_issue": body_issue,
+            "score": score,
         }
+
+    def score_variants(self, n: Any = 30) -> dict:
+        # РАЗБРОС ПО ВАРИАНТАМ: спинтакс даёт разные письма из одних шаблонов, поэтому и
+        # оценка «прыгает». Раскрываем N случайных пар (тема+тело), считаем балл каждой и
+        # показываем МИНИМУМ/МЕДИАНУ/МАКСИМУМ + худший пример — это честный ответ на
+        # «каждый раз разный результат». Работает без внешних сервисов.
+        n = _clamp(_to_int(n, 30), 1, 200)
+        cm = self.content_mgr
+        if not cm.subjects or not cm.bodies:
+            return {"available": False, "reason": "нужны и темы, и тела"}
+        variables = {"email": "recipient@example.com", "name": "Анна",
+                     "senderName": cm.get_random_sender_name() or "Alex"}
+        pools = cm.link_pools or None
+        overalls: list[int] = []
+        worst = None
+        for _ in range(n):
+            lc = {} if cm.consistent_links else None
+            try:
+                subj = cm.get_random_subject(dict(variables), link_cache=lc)
+                tmpl = _rnd.choice(cm.bodies)
+                body = render_body(tmpl, dict(variables), pools, lc, link_mode=cm.link_mode)
+            except ValueError:
+                continue
+            ishtml = is_html_body(body)
+            text = html_to_plain_text(body) if ishtml else body
+            sc = _score_letter(subj, text, html=(body if ishtml else ""),
+                               is_html=ishtml, vertical="dating")
+            overalls.append(sc["overall"])
+            if worst is None or sc["overall"] < worst["overall"]:
+                fails = []
+                for grp in ("openrate", "clickability", "deliverability"):
+                    fails += [c["text"] for c in sc["checks"][grp] if not c["ok"]]
+                worst = {"overall": sc["overall"], "grade": sc["grade"],
+                         "subject": subj, "anchor": sc.get("anchor", ""),
+                         "fails": fails[:6]}
+        if not overalls:
+            return {"available": False, "reason": "не удалось раскрыть шаблоны"}
+        overalls.sort()
+        mid = overalls[len(overalls) // 2]
+        return {"available": True, "count": len(overalls),
+                "min": overalls[0], "median": mid, "max": overalls[-1],
+                "worst": worst}
 
     def body_titles(self) -> dict:
         # Список загруженных тел для выпадашки в превью (первая строка как заголовок).

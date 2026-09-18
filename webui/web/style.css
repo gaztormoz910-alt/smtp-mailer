@@ -375,3 +375,34 @@ body.busy{cursor:progress}
 .mailui.mobile .m-tools{justify-content:space-around}
 .pv-frame{width:100%;border:none;background:transparent;display:block}
 .pv-loading{color:#cfd2d8;font-size:13px;padding:40px}
+
+/* ── Панель оценки письма в превью (открываемость/кликабельность/доставляемость) ── */
+.pv-score{font-size:12px;color:var(--text)}
+.pv-sc-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.pv-sc-grade{font:700 22px/1 var(--mono);border:2px solid;border-radius:9px;padding:6px 10px;min-width:34px;text-align:center}
+.pv-sc-num b{font:700 22px/1 var(--mono)} .pv-sc-num span{color:var(--dim);font-size:12px}
+.pv-sc-ctr{font-size:11px;color:var(--dim);margin-top:3px}
+.pv-sc-ctr .up{color:var(--accent)} .pv-sc-ctr .dn{color:var(--warn)}
+.pv-sc-bar{display:flex;align-items:center;gap:7px;margin:4px 0}
+.pv-sc-bar .l{flex:0 0 96px;font-size:11px;color:var(--dim)}
+.pv-sc-bar .tr{flex:1;height:7px;background:var(--bg);border:1px solid var(--border);border-radius:5px;overflow:hidden}
+.pv-sc-bar .fl{display:block;height:100%}
+.pv-sc-bar b{flex:0 0 24px;text-align:right;font:700 12px/1 var(--mono)}
+.pv-sc-verdict{margin:8px 0 4px;font-size:11.5px;color:var(--text);line-height:1.5}
+.pv-sc-flag{margin:6px 0;padding:7px 9px;border-radius:7px;font-size:11.5px;line-height:1.45}
+.pv-sc-flag.bad{background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);color:#fca5a5}
+.pv-sc-flag.ok{background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);color:var(--accent)}
+.pv-sc-struct{margin-top:7px;font-size:11px;color:var(--dim)}
+.pv-sc-struct .it{margin-top:3px;line-height:1.4}
+.pv-sc-struct .it.bad{color:#fca5a5} .pv-sc-struct .it.warn{color:var(--warn)}
+.pv-score-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.pv-score-checks{margin-top:8px;max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 8px}
+.pv-ck-h{font:700 10.5px/1 var(--mono);text-transform:uppercase;letter-spacing:.4px;color:var(--dim);margin:7px 0 3px}
+.pv-ck{font-size:11px;line-height:1.5;color:var(--text)}
+.pv-ck.y{color:var(--accent)} .pv-ck.n{color:#fca5a5}
+.pv-variance{margin-top:9px;border-top:1px dashed var(--border);padding-top:8px}
+.pv-var-row{display:flex;flex-wrap:wrap;gap:9px;align-items:baseline;font-size:12px}
+.pv-var-row .v{font:700 13px/1 var(--mono)} .pv-var-row .n{color:var(--dim);font-size:11px}
+.pv-var-worst{margin-top:7px;font-size:11px;color:var(--text)}
+.pv-var-worst .s{color:var(--dim);margin:3px 0;font-style:italic}
+.pv-var-worst .it{color:#fca5a5;line-height:1.5}
