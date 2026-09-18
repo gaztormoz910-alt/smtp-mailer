@@ -22,25 +22,8 @@ _HTML_RE    = re.compile(
 )
 
 
-_HOMOGLYPHS_CYR_TO_LAT = {
-    'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
-    'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M', 'Н': 'H', 'О': 'O',
-    'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X',
-    'і': 'i', 'І': 'I', 'ѕ': 's', 'Ѕ': 'S'
-}
-
-_HOMOGLYPHS_LAT_TO_CYR = {v: k for k, v in _HOMOGLYPHS_CYR_TO_LAT.items()}
-
-def _detect_dominant_script(text: str) -> str:
-    cyr_count = 0
-    lat_count = 0
-    for ch in text:
-        code = ord(ch)
-        if 0x0400 <= code <= 0x04FF:
-            cyr_count += 1
-        elif (0x0041 <= code <= 0x005A) or (0x0061 <= code <= 0x007A):
-            lat_count += 1
-    return 'cyrillic' if cyr_count >= lat_count else 'latin'
+# Омоглифы (кир↔лат) удалены в 2026: почтовые ML-фильтры нормализуют confusable-символы
+# ДО анализа и флагуют их наличие как спуфинг/фишинг — польза нулевая, риск реальный.
 
 _NOISE_WORDS = [
     "clarity", "density", "factor", "random", "profile", "element", "system",
@@ -256,47 +239,7 @@ def _substitute_ams_macros(text: str) -> str:
     
     return text
 
-def _replace_homoglyphs(text: str, rate: float = 0.0) -> str:
-
-    rnd = random.SystemRandom()
-    if rate <= 0:
-        rate = rnd.uniform(0.03, 0.12)
-
-    _a_block_re = re.compile(r'(<a\s[^>]*>.*?</a>)', re.IGNORECASE | re.DOTALL)
-    a_blocks = []
-    def _hide_a(m):
-        a_blocks.append(m.group(0))
-        return f'__ABLOCK_{len(a_blocks)-1}__'
-    text = _a_block_re.sub(_hide_a, text)
-
-    parts = re.split(r'(<[^>]+>)', text)
-    text_only = ''.join(parts[i] for i in range(0, len(parts), 2))
-
-    script = _detect_dominant_script(text_only)
-    if script == 'cyrillic':
-        homoglyph_map = _HOMOGLYPHS_CYR_TO_LAT
-    else:
-        homoglyph_map = _HOMOGLYPHS_LAT_TO_CYR
-
-    _ablock_marker_re = re.compile(r'__ABLOCK_\d+__')
-
-    for i in range(len(parts)):
-        if i % 2 == 0:
-            protected = set()
-            for m in _ablock_marker_re.finditer(parts[i]):
-                for pos in range(m.start(), m.end()):
-                    protected.add(pos)
-
-            chars = list(parts[i])
-            for j, char in enumerate(chars):
-                if j not in protected and char in homoglyph_map and rnd.random() < rate:
-                    chars[j] = homoglyph_map[char]
-            parts[i] = ''.join(chars)
-    result = ''.join(parts)
-
-    for i, block in enumerate(a_blocks):
-        result = result.replace(f'__ABLOCK_{i}__', block)
-    return result
+# _replace_homoglyphs удалён (2026): см. комментарий выше про детект confusables.
 
 
 _CSS_NOISE_PROPS = [
@@ -355,36 +298,8 @@ def _generate_realistic_comment() -> str:
     return _rnd.choice(templates)
 
 
-def _randomize_html_entities(text: str, rate: float = 0.03) -> str:
-    _a_re = re.compile(r'(<a\s[^>]*>.*?</a>)', re.IGNORECASE | re.DOTALL)
-    a_blocks = []
-    def _hide(m):
-        a_blocks.append(m.group(0))
-        return f'__ENTPROT_{len(a_blocks)-1}__'
-    text = _a_re.sub(_hide, text)
-
-    parts = re.split(r'(<[^>]+>)', text)
-    for i in range(0, len(parts), 2):
-        if parts[i]:
-            if '__ENTPROT_' in parts[i] or '__ABLOCK_' in parts[i]:
-                continue
-            chars = list(parts[i])
-            for j, char in enumerate(chars):
-                if char.isalpha() and _rnd.random() < rate:
-                    code = ord(char)
-                    fmt = _rnd.choice(['dec', 'hex', 'hex_upper'])
-                    if fmt == 'dec':
-                        chars[j] = f"&#{code};"
-                    elif fmt == 'hex':
-                        chars[j] = f"&#x{code:x};"
-                    else:
-                        chars[j] = f"&#x{code:X};"
-            parts[i] = ''.join(chars)
-    result = ''.join(parts)
-
-    for i, block in enumerate(a_blocks):
-        result = result.replace(f'__ENTPROT_{i}__', block)
-    return result
+# _randomize_html_entities удалён (2026): подмена букв на &#NN; — классический маркер
+# обфускации, который фильтры распознают; в HTML-письме давал минус к репутации.
 
 
 def _inject_css_noise(text: str) -> str:
@@ -435,13 +350,12 @@ def render(
     if is_subject:
         return result
 
-
-    result = _replace_homoglyphs(result)
-
+    # 2026: \u043E\u043C\u043E\u0433\u043B\u0438\u0444\u044B, zero-width \u0441\u0438\u043C\u0432\u043E\u043B\u044B \u0438 entity-\u043F\u043E\u0434\u043C\u0435\u043D\u0430 \u0431\u0443\u043A\u0432 \u0423\u0411\u0420\u0410\u041D\u042B \u043D\u0430\u043C\u0435\u0440\u0435\u043D\u043D\u043E. \u0424\u0438\u043B\u044C\u0442\u0440\u044B
+    # (Gmail/Yahoo/Microsoft) \u043D\u043E\u0440\u043C\u0430\u043B\u0438\u0437\u0443\u044E\u0442 \u043D\u0435\u0432\u0438\u0434\u0438\u043C\u044B\u0435 \u0441\u0438\u043C\u0432\u043E\u043B\u044B \u0438 confusables \u0414\u041E \u0430\u043D\u0430\u043B\u0438\u0437\u0430 \u0438
+    # \u0444\u043B\u0430\u0433\u0443\u044E\u0442 \u0441\u0430\u043C\u043E \u0438\u0445 \u043D\u0430\u043B\u0438\u0447\u0438\u0435 \u043A\u0430\u043A \u0444\u0438\u0448\u0438\u043D\u0433 \u2014 \u043F\u043E\u043B\u044C\u0437\u044B \u043D\u043E\u043B\u044C, \u0440\u0438\u0441\u043A \u0435\u0441\u0442\u044C. \u0423\u043D\u0438\u043A\u0430\u043B\u044C\u043D\u043E\u0441\u0442\u044C \u043F\u0438\u0441\u044C\u043C\u0430
+    # \u0434\u0430\u0451\u0442 \u0441\u043F\u0438\u043D\u0442\u0430\u043A\u0441; \u043D\u0438\u0436\u0435 \u2014 \u0442\u043E\u043B\u044C\u043A\u043E \u0431\u0435\u0437\u043E\u043F\u0430\u0441\u043D\u0430\u044F \u00AB\u043A\u043B\u0438\u0435\u043D\u0442\u043E\u043F\u043E\u0434\u043E\u0431\u043D\u0430\u044F\u00BB \u0432\u0430\u0440\u0438\u0430\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u044C HTML
+    # (\u0440\u0435\u0430\u043B\u044C\u043D\u044B\u0435 \u043F\u043E\u0447\u0442\u043E\u0432\u044B\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u0438 \u0441\u0430\u043C\u0438 \u043A\u043B\u0430\u0434\u0443\u0442 MSO/webkit-\u0441\u0442\u0438\u043B\u0438 \u0438 HTML-\u043A\u043E\u043C\u043C\u0435\u043D\u0442\u0430\u0440\u0438\u0438).
     if original_is_html:
-        entity_rate = _rnd.uniform(0.01, 0.05)
-        result = _randomize_html_entities(result, rate=entity_rate)
-
         result = _inject_css_noise(result)
 
         block_tags = ["</div>", "</p>", "</td>", "</tr>", "</th>", "</ul>", "</ol>", "</li>"]
@@ -454,19 +368,6 @@ def render(
             if found_positions:
                 idx = _rnd.choice(found_positions)
                 result = result[:idx] + comment + result[idx:]
-
-        _ZW_CHARS = ['\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF']
-        zw_count = _rnd.randint(2, 6)
-        text_parts = re.split(r'(<[^>]+>)', result)
-        text_indices = [i for i in range(0, len(text_parts), 2) if text_parts[i].strip()]
-        if text_indices:
-            for _ in range(zw_count):
-                idx = _rnd.choice(text_indices)
-                s = text_parts[idx]
-                if len(s) > 1:
-                    pos = _rnd.randint(1, len(s) - 1)
-                    text_parts[idx] = s[:pos] + _rnd.choice(_ZW_CHARS) + s[pos:]
-            result = ''.join(text_parts)
 
         def _randomize_whitespace(m):
             tag = m.group(0)
