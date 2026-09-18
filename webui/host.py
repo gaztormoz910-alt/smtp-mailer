@@ -545,7 +545,52 @@ class Api:
         self._recipients = []
         return {"total": 0}
 
-    # ── превью письма (как charly.cash/letter-preview) ──────────────────
+    # ── буфер обмена (надёжно, через Win32) ─────────────────────────────
+    def copy_to_clipboard(self, text: str = "") -> dict:
+        # Пишем в буфер обмена Windows напрямую через Win32 (CF_UNICODETEXT). Причина:
+        # окно pywebview грузит страницу с file:// — это НЕ secure context, поэтому
+        # navigator.clipboard/execCommand в JS молча не срабатывали и буфер оставался
+        # пустым. Питон-мост кладёт текст гарантированно (проверено записью+чтением).
+        text = "" if text is None else str(text)
+        try:
+            import ctypes
+            from ctypes import wintypes
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+            u = ctypes.windll.user32
+            k = ctypes.windll.kernel32
+            k.GlobalAlloc.restype = wintypes.HGLOBAL
+            k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            k.GlobalLock.restype = wintypes.LPVOID
+            k.GlobalLock.argtypes = [wintypes.HGLOBAL]
+            k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+            u.OpenClipboard.argtypes = [wintypes.HWND]
+            u.SetClipboardData.restype = wintypes.HANDLE
+            u.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+            data = text.encode("utf-16-le") + b"\x00\x00"
+            opened = False
+            for _ in range(20):  # буфер может быть кратко занят другим процессом
+                if u.OpenClipboard(None):
+                    opened = True
+                    break
+                time.sleep(0.01)
+            if not opened:
+                return {"ok": False, "error": "clipboard busy"}
+            try:
+                u.EmptyClipboard()
+                handle = k.GlobalAlloc(GMEM_MOVEABLE, len(data))
+                ptr = k.GlobalLock(handle)
+                ctypes.memmove(ptr, data, len(data))
+                k.GlobalUnlock(handle)
+                # После SetClipboardData владение памятью переходит системе — НЕ освобождаем.
+                u.SetClipboardData(CF_UNICODETEXT, handle)
+            finally:
+                u.CloseClipboard()
+            return {"ok": True, "len": len(text)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    # ── превью письма (как выглядит у получателя + метрики) ──────────────
     def preview_email(self, opts: dict | None = None) -> dict:
         opts = opts or {}
         name = (opts.get("name") or "").strip() or "Анна"
@@ -613,7 +658,7 @@ class Api:
         return {
             "from_name": sender_name, "from_email": from_email,
             "subject": subject, "preheader": preheader,
-            "html": body_html, "is_html": is_html_flag,
+            "html": body_html, "text": text, "is_html": is_html_flag,
             "format": "HTML" if is_html_flag else "Обычный текст",
             "metrics": metrics,
             "bodies": len(bodies), "subjects": self.content_mgr.subject_count,

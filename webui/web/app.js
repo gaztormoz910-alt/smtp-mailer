@@ -542,7 +542,7 @@ setInterval(() => { if (activeTab === "send" || activeTab === "stats") tick(); }
 const PV = { client: "gmail", device: "desktop", theme: "light", images: "on", index: -1, data: null };
 // Конфиг реального интерфейса каждого клиента: бренд-цвет, логотип, поиск, папки сайдбара
 // (на языке клиента), подпись «кому», кнопки действий. По ним clientHTML() строит узнаваемый
-// хром — как на charly.cash/letter-preview, а не одна рамка на всех.
+// хром — реалистичный интерфейс каждого клиента, а не одна рамка на всех.
 const CLIENTS = {
   gmail: { accent: "#c5221f", me: "я", logo: '<span class="mark">M</span>Gmail', search: "Поиск в почте",
     folders: [["✉", "Входящие", "on"], ["★", "Помеченные"], ["🕗", "Отложенные"], ["➤", "Отправленные"], ["🗎", "Черновики"]],
@@ -583,6 +583,74 @@ function segBind(id, attr, cb) {
     cb(b.dataset[attr]);
   });
 }
+// ── Копирование письма (для вставки во внешний тест доставляемости) ──────────
+// Клипборд с фолбэком: сначала Clipboard API, если недоступен (file:// в webview) —
+// скрытая textarea + execCommand('copy'). Если и это не вышло — открываем панель кода,
+// где пользователь копирует вручную (Ctrl+A/Ctrl+C). Так копирование работает всегда.
+async function copyText(text) {
+  text = text == null ? "" : String(text);
+  // 1) В реальном окне приложения пишем через Python-мост (Win32) — это работает всегда.
+  //    JS-буфер (navigator.clipboard/execCommand) в file://-окне молча не срабатывал и
+  //    оставлял буфер ПУСТЫМ, поэтому питоновский путь идёт ПЕРВЫМ.
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.copy_to_clipboard) {
+      const r = await window.pywebview.api.copy_to_clipboard(text);
+      if (r && r.ok) return true;
+    }
+  } catch (e) {}
+  // 2) Браузер/демо: Clipboard API
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  // 3) Фолбэк: скрытая textarea + execCommand
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); return ok;
+  } catch (e) { return false; }
+}
+function flashCopied(btn, ok) {
+  if (!btn) return;
+  const prev = btn.dataset.label || btn.textContent;
+  btn.dataset.label = prev;
+  btn.classList.add(ok ? "copied" : "copyfail");
+  btn.textContent = ok ? "✓ Скопировано" : "✕ Скопируй вручную";
+  setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied", "copyfail"); delete btn.dataset.label; }, 1400);
+}
+// Что реально уходит получателю в теле: HTML-код для HTML-писем, сырой текст для plain.
+function pvBodySource() {
+  const d = PV.data || {};
+  return d.is_html ? (d.html || "") : (d.text || "");
+}
+function pvFieldValue(kind) {
+  const d = PV.data || {};
+  if (kind === "body") return pvBodySource();
+  return d[kind] != null ? String(d[kind]) : "";
+}
+async function pvCopy(kind, btn) {
+  if (!PV.data) return;
+  const ok = await copyText(pvFieldValue(kind));
+  if (!ok && kind === "body") showCodePanel();  // не вышло — покажем код для ручной копии
+  flashCopied(btn, ok);
+}
+function showCodePanel() {
+  const wrap = $("#pv-code-wrap"), ta = $("#pv-code");
+  if (!wrap || !ta) return;
+  ta.value = pvBodySource();
+  wrap.hidden = false;
+  ta.focus(); ta.select();
+}
+$("#pv-copy-code").addEventListener("click", (e) => pvCopy("body", e.currentTarget));
+$("#pv-toggle-code").addEventListener("click", () => {
+  const wrap = $("#pv-code-wrap");
+  if (wrap.hidden) showCodePanel(); else wrap.hidden = true;
+});
+$("#pv-code-copy").addEventListener("click", async (e) => {
+  const ta = $("#pv-code"); ta.focus(); ta.select();
+  flashCopied(e.currentTarget, await copyText(ta.value));
+});
+$("#pv-code-hide").addEventListener("click", () => { $("#pv-code-wrap").hidden = true; });
+$$("[data-copy]").forEach((b) => b.addEventListener("click", (e) => pvCopy(b.dataset.copy, e.currentTarget)));
+
 function openPreview() {
   $("#preview-overlay").classList.add("show");
   api().body_titles().then((r) => {
@@ -609,6 +677,7 @@ function loadPreview() {
     }
     $("#pv-loading").style.display = "none"; $("#pv-client-frame").style.display = "block";
     renderPreview();
+    if (!$("#pv-code-wrap").hidden) $("#pv-code").value = pvBodySource();  // держим код в панели свежим
   });
 }
 // Строит РЕАЛИСТИЧНЫЙ хром выбранного клиента вокруг песочницы-iframe с телом письма.
@@ -819,7 +888,7 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     load_campaign_preset: (name) => P({ ok: true, name, cc: "cc@x.com", bcc: "", cc_pct: 20, bcc_pct: 0, control: "me@x.com", control_every_n: 5, consistent_links: true, email_only: false }),
     load_proxies_url: () => P({ added: 0, total: proxies.length, alive: 0, dead: 0 }),
     body_titles: () => P({ items: bodies.map((b, i) => ({ index: i, title: b.slice(0, 40) })) }),
-    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [] }),
+    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, text: "hey Анна, I saved something for you. take a look: https://example.com/offer", is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [] }),
     // Демо: показываем предупреждение о битом теле #3, чтобы жёлтая строка на карточке была видна.
     content_issues: () => P({ subjects: [], bodies: [{ n: 3, why: "незакрытая { ×1 (демо)" }] }),
     plan: () => P({ alive: 2, total: N_REC, rows: [{ email: "sender1@mail1.com", count: N_REC / 2 }, { email: "sender2@mail2.com", count: N_REC / 2 }], text: `2 отправителя разошлют ровно по ${N_REC / 2} писем.`, threads: 2, per_conn: N_REC / 2 }),

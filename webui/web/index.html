@@ -302,6 +302,8 @@
       <div class="modal-head">
         <h3><span>👁</span> Предпросмотр письма</h3>
         <button class="btn accent sm" id="pv-reroll">🎲 Другой вариант</button>
+        <button class="btn primary sm" id="pv-copy-code">📋 Копировать код</button>
+        <button class="btn ghost sm" id="pv-toggle-code">&lt;/&gt; Код</button>
         <button class="btn ghost sm" id="pv-close">✕ Закрыть</button>
       </div>
       <div class="modal-body">
@@ -329,12 +331,29 @@
           </div>
           <div class="pv-group"><div class="t">Формат</div>
             <div class="note" id="pv-format" style="font-family:var(--mono)">—</div></div>
+          <div class="pv-group"><div class="t">Скопировать письмо</div>
+            <div class="pv-copy">
+              <button class="btn ghost xs" data-copy="body">📋 HTML-код тела</button>
+              <button class="btn ghost xs" data-copy="subject">Тема</button>
+              <button class="btn ghost xs" data-copy="preheader">Прехедер</button>
+              <button class="btn ghost xs" data-copy="from_name">Имя отправителя</button>
+              <button class="btn ghost xs" data-copy="from_email">Email отправителя</button>
+            </div>
+            <div class="note">Скопируй поля и вставь в любой внешний тест доставляемости / анти-спам, чтобы увидеть оценку.</div>
+          </div>
         </aside>
         <div class="pv-main" id="pv-main">
           <div class="pv-warn" id="pv-warn" hidden></div>
           <div class="pv-loading" id="pv-loading">Рендер…</div>
           <!-- Реалистичный интерфейс клиента строится в app.js (clientHTML) — свой на каждого. -->
           <div class="client" id="pv-client-frame" style="display:none"></div>
+          <!-- Панель кода: гарантированный ручной способ скопировать письмо (Ctrl+A/Ctrl+C). -->
+          <div class="pv-code-wrap" id="pv-code-wrap" hidden>
+            <div class="pv-code-bar"><span id="pv-code-title">Код письма — выдели (Ctrl+A) и скопируй (Ctrl+C)</span>
+              <button class="btn ghost xs" id="pv-code-copy">📋 Копировать</button>
+              <button class="btn ghost xs" id="pv-code-hide">✕ Скрыть</button></div>
+            <textarea class="pv-code" id="pv-code" readonly spellcheck="false"></textarea>
+          </div>
         </div>
       </div>
     </div>

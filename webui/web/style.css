@@ -254,7 +254,7 @@ body.busy{cursor:progress}
 .pill-status.stop .dot{background:var(--error)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
-/* ── МОДАЛ ПРЕВЬЮ ПИСЬМА (charly-style) ── */
+/* ── МОДАЛ ПРЕВЬЮ ПИСЬМА ── */
 .overlay{
   position:fixed;inset:0;z-index:50;background:rgba(4,5,7,.72);backdrop-filter:blur(3px);
   display:none;align-items:stretch;justify-content:center;padding:28px;
@@ -289,7 +289,20 @@ body.busy{cursor:progress}
   border-radius:8px;padding:8px 11px;font-size:12px;margin-bottom:8px;line-height:1.4}
 .pv-warn{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.55);color:#ff9b9b;
   border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.45;width:100%;max-width:860px}
-/* Каркас превью: узнаваемый интерфейс каждого почтового клиента (как charly.cash) */
+/* Копирование письма для внешней проверки: мелкие кнопки полей + раскрываемая панель кода */
+.btn.xs{padding:4px 8px;font-size:11px}
+.pv-copy{display:flex;flex-wrap:wrap;gap:6px}
+.pv-copy .btn{flex:1 1 auto}
+.btn.copied{color:var(--accent)!important;border-color:rgba(74,222,128,.5)!important;background:var(--accent-bg)!important}
+.btn.copyfail{color:var(--warn)!important;border-color:rgba(251,191,36,.5)!important}
+.pv-code-wrap{width:100%;max-width:860px;display:flex;flex-direction:column;gap:6px}
+.pv-code-bar{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--dim)}
+.pv-code-bar span{margin-right:auto}
+.pv-code{width:100%;min-height:200px;resize:vertical;background:#0e0f13;color:var(--text);
+  border:1px solid var(--border2);border-radius:8px;padding:11px 13px;
+  font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre;overflow:auto}
+.pv-code:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
+/* Каркас превью: узнаваемый интерфейс каждого почтового клиента */
 .client{width:100%;max-width:860px;background:transparent;border-radius:12px;overflow:hidden;
   box-shadow:0 14px 44px rgba(0,0,0,.45)}
 .client.mobile{max-width:396px}
