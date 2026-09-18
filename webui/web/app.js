@@ -649,6 +649,34 @@ $("#pv-code-copy").addEventListener("click", async (e) => {
   flashCopied(e.currentTarget, await copyText(ta.value));
 });
 $("#pv-code-hide").addEventListener("click", () => { $("#pv-code-wrap").hidden = true; });
+// Чек-лист оценки: разворачивается по кнопке (в сайдбаре мало места).
+$("#pv-score-checks-btn").addEventListener("click", () => {
+  const box = $("#pv-score-checks"), btn = $("#pv-score-checks-btn");
+  box.hidden = !box.hidden;
+  btn.textContent = box.hidden ? "Показать чек-лист" : "Скрыть чек-лист";
+});
+// РАЗБРОС ПО ВАРИАНТАМ: честный ответ на «каждый раз разный результат» — раскрываем
+// 40 писем из тех же шаблонов и показываем мин/медиану/макс + худший пример.
+$("#pv-variance-btn").addEventListener("click", () => {
+  const box = $("#pv-variance"), btn = $("#pv-variance-btn");
+  box.hidden = false; box.innerHTML = `<div class="note">Считаю 40 вариантов…</div>`;
+  btn.disabled = true;
+  api().score_variants(40).then((r) => {
+    btn.disabled = false;
+    if (!r || !r.available) { box.innerHTML = `<div class="note">Разброс не посчитать: ${esc((r && r.reason) || "нет данных")}</div>`; return; }
+    const gcol = (v) => v >= 66 ? "#4ade80" : v >= 50 ? "#fbbf24" : "#f87171";
+    const w = r.worst || {};
+    box.innerHTML = `<div class="pv-var-row">
+        <span class="v" style="color:${gcol(r.min)}">min ${r.min}</span>
+        <span class="v">медиана ${r.median}</span>
+        <span class="v" style="color:${gcol(r.max)}">max ${r.max}</span>
+        <span class="n">по ${r.count}</span></div>
+      <div class="pv-var-worst"><b>Худший вариант (${w.overall}/${esc(w.grade || "")}):</b>
+        <div class="s">тема: «${esc(w.subject || "")}»</div>
+        ${(w.fails || []).slice(0, 5).map((f) => `<div class="it">− ${esc(f)}</div>`).join("")}</div>
+      <div class="note">Разброс = разные раскрытия спинтакса. Чем ближе min к max, тем стабильнее шаблоны.</div>`;
+  }).catch((e) => { btn.disabled = false; box.innerHTML = `<div class="note">Ошибка: ${esc(String(e))}</div>`; });
+});
 $$("[data-copy]").forEach((b) => b.addEventListener("click", (e) => pvCopy(b.dataset.copy, e.currentTarget)));
 
 function openPreview() {
@@ -676,9 +704,57 @@ function loadPreview() {
       else { w.hidden = true; }
     }
     $("#pv-loading").style.display = "none"; $("#pv-client-frame").style.display = "block";
+    renderScore(d.score);
+    $("#pv-variance").hidden = true;  // при смене тела прошлый разброс уже неактуален
     renderPreview();
     if (!$("#pv-code-wrap").hidden) $("#pv-code").value = pvBodySource();  // держим код в панели свежим
   });
+}
+// Панель честной оценки письма (открываемость/кликабельность/доставляемость + контраст).
+// Считает локальный скорер (webui/letter_score.py) — тот же разбор, что и внешние тестеры,
+// без отправки контента куда-либо. Пороги: A≥82 B≥66 C≥50 D≥35 F.
+function renderScore(s) {
+  const box = $("#pv-score"), checksBtn = $("#pv-score-checks-btn"), checksBox = $("#pv-score-checks");
+  if (!box) return;
+  checksBox.hidden = true; checksBtn.textContent = "Показать чек-лист";
+  if (!s) { box.innerHTML = `<div class="note">Загрузите темы и тела — тогда посчитаю оценку.</div>`; checksBtn.hidden = true; return; }
+  if (s.error) { box.innerHTML = `<div class="note">Оценка недоступна: ${esc(s.error)}</div>`; checksBtn.hidden = true; return; }
+  const bar = (label, v) => {
+    const col = v >= 70 ? "#4ade80" : v >= 50 ? "#fbbf24" : "#f87171";
+    return `<div class="pv-sc-bar"><span class="l">${label}</span>
+      <span class="tr"><span class="fl" style="width:${v}%;background:${col}"></span></span><b>${v}</b></div>`;
+  };
+  const ce = s.ctr_estimate || {};
+  let html = `<div class="pv-sc-top">
+      <div class="pv-sc-grade" style="color:${s.grade_color};border-color:${s.grade_color}">${esc(s.grade)}</div>
+      <div class="pv-sc-num"><b>${s.overall}</b><span>/100</span>
+        <div class="pv-sc-ctr">CTR ~ ${esc(ce.val || "?")} <span class="${ce.up ? "up" : "dn"}">${esc(ce.tag || "")}</span></div></div>
+    </div>
+    ${bar("Доставляемость", s.deliverability)}
+    ${bar("Открываемость", s.openrate)}
+    ${bar("Кликабельность", s.clickability)}
+    <div class="pv-sc-verdict">${esc(s.verdict || "")}</div>`;
+  const c = s.contrast || {};
+  if (c && c.ok === false) html += `<div class="pv-sc-flag bad">${esc(c.text)}</div>`;
+  else if (c && c.ratio) html += `<div class="pv-sc-flag ok">✓ ${esc(c.text)}</div>`;
+  // структурные замечания (DOCTYPE/charset/JS/размер/ссылки) — коротко
+  const st = s.structure || {};
+  if (st.issues && st.issues.length) {
+    html += `<div class="pv-sc-struct"><b>Структура ${typeof st.score === "number" ? st.score : ""}:</b> ` +
+      st.issues.slice(0, 4).map((i) => `<div class="it ${esc(i.t || "")}">${esc(i.text)}</div>`).join("") + `</div>`;
+  }
+  box.innerHTML = html;
+  // Чек-лист (+/−) прячем под кнопку — в сайдбаре мало места.
+  const rows = [];
+  const groups = [["Открываемость", "openrate"], ["Кликабельность", "clickability"], ["Доставляемость", "deliverability"]];
+  const ch = s.checks || {};
+  for (const [title, key] of groups) {
+    rows.push(`<div class="pv-ck-h">${title}</div>`);
+    for (const it of (ch[key] || []))
+      rows.push(`<div class="pv-ck ${it.ok ? "y" : "n"}">${it.ok ? "＋" : "−"} ${esc(it.text)}</div>`);
+  }
+  checksBox.innerHTML = rows.join("");
+  checksBtn.hidden = false;
 }
 // Строит РЕАЛИСТИЧНЫЙ хром выбранного клиента вокруг песочницы-iframe с телом письма.
 function renderPreview() {
@@ -888,7 +964,8 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     load_campaign_preset: (name) => P({ ok: true, name, cc: "cc@x.com", bcc: "", cc_pct: 20, bcc_pct: 0, control: "me@x.com", control_every_n: 5, consistent_links: true, email_only: false }),
     load_proxies_url: () => P({ added: 0, total: proxies.length, alive: 0, dead: 0 }),
     body_titles: () => P({ items: bodies.map((b, i) => ({ index: i, title: b.slice(0, 40) })) }),
-    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, text: "hey Анна, I saved something for you. take a look: https://example.com/offer", is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [] }),
+    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, text: "hey Анна, I saved something for you. take a look: https://example.com/offer", is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [], score: { overall: 62, grade: "B", grade_color: "#86efac", deliverability: 100, openrate: 48, clickability: 55, verdict: "Письмо рабочее, но есть точки роста.", ctr_estimate: { val: "0.6-1.0%", tag: "↓ чуть ниже нормы", up: false, norm: "0.8-1.5%" }, checks: { openrate: [{ ok: true, text: "Личное обращение в теме: есть" }, { ok: false, text: "Вопрос в теме: нет" }], clickability: [{ ok: true, text: "Длина тела: 120 симв. (норма 50-600)" }, { ok: false, text: "Анкор без глагола: \"take a look\"" }], deliverability: [{ ok: true, text: "Длина темы: 30 симв. (норма 20-70)" }] }, tips: [], issues: [], contrast: { ok: true, ratio: 8.1, text: "Контраст в норме (минимум 8.1:1)" }, structure: { score: 92, status: "отлично", issues: [{ t: "info", text: "Нет <meta charset> — не страшно (MIME задаёт utf-8)" }] }, vertical: "dating", anchor: "take a look" } }),
+    score_variants: () => P({ available: true, count: 40, min: 41, median: 58, max: 79, worst: { overall: 41, grade: "D", subject: "you almost missed this...", anchor: "take a look", fails: ["Конкретика / интрига в теме: нет", "Вопрос в теме: нет", "Эмодзи в теме: нет", "Призыв к действию: нет", "Анкор без глагола: \"take a look\""] } }),
     // Демо: показываем предупреждение о битом теле #3, чтобы жёлтая строка на карточке была видна.
     content_issues: () => P({ subjects: [], bodies: [{ n: 3, why: "незакрытая { ×1 (демо)" }] }),
     plan: () => P({ alive: 2, total: N_REC, rows: [{ email: "sender1@mail1.com", count: N_REC / 2 }, { email: "sender2@mail2.com", count: N_REC / 2 }], text: `2 отправителя разошлют ровно по ${N_REC / 2} писем.`, threads: 2, per_conn: N_REC / 2 }),
