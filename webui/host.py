@@ -101,6 +101,22 @@ def _plural(n: int, one: str, few: str, many: str) -> str:
     return many
 
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_DOCTYPE_RE = re.compile(r"<!doctype[^>]*>", re.I)
+
+
+def _body_title(b: str) -> str:
+    # Заголовок тела для списков/выпадашки: первый ВИДИМЫЙ текст, а не «<!DOCTYPE html>»
+    # или «<table …>». Раньше брали первую строку — у HTML-тел это всегда тег, и все
+    # заголовки выглядели одинаково. Срезаем DOCTYPE и теги, схлопываем пробелы.
+    if not b:
+        return ""
+    t = _DOCTYPE_RE.sub(" ", b)
+    t = _TAG_RE.sub(" ", t)
+    t = " ".join(t.split())
+    return t
+
+
 def _senders(n: int) -> str:
     return f"{n} " + _plural(n, "отправитель", "отправителя", "отправителей")
 
@@ -277,9 +293,9 @@ class Api:
         elif kind == "bodies":
             total = cm.body_count
             off, lim = _win(total, offset, limit)
-            # По каждому телу — первая строка (заголовок блока), считаем по окну.
-            text = "\n".join((b.splitlines()[0] if b else "")
-                             for b in cm.slice_lines("bodies", off, lim))
+            # По каждому телу — первый ВИДИМЫЙ текст (не тег/DOCTYPE), считаем по окну.
+            text = "\n".join(_body_title(b)[:80] or f"Тело #{off + j + 1}"
+                             for j, b in enumerate(cm.slice_lines("bodies", off, lim)))
         else:
             total, off, lim, text = 0, 0, _PAGE, ""
         return {"kind": kind, "total": total, "offset": off, "limit": lim,
@@ -724,11 +740,13 @@ class Api:
                 "worst": worst}
 
     def body_titles(self) -> dict:
-        # Список загруженных тел для выпадашки в превью (первая строка как заголовок).
+        # Список загруженных тел для выпадашки в превью. Заголовок — первый ВИДИМЫЙ текст
+        # (через _body_title), а не «<!DOCTYPE html>»/«<table …>»: иначе все HTML-тела в
+        # выпадашке выглядят одинаково и выбрать нужное невозможно.
         titles = []
         for i, b in enumerate(self.content_mgr.bodies):
-            first = (b.splitlines()[0] if b else "").strip()
-            titles.append({"index": i, "title": (first[:60] or f"Тело #{i + 1}")})
+            title = _body_title(b)[:60]
+            titles.append({"index": i, "title": (title or f"Тело #{i + 1}")})
         return {"items": titles}
 
     # ── план распределения ──────────────────────────────────────────────

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 
 # ── профили ниш ──────────────────────────────────────────────────────────────
 # Ниша проекта — Dating (см. CLAUDE.md), она реализована точно. Crypto/Finance —
@@ -357,12 +358,6 @@ def _ratio(a, b) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-def _style_of(tag_html: str) -> str:
-    m = re.search(r'style\s*=\s*"([^"]*)"', tag_html, re.I) or \
-        re.search(r"style\s*=\s*'([^']*)'", tag_html, re.I)
-    return m.group(1) if m else ""
-
-
 def _css(style: str, prop: str):
     # Граница перед именем свойства обязательна: иначе "color" ловится внутри
     # "background-color", и контейнер выглядит как «текст цвета фона» (контраст 1:1).
@@ -370,46 +365,90 @@ def _css(style: str, prop: str):
     return _parse_color(m.group(1)) if m else None
 
 
+# Void-теги (без закрывающего) — не создают контекст наследования.
+_VOID = {"br", "img", "hr", "meta", "link", "input", "area", "base",
+         "col", "embed", "source", "track", "wbr"}
+_CONTRAST_MIN = 2.5  # ниже — текст практически невидим («пустое» письмо)
+
+
+class _ContrastScan(HTMLParser):
+    """Идём по дереву со стеком (тег, цвет, фон). Цвет/фон НАСЛЕДУЮТСЯ от родителя,
+    если у элемента не заданы свои — как в реальном рендере. У КАЖДОГО текстового узла
+    считаем контраст его эффективного цвета к эффективному фону. Так ловится и текст без
+    своего color, унаследовавший светлый цвет от родителя на светлом фоне (его старая
+    версия чекера пропускала, а серый футер «маскировал» проблему как минимум)."""
+
+    def __init__(self, page_bg):
+        super().__init__(convert_charrefs=True)
+        self.stack = [("", None, page_bg)]  # (tag, color|None, bg)
+        self.results = []  # список (kind, ratio) по каждому видимому текст-узлу
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in _VOID:
+            return
+        style = dict(attrs).get("style") or ""
+        _, pcol, pbg = self.stack[-1]
+        col = _css(style, "color") or pcol
+        bg = _css(style, "background-color") or _css(style, "background") or pbg
+        self.stack.append((tag, col, bg))
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in _VOID or len(self.stack) == 1:
+            return
+        # Закрываем до ближайшего совпадающего открытого тега (терпим кривую вёрстку).
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i][0] == tag:
+                del self.stack[i:]
+                return
+
+    def handle_data(self, data):
+        if not data or not data.strip():
+            return
+        _, col, bg = self.stack[-1]
+        if col is None:  # цвет нигде не задан — клиент нарисует контрастно, не наша забота
+            return
+        is_link = any(f[0] == "a" for f in self.stack)
+        self.results.append(("кнопка/ссылка" if is_link else "текст", _ratio(col, bg)))
+
+
 def check_contrast(html: str) -> dict:
-    """Ищет невидимый текст/кнопку: цвет ≈ фон. Порог контраста 2.5 (ниже — «пустое»)."""
-    # Фон письма: первый background-color/background среди контейнеров.
+    """Проверяет КАЖДЫЙ текстовый блок письма (с учётом наследования цвета/фона) на
+    невидимость: цвет ≈ фон. Флагует, если ХОТЯ БЫ один блок ниже порога 2.5:1 — низкий
+    серый футер один по себе письмо не «зачищает», но реально невидимый текст ловится."""
+    # Фон-«по умолчанию» для корня: первый явный background среди контейнеров, иначе белый.
     page_bg = None
     for m in re.finditer(r'style\s*=\s*"([^"]*)"', html, re.I):
-        st = m.group(1)
-        c = _css(st, "background-color") or _css(st, "background")
+        c = _css(m.group(1), "background-color") or _css(m.group(1), "background")
         if c:
             page_bg = c
             break
     if page_bg is None:
-        page_bg = (255, 255, 255)  # клиент по умолчанию рисует на белом
+        page_bg = (255, 255, 255)
 
-    worst = 21.0
-    worst_kind = None
-    # Текстовые элементы с явным color.
-    for m in re.finditer(r"<(p|h[1-6]|span|div|td|a|li|b|strong)\b([^>]*)>", html, re.I):
-        tag = m.group(1).lower()
-        attrs = m.group(2)
-        st = _style_of("<x " + attrs + ">")
-        color = _css(st, "color")
-        if color is None:
-            continue
-        own_bg = _css(st, "background-color") or _css(st, "background")
-        bg = own_bg or page_bg
-        r = _ratio(color, bg)
-        if r < worst:
-            worst = r
-            worst_kind = "кнопка/ссылка" if tag == "a" else "текст"
-
-    if worst >= 20.0:
+    scan = _ContrastScan(page_bg)
+    try:
+        scan.feed(html)
+    except Exception:
+        pass
+    res = scan.results
+    if not res:
         return {"ok": True, "ratio": None,
                 "text": "Контраст не проверить (нет явных цветов) — клиент нарисует по умолчанию"}
-    ok = worst >= 2.5
-    if ok:
-        return {"ok": True, "ratio": round(worst, 2),
-                "text": f"Контраст в норме (минимум {round(worst, 2)}:1)"}
-    return {"ok": False, "ratio": round(worst, 2),
-            "text": f"⚠ {worst_kind} почти невидим(а): контраст {round(worst, 2)}:1 — "
-                    f"у получателя это место будет «пустым». Смени цвет."}
+
+    worst = round(min(r for _, r in res), 2)
+    invisible = [(k, r) for k, r in res if r < _CONTRAST_MIN]
+    total = len(res)
+    if not invisible:
+        return {"ok": True, "ratio": worst, "count": 0,
+                "text": f"Контраст в норме (все {total} текст. блоков ≥{_CONTRAST_MIN}:1, минимум {worst}:1)"}
+    kinds = sorted({k for k, _ in invisible})
+    plural = "ы" if len(invisible) > 1 else ""
+    return {"ok": False, "ratio": worst, "count": len(invisible),
+            "text": f"⚠ {len(invisible)} из {total} текст. блоков почти невидим{plural} "
+                    f"({', '.join(kinds)}): контраст до {worst}:1 — у получателя это будет "
+                    f"«пустым». Смени цвет (светлый фон → тёмный текст, тёмный фон → светлый)."}
 
 
 # ── структура (как рендер-тестеры: DOCTYPE/charset/unsub/размер/ссылки/JS) ────
