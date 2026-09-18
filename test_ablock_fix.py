@@ -1,59 +1,36 @@
-import sys
-sys.path.insert(0, '.')
+# -*- coding: utf-8 -*-
+# Ручной регресс-тест контента (2026). Раньше здесь проверялось, что омоглифы/entities
+# не ломают <a>. Эти приёмы УДАЛЕНЫ (фильтры 2026 детектят их как фишинг), поэтому тест
+# теперь доказывает ОБРАТНОЕ: движок их больше НЕ добавляет, а ссылки и спинтакс целы.
+import sys, io, re
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+sys.path.insert(0, ".")
+from core.content import render
 
-from core.content import _replace_homoglyphs, _randomize_html_entities
+VARS = {"name": "John", "email": "john@mail.com", "senderName": "Sam"}
+LINKS = {"": ["https://example.com/link?ref=abc123"]}
+ZW = ["​", "‌", "‍", "⁠", "﻿"]
+ENT = re.compile(r"&#x?[0-9A-Fa-f]+;")
+ok = True
 
-html = '''<div style="font-family: Arial; max-width: 560px; margin: 0 auto; padding: 20px;">
-<p style="font-size: 15px;">hey John, I stumbled on your profile the other day and I kept thinking about it.</p>
-<p style="font-size: 15px;">I can't explain it here. just see for yourself: <a href="https://example.com/link?ref=abc123" style="color: #1A73E8;">https://example.com/link?ref=abc123</a></p>
-<p style="font-size: 14px; color: #888;">cheers, Jennifer</p>
-<p style="font-size: 14px; color: #888;">btw: <a href="https://example.com/ps?id=xyz" style="color: #1A73E8;">https://example.com/ps?id=xyz</a></p>
-</div>'''
-
-print("=== ТЕСТ 1: Омоглифы ===")
-for trial in range(20):
-    result = _replace_homoglyphs(html)
-    if '__ABLOCK' in result:
-        print(f"  ❌ ПРОВАЛ (trial {trial}): маркер ABLOCK утёк!")
-        idx = result.find('__ABLOCK')
-        print(f"     ...{result[max(0,idx-20):idx+30]}...")
-        break
-    if 'example.com' not in result:
-        print(f"  ❌ ПРОВАЛ (trial {trial}): ссылка пропала!")
-        break
+print("=== ТЕСТ 1: plain-text — нет омоглифов и zero-width ===")
+plain = "hey {{name}}, {i saw your note|someone left a message}. {here|}: [[LINK]]"
+for t in range(20):
+    r = render(plain, VARS, link_pools=LINKS, is_subject=False)
+    if not r.isascii() or any(z in r for z in ZW) or "example.com" not in r:
+        print(f"  ❌ ПРОВАЛ (trial {t}): {r!r}"); ok = False; break
 else:
-    print("  ✅ 20/20 — ABLOCK маркеры НЕ утекают, ссылки на месте")
+    print("  ✅ 20/20 — вывод чистый ASCII, без zero-width, ссылка на месте")
 
-print()
-print("=== ТЕСТ 2: Entity Randomization ===")
-for trial in range(20):
-    result = _randomize_html_entities(html, rate=0.15)
-    if '__ENTPROT' in result:
-        print(f"  ❌ ПРОВАЛ (trial {trial}): маркер ENTPROT утёк!")
-        break
-    if 'example.com' not in result:
-        print(f"  ❌ ПРОВАЛ (trial {trial}): ссылка повреждена!")
-        import re
-        a_tags = re.findall(r'<a[^>]*>.*?</a>', result, re.DOTALL)
-        for t in a_tags:
-            print(f"     Найден <a>: {t[:80]}")
-        break
-    if 'href="https://example.com/' not in result:
-        print(f"  ❌ ПРОВАЛ (trial {trial}): href повреждён!")
-        break
+print("\n=== ТЕСТ 2: HTML — нет zero-width/entity-букв, <a> и ссылка целы ===")
+html = ('<div style="font-size:{15|16}px"><p>hey {{name}}, {check this|take a look}</p>'
+        '<a href="[[LINK]]" style="color:#39f">{see it|open}</a></div>')
+for t in range(20):
+    r = render(html, VARS, link_pools=LINKS, is_subject=False)
+    if any(z in r for z in ZW) or ENT.search(r) or "<a href=" not in r or "example.com" not in r:
+        print(f"  ❌ ПРОВАЛ (trial {t}): {r!r}"); ok = False; break
 else:
-    print("  ✅ 20/20 — entity рандомизация НЕ ломает <a> теги")
+    print("  ✅ 20/20 — без zero-width, без entity-букв, <a> и ссылка целы")
 
-print()
-print("=== ТЕСТ 3: Полный конвейер (омоглифы → entities) ===")
-for trial in range(20):
-    step1 = _replace_homoglyphs(html)
-    step2 = _randomize_html_entities(step1, rate=0.10)
-    if '__ABLOCK' in step2 or '__ENTPROT' in step2:
-        print(f"  ❌ ПРОВАЛ (trial {trial}): маркер утёк в финальный результат!")
-        break
-    if 'example.com' not in step2:
-        print(f"  ❌ ПРОВАЛ (trial {trial}): ссылка потеряна!")
-        break
-else:
-    print("  ✅ 20/20 — полный конвейер работает корректно")
+print("\nOK" if ok else "\nFAILED")
+sys.exit(0 if ok else 1)

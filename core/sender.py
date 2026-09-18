@@ -140,6 +140,26 @@ def _generate_message_id(domain: str, sender_email: str = "") -> str:
         ]
     return rnd.choice(templates)()
 
+
+def _vary_sender_name(name: str, rnd: random.SystemRandom) -> str:
+    # Лёгкая «человеческая» вариативность отображаемого имени: у живых людей оно приходит
+    # в разном виде (полное / только имя / имя+инициал / строчными «на бегу»). Это анти-
+    # фингерпринт БЕЗ обфускации — фильтры такое не наказывают. Пустое имя не трогаем
+    # (тогда в письме будет только email). Мусор не порождаем — все ветки дают валидное имя.
+    if not name:
+        return name
+    r = rnd.random()
+    parts = name.split()
+    if len(parts) >= 2 and parts[0] and parts[1]:
+        if r < 0.15:
+            return parts[0]                        # только имя: «Sarah»
+        if r < 0.25:
+            return f"{parts[0]} {parts[1][0]}."    # имя + инициал: «Sarah M.»
+    if r >= 0.80:
+        return name.lower()                        # иногда строчными: «sarah miller»
+    return name                                    # чаще всего — как задано
+
+
 def build_message(
     from_email: str,
     to_email: str,
@@ -191,6 +211,7 @@ def build_message(
         msg.attach(part_plain)
         msg.attach(part_html)
 
+    sender_name = _vary_sender_name(sender_name, rnd)
     from_header = formataddr((sender_name, from_email)) if sender_name else from_email
     
     jitter_sec = rnd.randint(-300, 0)
@@ -238,6 +259,11 @@ def build_message(
         header_pool["Cc"] = cc_header
     if content_lang:
         header_pool["Content-Language"] = content_lang
+
+    # Reply-To как у реальной почты (обычно = From). Иногда, не всегда — сам факт наличия
+    # у части писем выглядит естественно и не является триггером.
+    if rnd.random() < 0.35:
+        header_pool["Reply-To"] = from_header
 
     for key in order:
         if key in header_pool:
