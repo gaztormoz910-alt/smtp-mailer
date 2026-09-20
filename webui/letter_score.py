@@ -35,17 +35,65 @@ VERTICALS = {
             (30, "0.3-0.6%", "↓ ниже нормы", False),
             (0,  "< 0.3%",   "↓ значительно ниже нормы", False),
         ],
-        "keywords": ["meet", "match", "single", "love", "date", "attractive", "profile",
-                     "view", "like", "message", "знакомства", "встреча", "одинокие",
-                     "красивые", "свидание", "профиль", "написала", "написал", "посмотрела",
-                     "посмотрел", "понравилось", "познакомиться", "пропал", "заходила",
-                     "заходил", "ждёт", "скучает", "скучала", "скучал", "смотрел"],
-        "intrigue": ["раз", "снова", "кое-что", "кое что", "случилось", "пропал", "написала",
-                     "смотрела", "заходила", "ждёт", "скучает", "видела", "думает", "забыла",
-                     "нашла", "нашёл", "ответил", "позвонила", "написал"],
-        "emo": ["скучаю", "пропал", "ждёт", "написала", "понравился", "нравишься", "давно",
-                "хочу", "мечтаю", "нравится", "красивая", "красивый", "позвони", "ответь",
-                "скучает", "волнуюсь", "соскучилась", "соскучился", "думаю о тебе", "думаю о"],
+        # Слова-маркеры ниши. Достаточно БАЗОВОЙ формы/одного синонима — морфология
+        # (стеммер ниже) сама сведёт «посмотрел/посмотрела/посмотрю/посмотрят» к одному
+        # корню, а перечисленные синонимы покрывают РАЗНЫЕ слова одного смысла. Поэтому
+        # тут не нужно перечислять все падежи/времена — только разные корни/синонимы.
+        "keywords": [
+            # EN — профиль/просмотры/симпатии/пара/сообщения/близость/люди/внешность/активность
+            "profile", "account", "page", "photo", "picture", "pic", "album",
+            "view", "viewed", "viewer", "seen", "saw", "look", "glance", "peek", "peeked",
+            "checked", "spotted", "noticed", "browse",
+            "like", "liked", "heart", "fav", "favorite", "favourite", "wink", "winked",
+            "match", "matched", "matches", "compatible", "chemistry",
+            "message", "msg", "dm", "text", "texted", "note", "chat", "chatted", "reply",
+            "inbox", "conversation", "flirt", "flirted",
+            "nearby", "near", "close", "local", "area", "around", "neighborhood", "distance",
+            "single", "singles", "available", "meet", "meetup", "hookup", "date", "dating",
+            "crush", "admirer", "secret", "stranger", "member", "user", "connection", "request",
+            "someone", "somebody", "girl", "woman", "lady", "guy", "man", "people",
+            "hot", "cute", "sexy", "attractive", "beautiful", "gorgeous", "pretty", "handsome",
+            "online", "active", "activity", "notification", "alert", "invite", "invitation",
+            # RU
+            "профиль", "анкета", "страница", "фото", "фотка", "снимок", "фотография",
+            "просмотр", "посмотрел", "смотрел", "глянул", "заглянул", "увидел", "видел",
+            "заметил", "лайк", "понравился", "нравишься", "симпатия", "сердечко", "подмигнул",
+            "пара", "совпадение", "мэтч", "сообщение", "написал", "ответ", "переписка", "чат",
+            "рядом", "поблизости", "недалеко", "близко", "район", "расстояние",
+            "одинокий", "одинокая", "свободна", "свободен", "встреча", "свидание", "знакомство",
+            "знакомства", "познакомиться", "поклонник", "тайный", "незнакомка", "незнакомец",
+            "участник", "пользователь", "кто-то", "девушка", "женщина", "парень", "мужчина",
+            "красивая", "красивый", "симпатичная", "милашка", "горячая", "привлекательная",
+            "онлайн", "активность", "уведомление", "запрос", "приглашение", "приглашает",
+        ],
+        # Интрига/конкретика в теме — «есть о чём стало любопытно». Числа считаются отдельно
+        # (регуляркой), тут — слова, создающие curiosity gap.
+        "intrigue": [
+            # EN
+            "something", "someone", "somebody", "guess", "believe", "wont", "turns",
+            "apparently", "notice", "noticed", "spotted", "wait", "almost", "nearly", "barely",
+            "missed", "finally", "again", "twice", "secret", "weird", "strange", "unexpected",
+            "surprise", "happened", "remember", "forgot", "mistake", "accident", "honestly",
+            "actually", "recently", "lately", "still", "quietly", "somehow",
+            # RU
+            "раз", "снова", "опять", "кое-что", "что-то", "кто-то", "случилось", "произошло",
+            "пропал", "написал", "смотрел", "заходил", "ждёт", "скучает", "видел", "думает",
+            "забыл", "нашёл", "ответил", "позвонил", "угадай", "представляешь", "оказывается",
+            "заметил", "странно", "неожиданно", "вдруг", "наконец", "тайна", "секрет", "помнишь",
+            "недавно", "почему-то",
+        ],
+        # Эмоциональные триггеры — тёплое/личное чувство (НЕ нейтральные факты).
+        "emo": [
+            # EN
+            "miss", "missing", "missed", "lonely", "alone", "want", "crave", "wish", "dream",
+            "thinking", "care", "heart", "waiting", "hope", "crush", "attracted", "nervous",
+            "excited", "blush", "need", "feelings", "adore", "love", "kiss", "hug", "cant",
+            # RU
+            "скучаю", "скучает", "соскучился", "соскучилась", "одиноко", "хочу", "хочет",
+            "мечтаю", "мечтает", "жду", "ждёт", "надеюсь", "волнуюсь", "переживаю", "нравишься",
+            "нравится", "влюбилась", "влюбился", "сердце", "чувства", "тянет", "обнять",
+            "поцеловать", "думаю о тебе", "думаю о", "не могу забыть", "не могу перестать",
+        ],
     },
     "crypto": {
         "name": "Crypto", "avg_ctr": "0.6-1.2%",
@@ -72,44 +120,81 @@ _GENERIC_CTR = [(78, "выше нормы", "↑ выше нормы", True), (6
                 (46, "чуть ниже", "↓ чуть ниже нормы", False), (30, "ниже", "↓ ниже нормы", False),
                 (0, "низкий", "↓ значительно ниже нормы", False)]
 
-# Стоп-слова (тема — строго; тело — мягче). Совпадает с базовым набором фильтров.
-SPAM_SUBJ = ["free", "бесплатно", "guaranteed", "гарантировано", "winner", "победитель",
-             "congratulations", "поздравляем", "urgent", "срочно", "act now", "click here",
-             "жми сюда", "no risk", "без риска", "casino", "казино", "prize", "приз", "award",
-             "selected", "выбран", "выбрана", "100%", "make money", "заработай", "earn",
-             "заработок", "$$$", "!!!!"]
+# Стоп-слова (тема — строго; тело — мягче). Фокус — классические денежные/скам/фарма-
+# триггеры фильтров; НЕ добавляем сюда неоднозначные dating-слова, чтобы не штрафовать
+# легитимные личные письма. Многословные фразы и символьные («$$$», «100%») ищутся
+# подстрокой, одиночные слова — по стему (поэтому «free» больше НЕ ловит «freedom»).
+SPAM_SUBJ = ["free", "бесплатно", "freebie", "guaranteed", "guarantee", "гарантировано",
+             "гарантия", "winner", "победитель", "congratulations", "поздравляем",
+             "поздравляю", "urgent", "срочно", "act now", "click here", "жми сюда",
+             "no risk", "без риска", "risk-free", "casino", "казино", "prize", "приз",
+             "award", "награда", "selected", "выбран", "выбрана", "100%", "make money",
+             "заработай", "earn", "заработок", "$$$", "!!!!", "bonus", "бонус", "jackpot",
+             "джекпот", "lottery", "лотерея", "viagra", "cialis", "pharmacy", "аптека",
+             "wire transfer", "million", "миллион", "cash", "наличные", "credit card"]
 SPAM_BODY = SPAM_SUBJ + ["work from home", "unlimited", "once in a lifetime",
                          "limited time offer", "risk free", "no cost", "free money",
                          "click below", "order now", "buy now", "subscribe", "unsubscribe",
-                         "remove from list", "opt out"]
+                         "remove from list", "opt out", "dear friend", "this is not spam",
+                         "wire transfer", "bank account", "verify your account",
+                         "suspended account", "weight loss", "lose weight", "make money fast",
+                         "double your", "100% free", "no strings"]
 
-# Призыв к действию и «общие» (слабые) анкоры.
-_CTA_GENERIC = ["click", "нажми", "перейди", "жми", "смотреть", "посмотри", "смотри",
-                "получить", "получи", "открыть", "открой", "узнать", "узнай",
-                "зарегистрируйся", "забрать", "забери", "активировать", "активируй",
-                "войди", "зайди", "прочитай", "ответь", "проверь"]
+# Призыв к действию (глаголы). Одного-двух синонимов достаточно — стеммер сведёт формы
+# («смотри/посмотри/посмотрю/посмотрел», «check/checked/checking»). EN+RU широко.
+_CTA_GENERIC = [
+    # EN
+    "click", "tap", "press", "go", "visit", "open", "see", "view", "look", "watch", "read",
+    "check", "find", "get", "grab", "take", "claim", "join", "start", "begin", "discover",
+    "explore", "browse", "unlock", "reveal", "learn", "meet", "reply", "answer", "respond",
+    "message", "chat", "connect", "swipe", "activate", "register", "download", "follow", "catch",
+    # RU
+    "нажми", "кликни", "жми", "перейди", "зайди", "открой", "посмотри", "смотри", "глянь",
+    "взгляни", "читай", "прочитай", "проверь", "найди", "получи", "забери", "возьми",
+    "присоединяйся", "начни", "узнай", "познакомься", "ответь", "напиши", "свяжись", "листай",
+    "активируй", "зарегистрируйся", "скачай", "подпишись", "лови", "успей", "открыть",
+    "посмотреть", "смотреть", "получить", "узнать", "ответить", "написать", "познакомиться",
+]
 _CTA_BY_VERT = {
-    "dating": ["meet", "message", "view", "profile", "chat", "date", "познакомиться",
-               "написать", "посмотреть", "смотреть", "ответить", "открыть"],
+    "dating": ["meet", "message", "view", "profile", "chat", "date", "wink", "flirt",
+               "reply", "swipe"],
     "crypto": ["invest", "buy", "trade", "claim", "check", "инвестировать", "купить",
-               "получить", "посмотреть", "проверить", "войти", "смотреть"],
-    "finance": ["apply", "check", "get", "save", "claim", "подать", "проверить",
-                "получить", "сэкономить", "узнать", "смотреть"],
+               "трейд", "вложить"],
+    "finance": ["apply", "check", "get", "save", "claim", "подать", "оформить", "сэкономить"],
 }
-_ANCHOR_GENERIC = ["click here", "here", "link", "жми", "тут", "здесь", "подробнее",
-                   "click", "more", "read more", "далее", "узнать больше"]
-_ANCHOR_VERBS = ["получить", "открыть", "смотреть", "скачать", "войти", "зарегистрироваться",
-                 "узнать", "проверить", "забрать", "активировать", "посмотреть", "перейти",
-                 "claim", "get", "open", "view", "start", "join", "register", "check",
-                 "activate", "play"]
+# Слишком «общие» анкоры — их скорер штрафует (нужен глагол+объект). Держим коротко и точно,
+# чтобы не штрафовать нормальные анкоры.
+_ANCHOR_GENERIC = ["click here", "here", "link", "this", "that", "it", "more", "details",
+                   "read more", "learn more", "tap here", "go here", "this link",
+                   "жми", "тут", "здесь", "ссылка", "подробнее", "далее", "сюда", "туда",
+                   "вот", "узнать больше", "читать далее"]
+# Глаголы действия в анкоре (= призыв). По сути объединение CTA-глаголов + пары синонимов.
+_ANCHOR_VERBS = _CTA_GENERIC + ["open", "start", "play", "meet", "date", "chat", "view", "see",
+                                "look", "peek", "reveal", "unlock", "discover", "скачать",
+                                "войти", "зарегистрироваться", "перейти", "забрать",
+                                "активировать", "смотреть", "открыть"]
 
-_URGENCY = ["today", "tonight", "сегодня", "сейчас", "now", "hours", "час", "expires",
-            "истекает", "last chance", "последний", "limited", "осталось", "только",
-            "ending", "midnight", "полночь", "пропал", "сгорит", "сгорят", "сгорают",
-            "истечёт", "до полуночи", "до конца дня"]
-_PERSONAL = ["you", "your", "ты", "тебе", "тебя", "тобой", "твой", "твоя", "твои", "твоих",
-             "твоего", "твоей", "твоём", "твою", "you've", "вы", "ваш", "вас", "вам",
-             "милый", "красавчик", "дорогой", "дорогая"]
+_URGENCY = [
+    # EN
+    "today", "tonight", "now", "soon", "hurry", "quick", "fast", "expires", "expire",
+    "expiring", "ends", "ending", "deadline", "last", "final", "only", "before", "midnight",
+    "hours", "minutes", "moments", "limited", "closing", "gone", "leaving", "still",
+    # RU
+    "сегодня", "сейчас", "скоро", "быстрее", "поторопись", "успей", "срочно", "истекает",
+    "истечёт", "заканчивается", "кончается", "последний", "последняя", "финал", "только",
+    "осталось", "полночь", "до полуночи", "до конца дня", "пока не поздно", "пока можешь",
+    "вот-вот", "сгорит", "сгорят", "уходит", "пропадёт", "ещё онлайн", "ещё тут", "час",
+]
+_PERSONAL = [
+    # EN — 2-е лицо + обращения
+    "you", "your", "yours", "youre", "youve", "youll", "youd", "yourself", "u", "ur",
+    "dear", "honey", "babe", "baby", "sweetie", "sweetheart", "darling", "cutie", "hun",
+    # RU
+    "ты", "тебя", "тебе", "тобой", "тобою", "твой", "твоя", "твоё", "твои", "твоих",
+    "твоего", "твоей", "твоём", "твою", "твоим", "твоими", "вы", "ваш", "ваша", "ваше",
+    "ваши", "вас", "вам", "вами", "милый", "милая", "дорогой", "дорогая", "красавчик",
+    "красотка", "солнышко", "зайка", "любимый", "любимая",
+]
 
 
 def _has_emoji(s: str) -> bool:
@@ -125,8 +210,176 @@ def _clamp(v: float) -> int:
     return max(0, min(100, int(round(v))))
 
 
-def _cta_words(vertical: str) -> list[str]:
-    return _CTA_BY_VERT.get(vertical, []) + _CTA_GENERIC
+# ══ МОРФОЛОГИЯ: лёгкий двуязычный стеммер + сопоставление по смыслу ══════════════
+# ЗАЧЕМ: без него скорер «знал» бы только точные слова из списков и штрафовал письмо за
+# синоним или другую форму слова («посмотрел» знает, «посмотрела/посмотрю/заглянул» — нет),
+# из-за чего оценка получалась ложной. Стеммер сводит ВСЕ формы одного слова к общему корню
+# (и в тексте, и в словаре — тогда они совпадают), а списки-синонимы выше покрывают РАЗНЫЕ
+# слова одного смысла. Стем не обязан быть лингвистически идеальным — важно лишь, чтобы формы
+# ОДНОГО слова давали ОДИН стем. Без внешних зависимостей (модуль гоняет headless-гейт).
+
+_VOWELS_RU = set("аеёиоуыэюя")
+_CYR_RE = re.compile(r"[а-яё]")
+_TOKEN_RE = re.compile(r"[a-zа-яё']+", re.IGNORECASE)
+
+# Русские окончания (глагол/причастие/прилагательное/существительное/местоимение),
+# отсортируем по длине убыв. — снимаем самый длинный подходящий, храня корень ≥3 букв.
+# ВАЖНО: прошедшее время снимаем коротким «л/ла/ло/ли», а «хвостовую» гласную убирает
+# пост-нормализация ниже (написал→написа→напис, посмотрел→посмотре→посмотр). Так мы НЕ
+# используем агрессивные «ала/ила/или/…», которые съедали существительные (профили→«проф»).
+_RU_SUFFIXES = sorted(set([
+    # возвратные и длинные
+    "ешься", "ишься", "ается", "уется", "уются", "аются", "яются",
+    "ется", "ится", "емся", "имся", "етесь", "итесь", "ются", "ятся",
+    "лся", "лась", "лись", "вшись", "вшийся",
+    # причастия/прилагательные-длинные
+    "ающий", "ующий", "ящий", "ащий", "авший", "ивший", "ывший", "ущий", "ющий",
+    "анн", "янн", "енн", "ённ", "ированн",
+    # настоящее/будущее
+    "аешь", "аёшь", "уешь", "уёшь", "ываешь", "иваешь", "аете", "уете",
+    "ешь", "ишь", "ете", "ите", "ает", "ают", "еет", "еют", "ует", "уют",
+    "ит", "ят", "ют", "им", "ем",
+    # инфинитив
+    "овать", "евать", "ывать", "ивать", "ать", "ять", "еть", "ить", "ыть", "уть",
+    "ть", "ти", "чь",
+    # прошедшее (коротко) + гласную уберёт пост-нормализация
+    "л", "ла", "ло", "ли",
+    # прилагательные/местоимения
+    "ыми", "ими", "ого", "его", "ому", "ему",
+    "ый", "ий", "ой", "ая", "яя", "ое", "ее", "ые", "ие", "ым", "ых", "их", "ую", "юю",
+    # существительные
+    "ами", "ями", "ах", "ях", "ов", "ев", "ам", "ям", "ом", "ья", "ье", "ью",
+    # одиночные
+    "а", "я", "ы", "и", "у", "ю", "о", "е", "ь", "й",
+]), key=len, reverse=True)
+
+
+def _stem_ru(w: str) -> str:
+    # снимаем одно самое длинное окончание, потом нормализуем «хвост» (мягкий знак + одна
+    # гласная) — так «сообщение/сообщения» и «посмотре/посмотр» сходятся к одному стему.
+    if len(w) > 4:
+        for suf in _RU_SUFFIXES:
+            if w.endswith(suf) and len(w) - len(suf) >= 3:
+                w = w[: -len(suf)]
+                break
+    if len(w) > 3 and w[-1] in "ьъй":
+        w = w[:-1]
+    if len(w) > 3 and w[-1] in _VOWELS_RU:
+        w = w[:-1]
+    return w
+
+
+def _stem_en(w: str) -> str:
+    for suf in ("'s", "'ve", "'re", "'ll", "'d", "'m", "n't"):
+        if w.endswith(suf):
+            w = w[: -len(suf)]
+            break
+    if len(w) > 4:
+        if w.endswith("ies"):
+            w = w[:-3] + "y"
+        elif w.endswith("sses"):
+            w = w[:-2]
+        elif w.endswith(("ches", "shes", "xes", "zes", "ses", "oes")):
+            w = w[:-2]
+        elif w.endswith("s") and not w.endswith(("ss", "us", "is")):
+            w = w[:-1]
+    if len(w) > 4:
+        if w.endswith("ing"):
+            w = w[:-3]
+        elif w.endswith("edly"):
+            w = w[:-4]
+        elif w.endswith("ed"):
+            w = w[:-2]
+        elif w.endswith("ly"):
+            w = w[:-2]
+    if len(w) > 3 and w.endswith("e"):  # «silent e»: like/liked→lik, profile→profil
+        w = w[:-1]
+    return w
+
+
+_STEM_CACHE: dict[str, str] = {}
+
+
+def _stem(w: str) -> str:
+    w = w.lower()
+    s = _STEM_CACHE.get(w)
+    if s is None:
+        s = _stem_ru(w) if _CYR_RE.search(w) else _stem_en(w)
+        _STEM_CACHE[w] = s
+    return s
+
+
+def _text_stems(text: str) -> set[str]:
+    return {_stem(t) for t in _TOKEN_RE.findall(text.lower())}
+
+
+def _is_phrase(w: str) -> bool:
+    # многословное, с дефисом или чисто символьное («$$$», «100%», «!!!!») — ищем подстрокой,
+    # одиночное слово — по стему.
+    return (" " in w) or ("-" in w) or not any(ch.isalpha() for ch in w)
+
+
+class _Concept:
+    __slots__ = ("stems", "phrases")
+
+    def __init__(self, stems: set[str], phrases: tuple[str, ...]):
+        self.stems = stems
+        self.phrases = phrases
+
+
+def _concept(*words: str) -> _Concept:
+    stems: set[str] = set()
+    phrases: list[str] = []
+    for w in words:
+        wl = w.strip().lower()
+        if not wl:
+            continue
+        if _is_phrase(wl):
+            phrases.append(wl)
+        else:
+            stems.add(_stem(wl))
+    return _Concept(stems, tuple(phrases))
+
+
+def _has(low: str, ts: set[str], concept: _Concept) -> bool:
+    # low — текст в нижнем регистре, ts — множество стемов его токенов (считаем один раз).
+    if concept.stems & ts:
+        return True
+    return any(p in low for p in concept.phrases)
+
+
+def _count(low: str, ts: set[str], concept: _Concept) -> int:
+    return len(concept.stems & ts) + sum(1 for p in concept.phrases if p in low)
+
+
+def _matched(low: str, ts: set[str], words: list[str]) -> list[str]:
+    # какие ИСХОДНЫЕ слова из списка нашлись (для показа в чек-листе стоп-слов).
+    out = []
+    for w in words:
+        wl = w.lower()
+        if (wl in low) if _is_phrase(wl) else (_stem(wl) in ts):
+            out.append(w)
+    return out
+
+
+# Предсобранные «концепты» из расширенных списков (стемы считаются один раз на импорте).
+_KW = {v: _concept(*cfg.get("keywords", [])) for v, cfg in VERTICALS.items()}
+_INTR = {v: _concept(*cfg.get("intrigue", [])) for v, cfg in VERTICALS.items()}
+_EMO = {v: _concept(*cfg.get("emo", [])) for v, cfg in VERTICALS.items()}
+_URG_C = _concept(*_URGENCY)
+_PERS_C = _concept(*_PERSONAL)
+_ANCHOR_VB_C = _concept(*_ANCHOR_VERBS)
+_ANCHOR_GEN_SET = {a.strip().lower() for a in _ANCHOR_GENERIC}  # анкор целиком == «общий»
+_CTA_C = {v: _concept(*(_CTA_BY_VERT.get(v, []) + _CTA_GENERIC)) for v in VERTICALS}
+_CTA_C_GENERIC = _concept(*_CTA_GENERIC)
+
+
+def _cta_concept(vertical: str) -> _Concept:
+    return _CTA_C.get(vertical, _CTA_C_GENERIC)
+
+
+def _kw_concept(vertical: str) -> _Concept:
+    return _KW.get(vertical, _KW.get("dating"))
 
 
 # ── три составляющие ──────────────────────────────────────────────────────────
@@ -154,7 +407,8 @@ def _score_deliverability(subj: str, body: str, vertical: str) -> dict:
     else:
         score -= 8; checks.append({"ok": False, "text": "Caps lock: " + caps[0]})
 
-    subj_spam = [w for w in SPAM_SUBJ if w in lo]
+    sts = _text_stems(subj)
+    subj_spam = _matched(lo, sts, SPAM_SUBJ)
     if not subj_spam:
         checks.append({"ok": True, "text": "Стоп-слова в теме: не найдены"})
     else:
@@ -170,7 +424,8 @@ def _score_deliverability(subj: str, body: str, vertical: str) -> dict:
         checks.append({"ok": False, "text": f"Восклицательных знаков: {excl} (много)"})
 
     blo = body.lower()
-    body_spam = [w for w in SPAM_BODY if w in blo]
+    bts = _text_stems(body)
+    body_spam = _matched(blo, bts, SPAM_BODY)
     if not body_spam:
         checks.append({"ok": True, "text": "Стоп-слова в теле: не найдены"})
     else:
@@ -187,13 +442,13 @@ def _score_deliverability(subj: str, body: str, vertical: str) -> dict:
 
 def _score_openrate(subj: str, body: str, vertical: str) -> dict:
     score, issues, tips, checks = 10, [], [], []
-    cfg = VERTICALS.get(vertical, {})
     lo, blo = subj.lower(), body.lower()
-    vkeys = cfg.get("keywords", [])
+    sts, bts = _text_stems(subj), _text_stems(body)
+    kw = _kw_concept(vertical)
+    intr = _INTR.get(vertical)
 
     if vertical == "dating":
-        intr = cfg.get("intrigue", [])
-        if re.search(r"\d", subj) or any(w in lo for w in intr):
+        if re.search(r"\d", subj) or (intr and _has(lo, sts, intr)):
             score += 14; checks.append({"ok": True, "text": "Конкретика / интрига в теме: есть"})
         else:
             tips.append('Добавь интригу/конкретику: "3 раза заходила", "кое-что случилось", "ждёт ответа"')
@@ -219,21 +474,21 @@ def _score_openrate(subj: str, body: str, vertical: str) -> dict:
         tips.append("Эмодзи выделяет письмо в ящике - попробуй одно")
         checks.append({"ok": False, "text": "Эмодзи в теме: нет"})
 
-    if any(w in lo for w in vkeys):
+    if _has(lo, sts, kw):
         score += 14; checks.append({"ok": True, "text": "Ключевые слова вертикали: есть в теме"})
     else:
         checks.append({"ok": False, "text": "Ключевые слова вертикали: нет в теме"})
 
-    if any(w in lo for w in _URGENCY):
+    if _has(lo, sts, _URG_C):
         score += 18; checks.append({"ok": True, "text": "Срочность в теме: есть"})
-    elif any(w in blo for w in _URGENCY):
+    elif _has(blo, bts, _URG_C):
         score += 10; checks.append({"ok": False, "text": "Срочность в теме: нет (но есть в теле)"})
         tips.append("Срочность есть в теле, но не в теме - перенеси в тему")
     else:
         tips.append('Срочность повышает open rate: "сегодня", "истекает", "last chance"')
         checks.append({"ok": False, "text": "Срочность в теме: нет"})
 
-    if any(w in lo for w in _PERSONAL):
+    if _has(lo, sts, _PERS_C):
         score += 14; checks.append({"ok": True, "text": "Личное обращение в теме: есть"})
     elif vertical in ("dating", "sweepstakes"):
         tips.append('Личное обращение ("ты", "твой") в теме повышает открываемость')
@@ -241,7 +496,7 @@ def _score_openrate(subj: str, body: str, vertical: str) -> dict:
     else:
         checks.append({"ok": False, "text": "Личное обращение в теме: нет (не обязательно)"})
 
-    if any(w in blo for w in vkeys):
+    if _has(blo, bts, kw):
         score += 10  # тихий бонус
 
     return {"score": _clamp(score), "issues": issues, "tips": tips, "checks": checks}
@@ -249,8 +504,9 @@ def _score_openrate(subj: str, body: str, vertical: str) -> dict:
 
 def _score_clickability(subj: str, body: str, anchor: str, vertical: str) -> dict:
     score, issues, tips, checks = 20, [], [], []
-    cfg = VERTICALS.get(vertical, {})
     blo = body.lower()
+    bts = _text_stems(body)
+    kw = _kw_concept(vertical)
 
     bl = len(body.strip())
     if bl < 50:
@@ -263,19 +519,19 @@ def _score_clickability(subj: str, body: str, anchor: str, vertical: str) -> dic
     else:
         score -= 10; checks.append({"ok": False, "text": f"Длина тела: {bl} симв. - слишком много"})
 
-    if any(w in blo for w in _cta_words(vertical)):
+    if _has(blo, bts, _cta_concept(vertical)):
         score += 18; checks.append({"ok": True, "text": "Призыв к действию: найден"})
     else:
         issues.append({"sev": "critical", "text": "Нет призыва к действию - читатель не знает что делать"})
         checks.append({"ok": False, "text": "Призыв к действию: нет"})
 
-    if any(w in blo for w in _PERSONAL):
+    if _has(blo, bts, _PERS_C):
         score += 10; checks.append({"ok": True, "text": "Персонализация (ты/you): есть"})
     else:
         tips.append('Добавь личное обращение ("ты", "you")')
         checks.append({"ok": False, "text": "Персонализация (ты/you): нет"})
 
-    vhits = sum(1 for w in cfg.get("keywords", []) if w in blo)
+    vhits = _count(blo, bts, kw)
     if vhits >= 2:
         score += 15; checks.append({"ok": True, "text": f"Ключевые слова вертикали: {vhits} найдено"})
     elif vhits == 1:
@@ -285,7 +541,8 @@ def _score_clickability(subj: str, body: str, anchor: str, vertical: str) -> dic
         checks.append({"ok": False, "text": "Ключевые слова вертикали: не найдены"})
 
     if vertical == "dating":
-        if any(w in blo for w in cfg.get("emo", [])):
+        emo = _EMO.get(vertical)
+        if emo and _has(blo, bts, emo):
             score += 8; checks.append({"ok": True, "text": "Эмоциональные триггеры: найдены"})
         else:
             tips.append('Добавь эмоц-триггер - "скучает", "написала", "нравишься"')
@@ -303,10 +560,11 @@ def _score_clickability(subj: str, body: str, anchor: str, vertical: str) -> dic
         score += 5; checks.append({"ok": True, "text": "Ссылка в теле: есть"})
     elif anchor:
         al = anchor.lower()
-        if al in _ANCHOR_GENERIC:
+        ats = _text_stems(anchor)
+        if al in _ANCHOR_GEN_SET:
             score -= 8; checks.append({"ok": False, "text": f'Анкор: слишком общий ("{anchor}")'})
             issues.append({"sev": "warning", "text": "Анкор слишком общий - нужен глагол+объект"})
-        elif any(v in al for v in _ANCHOR_VERBS):
+        elif _has(al, ats, _ANCHOR_VB_C):
             score += 10; checks.append({"ok": True, "text": f'Анкор с глаголом: "{anchor}"'})
         else:
             tips.append('Анкор с глаголом повышает CTR: "Смотреть профиль", "Открыть сообщение"')
