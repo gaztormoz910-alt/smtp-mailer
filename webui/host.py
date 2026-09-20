@@ -293,9 +293,16 @@ class Api:
         elif kind == "bodies":
             total = cm.body_count
             off, lim = _win(total, offset, limit)
-            # По каждому телу — первый ВИДИМЫЙ текст (не тег/DOCTYPE), считаем по окну.
-            text = "\n".join(_body_title(b)[:80] or f"Тело #{off + j + 1}"
-                             for j, b in enumerate(cm.slice_lines("bodies", off, lim)))
+            # ВЕСЬ материал каждого тела (а не 80-символьный обрезок): владелец хочет видеть
+            # и прокручивать загруженные тела целиком. Заголовок «▼ Тело #N (первый видимый
+            # текст)» + пустая строка + полный СЫРОЙ шаблон, тела разделяем чертой. Перенос
+            # длинных строк и вертикальный скролл делает CSS (.preview overflow-wrap/overflow-y).
+            chunks = []
+            for j, b in enumerate(cm.slice_lines("bodies", off, lim)):
+                n = off + j + 1
+                head = _body_title(b)[:80]
+                chunks.append(f"▼ Тело #{n}" + (f" — {head}" if head else "") + "\n" + b.strip())
+            text = ("\n" + "─" * 48 + "\n").join(chunks)
         else:
             total, off, lim, text = 0, 0, _PAGE, ""
         return {"kind": kind, "total": total, "offset": off, "limit": lim,
@@ -616,8 +623,26 @@ class Api:
     # ── превью письма (как выглядит у получателя + метрики) ──────────────
     def preview_email(self, opts: dict | None = None) -> dict:
         opts = opts or {}
-        name = (opts.get("name") or "").strip() or "Анна"
-        email = (opts.get("email") or "").strip() or "recipient@example.com"
+        # Имя и email получателя берём ТОЛЬКО из реально загруженной базы — никаких
+        # выдуманных имён-заглушек. Владелец в превью должен видеть ровно то,
+        # что уйдёт: имя случайного получателя из его базы (на каждый «Другой вариант»
+        # — новый, поэтому имя получателя тоже меняется от письма к письму). Если фронт
+        # явно передал name/email (напр. тест) — уважаем их. Базы нет → имя пустое (как и
+        # уйдёт nameless-получателю), а превью отдельным флагом скажет «база не загружена».
+        name = (opts.get("name") or "").strip()
+        email = (opts.get("email") or "").strip()
+        no_recipients = False
+        if not name and not email:
+            if self._recipients:
+                rec = _rnd.choice(self._recipients)
+                name, email = (rec.name or ""), (rec.email or "")
+            else:
+                no_recipients = True
+        if not email:
+            # Плейсхолдер ТОЛЬКО для строки «кому» в макете клиента; в тело он не попадает
+            # (тело использует {{email}} лишь если сам шаблон его содержит — тогда владелец
+            # увидит, что база не загружена, по флагу no_recipients).
+            email = "recipient@example.com"
 
         sender_name = self.content_mgr.get_random_sender_name()
         variables = {"email": email, "name": name, "senderName": sender_name}
@@ -697,6 +722,9 @@ class Api:
             "bodies": len(bodies), "subjects": self.content_mgr.subject_count,
             "subject_issue": subject_issue, "body_issue": body_issue,
             "score": score,
+            # True → база получателей не загружена, имя {{name}} в превью пустое; фронт
+            # показывает подсказку, чтобы владелец не принял пустое имя за баг.
+            "no_recipients": no_recipients,
         }
 
     def score_variants(self, n: Any = 30) -> dict:
@@ -708,8 +736,15 @@ class Api:
         cm = self.content_mgr
         if not cm.subjects or not cm.bodies:
             return {"available": False, "reason": "нужны и темы, и тела"}
-        variables = {"email": "recipient@example.com", "name": "Анна",
-                     "senderName": cm.get_random_sender_name() or "Alex"}
+        # Имя получателя для разброса — из реальной базы (если загружена), иначе пустое.
+        # Никаких выдуманных имён-заглушек: разброс считаем на тех же данных, что уйдут в рассылку.
+        if self._recipients:
+            _rec = _rnd.choice(self._recipients)
+            _name, _email = (_rec.name or ""), (_rec.email or "recipient@example.com")
+        else:
+            _name, _email = "", "recipient@example.com"
+        variables = {"email": _email, "name": _name,
+                     "senderName": cm.get_random_sender_name() or ""}
         pools = cm.link_pools or None
         overalls: list[int] = []
         worst = None

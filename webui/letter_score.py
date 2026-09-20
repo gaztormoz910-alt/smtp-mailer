@@ -476,19 +476,24 @@ def check_structure(raw_html: str, is_html: bool, text: str) -> dict:
 
     has_unsub = bool(re.search(r"unsubscribe|отписат|opt[-\s]?out", low))
     if links and not has_unsub:
-        # Мягко: у нас unsubscribe кладётся в ЗАГОЛОВОК (List-Unsubscribe), не в тело —
-        # фейковый блок в теле сам по себе спам-триггер. Показываем как инфо, не приговор.
-        issues.append({"t": "warn", "text": "Нет ссылки «отписаться» в теле — тестеры это отмечают "
-                       "(в рассылке отписка идёт заголовком List-Unsubscribe, не в теле)"})
-        score -= 4
+        # НЕ штрафуем и НЕ пугаем: письмо этого проекта маскируется под личное сообщение
+        # живого человека (см. CLAUDE.md), а у личного письма НЕТ блока «отписаться» — более
+        # того, фейковый unsubscribe в теле сам по себе спам-триггер (он в списке SPAM_BODY).
+        # Поэтому отсутствие отписки в теле — это ПРАВИЛЬНО, а не дефект. Показываем как
+        # спокойную инфо-строку (без штрафа к баллу), чтобы владелец понимал, почему её нет.
+        issues.append({"t": "info", "text": "Ссылки «отписаться» в теле нет — для письма-«личного» "
+                       "это правильно (фейковый блок отписки сам по себе спам-триггер). Не дефект."})
 
     if any(d in low for d in _SHORT):
         score -= 10; issues.append({"t": "bad", "text": "Сокращённые ссылки (bit.ly, t.co…) — фильтры их не любят"})
     if not re.search(r"<!doctype", low):
         score -= 2; issues.append({"t": "warn", "text": "Нет <!DOCTYPE html> — Outlook может рендерить в quirks mode"})
     if not re.search(r"<meta[^>]+charset", low):
-        issues.append({"t": "info", "text": "Нет <meta charset> в теле — не страшно: софт задаёт кодировку "
-                       "заголовком MIME (utf-8), это лишь замечание тестеров"})
+        # Тоже НЕ дефект: кодировку письма задаёт заголовок MIME (Content-Type charset=utf-8,
+        # см. sender.build_message), а <meta charset> внутри тела почтовые клиенты игнорируют.
+        # Инфо без штрафа — чтобы строка не выглядела «проблемой», которую надо чинить.
+        issues.append({"t": "info", "text": "<meta charset> в теле нет — и не нужен: кодировку "
+                       "задаёт заголовок письма (MIME, utf-8). Не дефект."})
     if re.search(r"<link[^>]+rel=[\"']?stylesheet", low):
         score -= 6; issues.append({"t": "bad", "text": "External <link stylesheet> — не работает в почте"})
     if re.search(r"<script", low) or re.search(r"\son\w+\s*=", low) or "javascript:" in low:
