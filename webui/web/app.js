@@ -223,9 +223,6 @@ function badge(st) { return `<span class="badge-st ${st}">${STLABEL[st] || st}</
 function proxyRow(it) {
   const ping = it.ping ? `<span class="ping">${it.ping} ms</span>` : "";
   const flag = it.country ? `<span class="flag">${esc(it.country)}</span>` : "";
-  // Блэклист НЕ убивает прокси: живой-в-блоклисте остаётся живым (метка ⚑BL), get_next его
-  // просто не выбирает. Поэтому ⚑BL — метка, а не причина смерти.
-  const bl = it.blacklist === false ? `<span class="ping" style="color:var(--error)">⚑BL</span>` : "";
   let meta;
   if (it.status === "dead" && it.error) {
     // Мёртвый прокси теперь объясняет ПОЧЕМУ (как SMTP-аккаунт с last_error). Так «171 ms +
@@ -237,8 +234,15 @@ function proxyRow(it) {
   } else {
     meta = `${esc((it.proto || "").toUpperCase())}${it.score ? " · score " + it.score : ""}`;
   }
+  // Живой, но в блэклисте → вместо зелёного «Живой» показываем ОТДЕЛЬНУЮ метку «⚑ Блэклист»
+  // своим цветом (оранжевым): прокси живой и используется как запасной (get_next предпочитает
+  // чистых), но владелец должен видеть, что он в списках. Отдельный красный ⚑BL убран — метка
+  // статуса теперь сама об этом говорит, чтобы не дублировать.
+  const stBadge = (it.status === "alive" && it.blacklist === false)
+    ? `<span class="badge-st blacklist">⚑ Блэклист</span>`
+    : badge(it.status);
   return `<div class="li"><div class="grow"><div class="addr">${esc(it.addr)}</div>
-    <div class="meta">${meta}</div></div>${flag}${bl}${ping}${badge(it.status)}</div>`;
+    <div class="meta">${meta}</div></div>${flag}${ping}${stBadge}</div>`;
 }
 function smtpRow(it) {
   const ping = it.ping ? `<span class="ping">${it.ping} ms</span>` : "";
@@ -247,8 +251,13 @@ function smtpRow(it) {
   // — проверка шла без прокси. Пусто, пока аккаунт не проверялся.
   const via = it.proxy
     ? `<div class="meta via">🌐 проверен через ${esc(it.proxy)}</div>` : "";
+  // ⚑BL — МЕТКА, а не приговор: аккаунт из-за блэклиста НЕ хоронится (наружу письмо уходит с
+  // IP прокси). Показываем, если IP SMTP-хоста ИЛИ домен отправителя реально в списке.
+  const listed = (it.blacklist === false) || (it.domain_blacklist === false);
+  const zones = (it.bl_zones && it.bl_zones.length) ? " (" + it.bl_zones.slice(0, 3).map(esc).join(", ") + ")" : "";
+  const bl = listed ? `<span class="ping" style="color:var(--error)" title="в чёрных списках${zones}">⚑BL</span>` : "";
   return `<div class="li"><div class="grow"><div class="addr">${esc(it.email)}</div>
-    <div class="meta">${err}</div>${via}</div>${ping}${badge(it.status)}</div>`;
+    <div class="meta">${err}</div>${via}</div>${bl}${ping}${badge(it.status)}</div>`;
 }
 
 // проверка с опросом прогресса (страница обновляется живьём)

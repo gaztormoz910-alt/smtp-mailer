@@ -14,6 +14,7 @@ import ssl
 import socks
 
 from core.storage import load_lines, load_lines_from_url
+from core.blacklist import check_ip as _bl_check_ip
 
 
 class ProxyStatus(Enum):
@@ -139,52 +140,15 @@ _RETRY_PAUSE = 2
 
 import socket as _socket
 
-_DNSBL_SERVERS = [
-    "zen.spamhaus.org",
-    "b.barracudacentral.org",
-    "bl.spamcop.net",
-    "dnsbl.sorbs.net",
-    "all.s5h.net",
-]
+# Список DNSBL-зон переехал в core/blacklist.py (IP_DNSBL_ZONES) — единый живой набор для
+# прокси и SMTP. Здесь оставлен только тонкий адаптер _check_dnsbl (обратная совместимость).
 
 
 def _check_dnsbl(ip: str, timeout: float = 2.0) -> tuple[bool, list[str]]:
-    # Проверка по DNSBL. Важно: НЕ трогаем глобальный socket.setdefaulttimeout —
-    # он процессно-глобальный, и при параллельной проверке потоки затирали таймауты
-    # друг другу (гонка), из-за чего результаты были недетерминированными. Вместо
-    # этого все блок-листы опрашиваем ОДНОВРЕМЕННО в daemon-потоках с общим дедлайном:
-    # это и убирает гонку, и даёт ~timeout вместо суммы по всем зонам (было ~10 c).
-    try:
-        parts = ip.split(".")
-        if len(parts) != 4:
-            return True, []
-        reversed_ip = ".".join(reversed(parts))
-    except Exception:
-        return True, []
-
-    hits: list[str] = []
-    hits_lock = threading.Lock()
-    threads: list[threading.Thread] = []
-
-    def _q(zone: str) -> None:
-        try:
-            result = _socket.gethostbyname(f"{reversed_ip}.{zone}")
-            if result.startswith("127."):
-                with hits_lock:
-                    hits.append(zone)
-        except Exception:
-            pass
-
-    for dnsbl in _DNSBL_SERVERS:
-        th = threading.Thread(target=_q, args=(dnsbl,), daemon=True)
-        th.start()
-        threads.append(th)
-
-    deadline = time.time() + timeout
-    for th in threads:
-        th.join(max(0.0, deadline - time.time()))
-
-    return len(hits) == 0, hits
+    # Делегируем в общий core.blacklist.check_ip: там корректный разбор ответа (127.255.255.x
+    # = отказ резолвера, а НЕ листинг — раньше здесь такой ответ ложно штрафовал ВСЕ узлы) и
+    # живой набор зон (мёртвый dnsbl.sorbs.net убран). Одна реализация на прокси и SMTP.
+    return _bl_check_ip(ip, timeout)
 
 _USER_SMTP_TARGETS: list[tuple[str, int]] = []
 

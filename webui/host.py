@@ -463,6 +463,12 @@ class Api:
             "error": a.last_error or "",
             "bound_proxy": bool(getattr(a, "bound_proxy", None)),
             "proxy": getattr(a, "checked_via_proxy", ""),  # через какой прокси проверялся
+            # Блэклисты (метка, не приговор): IP SMTP-хоста + домен отправителя. True/False/None.
+            "blacklist": getattr(a, "blacklist_clean", None),
+            "domain_blacklist": getattr(a, "domain_blacklist_clean", None),
+            "domain_freemail": getattr(a, "domain_is_freemail", False),
+            "bl_zones": (list(getattr(a, "blacklist_hits", None) or [])
+                         + list(getattr(a, "domain_blacklist_hits", None) or [])),
         }
 
     def _smtp_counts(self) -> dict:
