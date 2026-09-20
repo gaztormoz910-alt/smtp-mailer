@@ -186,9 +186,11 @@ def find_content_issues(items: list[str], is_subject: bool = False) -> list[dict
     return out
 
 
+# \s* перед закрывающим «>» — терпим «</p >», «</a >» (пробел в закрывающем теге —
+# валидный HTML; движок его больше не создаёт, но шаблон автора может содержать).
 _BR_RE = re.compile(r'<br\s*/?>', re.IGNORECASE)
-_BLOCK_END_RE = re.compile(r'</(p|div|h[1-6]|li|tr)>', re.IGNORECASE)
-_A_TAG_RE = re.compile(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+_BLOCK_END_RE = re.compile(r'</(p|div|h[1-6]|li|tr)\s*>', re.IGNORECASE)
+_A_TAG_RE = re.compile(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a\s*>', re.IGNORECASE | re.DOTALL)
 _ANY_TAG_RE = re.compile(r'<[^>]+>')
 _MULTI_NL_RE = re.compile(r'\n{3,}')
 _LEADING_SPACE_RE = re.compile(r'^[ \t]+', re.MULTILINE)
@@ -322,6 +324,38 @@ def _inject_css_noise(text: str) -> str:
     return re.sub(r'style="[^"]*"', _add_noise, text, flags=re.IGNORECASE)
 
 
+# ── Косметическая чистка пробелов после раскрытия спинтакса ────────────────────
+# ПОЧЕМУ: пустая ветка «{…|}» рядом с пробелом/знаком препинания оставляет получателю
+# видимый брак — «status .», «disappears ?», двойной пробел. Раньше движок это НЕ чистил
+# (перекладывал на автора шаблона), и в реальных письмах владельца брак был виден. Теперь
+# чистим на выходе — безопасно: только пробел ПЕРЕД знаком препинания и схлопывание
+# двойных пробелов. В HTML трогаем ТОЛЬКО текст между тегами (атрибуты, URL, inline-CSS
+# защищены), чтобы не сломать вёрстку/ссылку.
+_PUNCT_SPACE_RE = re.compile(r"[ \t]+([.,!?:;])")
+_MULTISPACE_RE = re.compile(r"[ \t]{2,}")
+_TRAILING_WS_RE = re.compile(r"[ \t]+(\n|$)")
+_TAG_SPLIT_RE = re.compile(r"(<[^>]+>)")
+
+
+def _tidy_text_run(s: str) -> str:
+    s = _PUNCT_SPACE_RE.sub(r"\1", s)
+    s = _MULTISPACE_RE.sub(" ", s)
+    return s
+
+
+def _tidy_spaces(text: str, html_mode: bool) -> str:
+    if not html_mode:
+        text = _PUNCT_SPACE_RE.sub(r"\1", text)
+        text = _MULTISPACE_RE.sub(" ", text)
+        text = _TRAILING_WS_RE.sub(r"\1", text)
+        return text
+    # HTML: чистим только НЕ-теговые сегменты (чётные индексы после split по тегам).
+    parts = _TAG_SPLIT_RE.split(text)
+    for i in range(0, len(parts), 2):
+        parts[i] = _tidy_text_run(parts[i])
+    return "".join(parts)
+
+
 def render(
     template: str,
     variables: dict[str, str] | None = None,
@@ -347,6 +381,11 @@ def render(
 
     result = _substitute_ams_macros(result)
 
+    # Косметическая чистка пробелов из пустых веток спинтакса (« ?», «  » и т. п.).
+    # Делаем ДО HTML-уникализации: она пробел перед знаком препинания не создаёт,
+    # а теги к этому моменту нормальные (уникализация добавит « >» уже после).
+    result = _tidy_spaces(result, original_is_html)
+
     if is_subject:
         return result
 
@@ -371,7 +410,16 @@ def render(
 
         def _randomize_whitespace(m):
             tag = m.group(0)
-            if _rnd.random() < 0.15 and not tag.endswith('/>'):
+            # Пробел перед «>» добавляем ТОЛЬКО в открывающие теги С АТРИБУТАМИ.
+            # ПОЧЕМУ не в закрывающие («</a>»→«</a >»): это валидный HTML, но ломает
+            # ВСЕХ regex-потребителей, ищущих «</a>»/«</p>» — конвертацию в plain-text
+            # (text/plain-часть письма теряла URL ссылки и переносы строк), локальный
+            # скорер (ложное «НЕТ ссылки») и внешние анти-спам-тесты. Уникальности от
+            # пробела в закрывающем теге ноль (там нет атрибутов) — риск без пользы.
+            # DOCTYPE/комментарии (<!…>) и теги без атрибутов тоже пропускаем.
+            if tag.startswith('</') or tag.startswith('<!'):
+                return tag
+            if _rnd.random() < 0.15 and not tag.endswith('/>') and ' ' in tag:
                 tag = tag[:-1] + ' >'
             return tag
         result = re.sub(r'<[^>]+>', _randomize_whitespace, result)

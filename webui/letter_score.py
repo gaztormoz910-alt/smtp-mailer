@@ -505,6 +505,114 @@ def check_structure(raw_html: str, is_html: bool, text: str) -> dict:
     return {"score": score, "status": status, "issues": issues}
 
 
+# ── ПОЛНОТА ПИСЬМА: есть ли РЕАЛЬНАЯ ссылка и РЕАЛЬНОЕ тело ────────────────────
+# ПОЧЕМУ отдельная проверка: скорер charly (и мой 3-осевой расчёт, что его повторяет)
+# даёт баллы за СЛОВА-CTA, но НЕ проверяет, что в письме есть настоящая кликабельная
+# ссылка с видимым текстом и настоящее тело. Из-за этого письма из скриншотов владельца
+# (тело без видимой ссылки; «1 ссылка», но её текст пустой; или вообще один заголовок)
+# получали B/78 и уходили в рассылку — а клика по ним быть не может. Эта проверка ловит
+# ровно тот брак и делает вердикт честным: неполное письмо нельзя отправлять.
+_LINK_TOKEN_RE = re.compile(r"\[\[LINK\d*\]\]")
+_URL_RE = re.compile(r"https?://|www\.", re.I)
+
+
+def _visible_anchor_texts(html: str) -> list[str]:
+    """Видимый текст каждой <a>…</a> — то, что реально видит и жмёт получатель.
+    `</a\\s*>` — терпим пробел перед «>» (валидный HTML: «</a >»)."""
+    out = []
+    for raw in re.findall(r"<a\b[^>]*>(.*?)</a\s*>", html, re.I | re.S):
+        txt = re.sub(r"<[^>]+>", "", raw)          # убрать вложенные теги
+        txt = _LINK_TOKEN_RE.sub("", txt)          # [[LINK]] — это href, не видимый текст
+        txt = re.sub(r"\s+", " ", txt).strip()
+        out.append(txt)
+    return out
+
+
+def check_completeness(subject: str, body_text: str, html: str,
+                       is_html: bool, anchor: str) -> dict:
+    """Флагует ровно те браки, что видны в скриншотах владельца:
+       (1) нет рабочей ссылки/кнопки; (2) ссылка есть, но её видимый текст пустой
+       (<a></a> — «1 ссылка», но кликать визуально не по чему); (3) нет тела —
+       один заголовок/ссылка без сообщения. Любой из трёх → письмо НЕПОЛНОЕ."""
+    issues, checks = [], []
+    complete = True
+
+    # 1) РЕАЛЬНАЯ ссылка + НЕПУСТОЙ видимый якорь
+    if is_html:
+        a_tags = re.findall(r"<a\b[^>]*>.*?</a\s*>", html, re.I | re.S)
+        hrefs = re.findall(r'<a\b[^>]*\bhref\s*=\s*["\']?([^"\'>\s]+)', html, re.I)
+        real_href = any(h.strip() and h.strip() != "#" for h in hrefs)
+        anchors = [a for a in _visible_anchor_texts(html) if a]
+        if not a_tags or not real_href:
+            complete = False
+            issues.append({"sev": "critical",
+                           "text": "❌ В письме НЕТ рабочей ссылки/кнопки (<a href>) — кликать не по чему"})
+            checks.append({"ok": False, "text": "Рабочая ссылка/кнопка: НЕТ"})
+        elif not anchors:
+            complete = False
+            issues.append({"sev": "critical",
+                           "text": "❌ Ссылка есть, но её видимый текст ПУСТОЙ (<a></a>) — "
+                                   "у получателя ссылки не видно (частый брак: якорь попал в пустую ветку спинтакса)"})
+            checks.append({"ok": False, "text": "Видимый текст ссылки: ПУСТОЙ"})
+        else:
+            checks.append({"ok": True, "text": "Рабочая видимая ссылка/кнопка: есть"})
+    else:
+        has_url = bool(_URL_RE.search(body_text)) or bool(_LINK_TOKEN_RE.search(body_text))
+        has_anchor = bool((anchor or "").strip())
+        if not (has_url or has_anchor):
+            complete = False
+            issues.append({"sev": "critical",
+                           "text": "❌ В теле нет ссылки ([[LINK]] / URL) — кликать не по чему"})
+            checks.append({"ok": False, "text": "Ссылка в теле: НЕТ"})
+        else:
+            checks.append({"ok": True, "text": "Ссылка в теле: есть"})
+
+    # 2) РЕАЛЬНОЕ тело (не только ссылка/якорь). Считаем «живой» текст без URL, без
+    #    [[LINK]] и без видимого текста якоря — чтобы «письмо = одна кнопка» не прошло.
+    core = _URL_RE.sub(" ", body_text)
+    core = _LINK_TOKEN_RE.sub(" ", core)
+    for a in ([anchor] if anchor else []) + (_visible_anchor_texts(html) if is_html else []):
+        if a:
+            core = core.replace(a, " ")
+    core = re.sub(r"\s+", " ", core).strip()
+    words = [w for w in core.split() if any(c.isalpha() for c in w)]
+    if len(core) < 25 or len(words) < 4:
+        complete = False
+        issues.append({"sev": "critical",
+                       "text": "❌ У письма нет тела — один заголовок/ссылка без сообщения"})
+        checks.append({"ok": False, "text": "Тело письма: ПУСТОЕ / только ссылка"})
+    else:
+        checks.append({"ok": True, "text": f"Тело письма: есть ({len(words)} слов)"})
+
+    return {"complete": complete, "issues": issues, "checks": checks}
+
+
+# ── ГИББЕРИШ: письмо ли это вообще (порт логики charly ocenka-pisma) ───────────
+_MASH = ["ыва", "фыв", "йцу", "ывп", "ыап", "асд", "asd", "qwe", "zxc", "qwer", "asdf", "йфя"]
+
+
+def _word_looks_random(word: str) -> bool:
+    # Настоящее слово имеет высокую долю уникальных букв; клавиатурный набор — низкую.
+    w = re.sub(r"[^а-яёa-z]", "", word.lower())
+    if len(w) < 5:
+        return False
+    return len(set(w)) / len(w) < 0.55
+
+
+def check_gibberish(subject: str, body_text: str) -> bool:
+    """True, если тема+тело похожи на случайный набор символов (кот прошёл по клаве
+    или спинтакс схлопнулся в мусор). Как у charly: ≥2 клавиатурных последовательности,
+    ЛИБО каждое значимое слово выглядит случайным."""
+    combined = (subject + " " + body_text).lower()
+    if sum(1 for p in _MASH if p in combined) >= 2:
+        return True
+    tokens = (subject + " " + body_text).split()
+    meaningful = [w for w in tokens if len(re.sub(r"[^а-яёa-z]", "", w, flags=re.I)) >= 5]
+    if not meaningful:
+        return False
+    return all(_word_looks_random(w) for w in meaningful)
+
+
 # ── публичная функция ─────────────────────────────────────────────────────────
 def _grade(s: int) -> tuple[str, str]:
     if s >= 82:
@@ -546,7 +654,7 @@ def _ctr_estimate(ctr_score: int, vert: str) -> dict:
 
 def extract_anchor(html: str) -> str:
     """Текст последней <a>…</a> — это и есть анкор (что видит и жмёт получатель)."""
-    matches = re.findall(r"<a\b[^>]*>(.*?)</a>", html, re.I | re.S)
+    matches = re.findall(r"<a\b[^>]*>(.*?)</a\s*>", html, re.I | re.S)
     for raw in reversed(matches):
         txt = re.sub(r"<[^>]+>", "", raw)
         txt = re.sub(r"\s+", " ", txt).strip()
@@ -566,6 +674,9 @@ def score_letter(subject: str, body_text: str, html: str = "",
     if anchor is None:
         anchor = extract_anchor(html) if is_html else ""
 
+    # 3-осевой расчёт — ТОЧНАЯ копия charly (числа не трогаем, чтобы совпадать с их
+    # оценщиком). Полнота и гиббериш — отдельный слой поверх, он НЕ меняет эти числа,
+    # но делает вердикт честным: неполное/мусорное письмо нельзя отправлять.
     dl = _score_deliverability(subject, body_text, vertical)
     orr = _score_openrate(subject, body_text, vertical)
     ctr = _score_clickability(subject, body_text, anchor, vertical)
@@ -575,16 +686,33 @@ def score_letter(subject: str, body_text: str, html: str = "",
     contrast = check_contrast(html) if is_html else {"ok": True, "ratio": None,
                                                      "text": "plain text — контраст не важен"}
     structure = check_structure(html, is_html, body_text)
+    completeness = check_completeness(subject, body_text, html, is_html, anchor)
+    gibberish = check_gibberish(subject, body_text)
+
+    # Вердикт: сначала «стоп-факторы» (мусор / неполное письмо), потом обычный разбор.
+    if gibberish:
+        verdict = ("⛔ Это не похоже на письмо — набор случайных символов. "
+                   "Введи нормальную тему и тело.")
+    elif not completeness["complete"]:
+        verdict = ("⛔ ПИСЬМО НЕПОЛНОЕ — не отправляй: " +
+                   "; ".join(i["text"].lstrip("❌ ").strip() for i in completeness["issues"]))
+    else:
+        verdict = _verdict(overall, dl["score"], orr["score"], ctr["score"], vertical)
+
+    # Критические браки полноты — В НАЧАЛО списка проблем (их видят первыми).
+    issues = completeness["issues"] + dl["issues"] + orr["issues"] + ctr["issues"]
 
     return {
         "overall": overall, "grade": letter, "grade_color": color,
         "deliverability": dl["score"], "openrate": orr["score"], "clickability": ctr["score"],
-        "verdict": _verdict(overall, dl["score"], orr["score"], ctr["score"], vertical),
+        "verdict": verdict,
+        "complete": completeness["complete"],   # False → письмо нельзя слать (нет ссылки/тела)
+        "gibberish": gibberish,
         "ctr_estimate": _ctr_estimate(ctr["score"], vertical),
         "checks": {"deliverability": dl["checks"], "openrate": orr["checks"],
-                   "clickability": ctr["checks"]},
+                   "clickability": ctr["checks"], "completeness": completeness["checks"]},
         "tips": (orr["tips"] + ctr["tips"])[:5],
-        "issues": dl["issues"] + orr["issues"] + ctr["issues"],
+        "issues": issues,
         "contrast": contrast,
         "structure": structure,
         "vertical": vertical,
