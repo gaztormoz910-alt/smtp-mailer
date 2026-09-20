@@ -17,6 +17,7 @@ from typing import Any, Callable
 import socks
 
 from core.storage import load_lines
+from core import blacklist as _bl
 
 
 class SmtpStatus(Enum):
@@ -41,6 +42,16 @@ class SmtpAccount:
     # Через какой прокси аккаунт проверялся в последний раз (для показа в UI):
     # "host:port" или "прямое соединение". Пусто, пока не проверялся.
     checked_via_proxy: str = ""
+    # Проверка по чёрным спискам (заполняется ПОСЛЕ ALIVE). None = не проверялось.
+    # ВАЖНО (см. гигиену доставляемости): наружу письмо уходит с IP ПРОКСИ (он и проверяется
+    # по DNSBL), а IP SMTP-хоста фримейла (smtp.gmail.com) и фримейл-домен в блэклистах не
+    # числятся — поэтому для фримейла это ИНФО, а не приговор; аккаунт из-за блэклиста НЕ
+    # хоронится. Реальную пользу даёт для SMTP на СВОИХ доменах.
+    blacklist_clean: Any = None          # IP SMTP-хоста в IP-DNSBL: True/False/None
+    blacklist_hits: Any = None           # список зон-листингов или None
+    domain_blacklist_clean: Any = None   # домен отправителя в DBL: True/False/None
+    domain_blacklist_hits: Any = None
+    domain_is_freemail: bool = False     # домен — фримейл (доменную проверку пропускаем)
 
     @property
     def display_host(self) -> str:
@@ -425,6 +436,32 @@ class SmtpManager:
             return before - len(self._accounts)
 
 
+    def _apply_blacklist(self, account: SmtpAccount) -> None:
+        # Вызывается ТОЛЬКО после ALIVE. Никогда не роняет проверку и не меняет статус: это
+        # метка (как ⚑BL у прокси), а не приговор. Домен фримейла пропускаем (в DBL не бывает).
+        try:
+            domain = account.email.split("@")[-1].lower() if "@" in account.email else ""
+            account.domain_is_freemail = _bl.is_freemail(domain)
+            if domain and not account.domain_is_freemail:
+                clean, hits = _bl.check_domain(domain)
+                account.domain_blacklist_clean = clean
+                account.domain_blacklist_hits = hits or None
+            else:
+                account.domain_blacklist_clean = True   # фримейл/нет домена → в DBL не числится
+                account.domain_blacklist_hits = None
+        except Exception:
+            account.domain_blacklist_clean = None
+        try:
+            ip = _bl.resolve_host_ip(account.host)
+            if ip:
+                clean, hits = _bl.check_ip(ip)
+                account.blacklist_clean = clean
+                account.blacklist_hits = hits or None
+            else:
+                account.blacklist_clean = None
+        except Exception:
+            account.blacklist_clean = None
+
     def check_single(
         self,
         account: SmtpAccount,
@@ -453,6 +490,7 @@ class SmtpManager:
                 
                 account.status = SmtpStatus.ALIVE
                 account.last_error = ""
+                self._apply_blacklist(account)  # метка блэклистов; аккаунт из-за неё НЕ хоронится
                 return True
 
             except smtplib.SMTPAuthenticationError as exc:

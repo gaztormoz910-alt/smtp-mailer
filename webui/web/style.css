@@ -167,6 +167,9 @@ body{
 .badge-st.dead{color:var(--error);background:var(--error-bg);border-color:rgba(248,113,113,.3)}
 .badge-st.untested{color:var(--dim);background:#1b1e26;border-color:var(--border)}
 .badge-st.checking{color:var(--warn);background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.3)}
+/* Живой, но в блэклисте: свой ОРАНЖЕВЫЙ цвет — отличается и от зелёного «Живой», и от красного
+   «Мёртвый», и от жёлтой «Проверки». Прокси живой (используется как запасной), но помечен. */
+.badge-st.blacklist{color:#fb923c;background:rgba(251,146,60,.14);border-color:rgba(251,146,60,.42)}
 .ping{font-family:var(--mono);font-size:11px;color:var(--dim);flex:0 0 auto}
 .flag{font-size:11px;color:var(--info);flex:0 0 auto}
 
