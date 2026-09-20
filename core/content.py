@@ -225,6 +225,26 @@ def html_to_plain_text(text: str) -> str:
     return text.strip()
 
 
+# ── plain-текст → лёгкий HTML (ссылка становится КЛИКАБЕЛЬНОЙ) ─────────────────
+# ПОЧЕМУ здесь: и реальная отправка (sender.build_message, html-часть alternative), и
+# превью письма должны превращать «сырой» текст в одинаковый безопасный HTML — иначе
+# в превью ссылка выглядит простым текстом (не кликабельна), хотя в отправленном письме
+# она обёрнута в <a href>. Держим ОДНУ функцию, чтобы превью = отправленное письмо.
+# HTML без стилей: экранируем текст, переносы → <br>, markdown-ссылки и голые URL → <a href>.
+_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^\s<)]+)\)')
+_A_TAG_SPLIT_RE = re.compile(r'(<a\s[^>]+>.*?</a>)', re.IGNORECASE)
+_RAW_URL_RE = re.compile(r'(https?://[^\s<]+)')
+
+
+def plain_to_html(body: str) -> str:
+    h = html.escape(body).replace("\n", "<br>\n")
+    h = _MD_LINK_RE.sub(r'<a href="\2">\1</a>', h)           # [текст](url) → <a>
+    parts = _A_TAG_SPLIT_RE.split(h)                          # не трогаем уже готовые <a>
+    for i in range(0, len(parts), 2):
+        parts[i] = _RAW_URL_RE.sub(r'<a href="\1">\1</a>', parts[i])  # голый URL → <a>
+    return "".join(parts)
+
+
 _RND_STRING_RE = re.compile(r"\[%%RndString\((\d+)\)%%\]")
 _RND_NUMBER_RE = re.compile(r"\[%%RndNumber\((\d+),(\d+)\)%%\]")
 

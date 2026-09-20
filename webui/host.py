@@ -28,7 +28,7 @@ import webview
 from core.content import (
     ContentManager,
     render as render_body, is_html as is_html_body, html_to_plain_text,
-    validate_template, find_content_issues,
+    plain_to_html, validate_template, find_content_issues,
 )
 from core.proxy_manager import ProxyManager, ProxyStatus, set_user_smtp_targets
 from core.smtp_manager import SmtpManager, SmtpStatus
@@ -661,9 +661,11 @@ class Api:
             text = html_to_plain_text(body)
         else:
             text = body
-            body_html = ("<pre style=\"white-space:pre-wrap;margin:0;"
-                         "font:14px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif;"
-                         "color:#1a1a1a\">" + _html.escape(body) + "</pre>")
+            # plain-тело показываем ТАК ЖЕ, как оно уйдёт получателю (html-часть письма):
+            # лёгкий HTML без стилей, где ссылка обёрнута в <a href> и КЛИКАБЕЛЬНА.
+            # Раньше тут был <pre>escape()</pre> — ссылка выглядела мёртвым текстом, хотя
+            # в отправленном письме (sender.build_message) она кликабельна. Теперь превью=письмо.
+            body_html = plain_to_html(body)
 
         preheader = " ".join(text.split())[:120]
         metrics = {

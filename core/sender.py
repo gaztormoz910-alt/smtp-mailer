@@ -17,7 +17,7 @@ from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Callable
 
-from core.content import ContentManager, html_to_plain_text
+from core.content import ContentManager, html_to_plain_text, plain_to_html
 from core.logger import JsonLogger
 from core.proxy_manager import ProxyManager
 from core.queue_manager import Recipient
@@ -31,9 +31,7 @@ STATE_FILE = STATE_DIR / "queue-state.json"
 import re
 _STRIP_TAGS_RE = re.compile(r'<[^>]+>')
 _WHITESPACE_RE = re.compile(r'\s+')
-_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^\s<)]+)\)')
-_A_TAG_SPLIT_RE = re.compile(r'(<a\s[^>]+>.*?</a>)', re.IGNORECASE)
-_RAW_URL_RE = re.compile(r'(https?://[^\s<]+)')
+# plain→html вынесен в core.content.plain_to_html (общий с превью, чтобы превью = письмо).
 
 def interleave_by_domain(recipients: list[Recipient]) -> list[Recipient]:
     by_domain = defaultdict(list)
@@ -189,12 +187,8 @@ def build_message(
         if is_html:
             html_body = body
         else:
-            html_body = html.escape(body).replace("\n", "<br>\n")
-            html_body = _MD_LINK_RE.sub(r'<a href="\2">\1</a>', html_body)
-            parts = _A_TAG_SPLIT_RE.split(html_body)
-            for i in range(0, len(parts), 2):
-                parts[i] = _RAW_URL_RE.sub(r'<a href="\1">\1</a>', parts[i])
-            html_body = "".join(parts)
+            # plain-тело → лёгкий HTML с КЛИКАБЕЛЬНОЙ ссылкой (общая функция с превью).
+            html_body = plain_to_html(body)
 
         c_plain = Charset(rnd_charset_str)
         c_plain.body_encoding = QP if rnd.random() < 0.5 else BASE64
