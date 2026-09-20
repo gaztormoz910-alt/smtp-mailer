@@ -182,8 +182,14 @@ body{
 /* ── превью контента (маленькое) ── */
 .preview{
   background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm);
-  padding:11px; margin:10px 0 0; flex:1 1 auto; min-height:60px; overflow:auto;
-  font-family:var(--mono); font-size:12px; color:var(--text); white-space:pre-wrap; line-height:1.5;
+  padding:11px; margin:10px 0 0; flex:1 1 auto; min-height:60px;
+  /* Вертикальный скролл — да (виден весь материал), горизонтальный — нет: длинные URL
+     без пробелов раньше не переносились (pre-wrap рвёт только по пробелам) и вылезали
+     за край, давая горизонтальную полосу. overflow-wrap/word-break переносят такой URL
+     на следующую строку — остаток виден без горизонтальной прокрутки. */
+  overflow-x:hidden; overflow-y:auto;
+  font-family:var(--mono); font-size:12px; color:var(--text);
+  white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; line-height:1.5;
 }
 .note{color:var(--dim);font-size:12px;line-height:1.5}
 
@@ -289,6 +295,9 @@ body.busy{cursor:progress}
   border-radius:8px;padding:8px 11px;font-size:12px;margin-bottom:8px;line-height:1.4}
 .pv-warn{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.55);color:#ff9b9b;
   border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.45;width:100%;max-width:860px}
+/* Нейтральная подсказка (не ошибка): напр. «база получателей не загружена». Синий, спокойный. */
+.pv-hint{background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.45);color:#9ec5ff;
+  border-radius:8px;padding:10px 14px;font-size:12.5px;line-height:1.45;width:100%;max-width:860px}
 /* Копирование письма для внешней проверки: мелкие кнопки полей + раскрываемая панель кода */
 .btn.xs{padding:4px 8px;font-size:11px}
 .pv-copy{display:flex;flex-wrap:wrap;gap:6px}

@@ -690,7 +690,10 @@ function openPreview() {
 }
 function loadPreview() {
   $("#pv-loading").style.display = "block"; $("#pv-client-frame").style.display = "none";
-  api().preview_email({ index: PV.index, name: "Анна", email: "anna@example.com" }).then((d) => {
+  // Имя/email получателя НЕ задаём — хост возьмёт случайного из РЕАЛЬНО загруженной базы
+  // (никаких выдуманных имён-заглушек). Пустой объект → на каждый «Другой вариант» новый получатель,
+  // поэтому и имя получателя меняется от письма к письму.
+  api().preview_email({ index: PV.index }).then((d) => {
     PV.data = d;
     $("#pv-format").textContent = d.format;
     const m = d.metrics || {};
@@ -702,6 +705,14 @@ function loadPreview() {
     if (w) {
       if (iss.length) { w.hidden = false; w.textContent = "⚠ Показанный шаблон УЙДЁТ ПОЛУЧАТЕЛЮ БИТЫМ (ошибка спинтакса: " + iss.join(", ") + "). Именно так письмо и придёт — сырой «{ … | … }». Почини шаблон в контенте."; }
       else { w.hidden = true; }
+    }
+    // Подсказка про имя получателя: если база не загружена, {{name}} в превью ПУСТОЕ
+    // (так и уйдёт nameless-получателю). Это не баг — просто ещё нет базы. С загруженной
+    // базой имя подставляется реальное и меняется на каждый «Другой вариант».
+    const hint = $("#pv-hint");
+    if (hint) {
+      if (d.no_recipients) { hint.hidden = false; hint.textContent = "ℹ База получателей не загружена — имя {{name}} в превью пустое. Загрузи базу во вкладке «Кампания»: тогда в письме будет реальное имя из неё, разное у каждого получателя."; }
+      else { hint.hidden = true; }
     }
     $("#pv-loading").style.display = "none"; $("#pv-client-frame").style.display = "block";
     renderScore(d.score);
@@ -906,7 +917,7 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
   const cntN = (arr, n) => { const d = arr.slice(0, n); return { total: arr.length, alive: d.filter((x) => x.status === "alive").length, dead: d.filter((x) => x.status === "dead").length, clean: d.filter((x) => x.status === "alive" && x.blacklist !== false).length, dirty: d.filter((x) => x.status === "alive" && x.blacklist === false).length }; };
   const itemsN = (arr, n) => arr.map((x, i) => i < n ? x : ({ ...x, status: "untested", ping: 0, country: "", error: "", blacklist: null, proxy: "" }));
   const demoBody = `<table width="100%"><tr><td align="center"><table width="560" style="background:#fff;border-radius:12px;overflow:hidden;font-family:Arial">
-    <tr><td style="background:#4ade80;padding:22px 28px;color:#08160c;font-size:22px;font-weight:800">Привет, Анна 👋</td></tr>
+    <tr><td style="background:#4ade80;padding:22px 28px;color:#08160c;font-size:22px;font-weight:800">Привет 👋</td></tr>
     <tr><td style="padding:26px 28px;color:#333;font-size:15px;line-height:1.6">Мы приготовили кое-что для тебя. Загляни, пока действует.<br><br>
     <a href="https://example.com/x" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:13px 26px;border-radius:8px;font-weight:700">Открыть предложение</a></td></tr>
     </table></td></tr></table>`;
@@ -964,7 +975,7 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     load_campaign_preset: (name) => P({ ok: true, name, cc: "cc@x.com", bcc: "", cc_pct: 20, bcc_pct: 0, control: "me@x.com", control_every_n: 5, consistent_links: true, email_only: false }),
     load_proxies_url: () => P({ added: 0, total: proxies.length, alive: 0, dead: 0 }),
     body_titles: () => P({ items: bodies.map((b, i) => ({ index: i, title: b.slice(0, 40) })) }),
-    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "Анна, у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, text: "hey Анна, I saved something for you. take a look: https://example.com/offer", is_html: true, format: "HTML", metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [], score: { overall: 62, grade: "B", grade_color: "#86efac", deliverability: 100, openrate: 48, clickability: 55, verdict: "Письмо рабочее, но есть точки роста.", ctr_estimate: { val: "0.6-1.0%", tag: "↓ чуть ниже нормы", up: false, norm: "0.8-1.5%" }, checks: { openrate: [{ ok: true, text: "Личное обращение в теме: есть" }, { ok: false, text: "Вопрос в теме: нет" }], clickability: [{ ok: true, text: "Длина тела: 120 симв. (норма 50-600)" }, { ok: false, text: "Анкор без глагола: \"take a look\"" }], deliverability: [{ ok: true, text: "Длина темы: 30 симв. (норма 20-70)" }] }, tips: [], issues: [], contrast: { ok: true, ratio: 8.1, text: "Контраст в норме (минимум 8.1:1)" }, structure: { score: 92, status: "отлично", issues: [{ t: "info", text: "Нет <meta charset> — не страшно (MIME задаёт utf-8)" }] }, vertical: "dating", anchor: "take a look" } }),
+    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, text: "hey, I saved something for you. take a look: https://example.com/offer", is_html: true, format: "HTML", no_recipients: false, metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [], score: { overall: 62, grade: "B", grade_color: "#86efac", deliverability: 100, openrate: 48, clickability: 55, verdict: "Письмо рабочее, но есть точки роста.", ctr_estimate: { val: "0.6-1.0%", tag: "↓ чуть ниже нормы", up: false, norm: "0.8-1.5%" }, checks: { openrate: [{ ok: true, text: "Личное обращение в теме: есть" }, { ok: false, text: "Вопрос в теме: нет" }], clickability: [{ ok: true, text: "Длина тела: 120 симв. (норма 50-600)" }, { ok: false, text: "Анкор без глагола: \"take a look\"" }], deliverability: [{ ok: true, text: "Длина темы: 30 симв. (норма 20-70)" }] }, tips: [], issues: [], contrast: { ok: true, ratio: 8.1, text: "Контраст в норме (минимум 8.1:1)" }, structure: { score: 92, status: "отлично", issues: [{ t: "info", text: "Нет <meta charset> — не страшно (MIME задаёт utf-8)" }] }, vertical: "dating", anchor: "take a look" } }),
     score_variants: () => P({ available: true, count: 40, min: 41, median: 58, max: 79, worst: { overall: 41, grade: "D", subject: "you almost missed this...", anchor: "take a look", fails: ["Конкретика / интрига в теме: нет", "Вопрос в теме: нет", "Эмодзи в теме: нет", "Призыв к действию: нет", "Анкор без глагола: \"take a look\""] } }),
     // Демо: показываем предупреждение о битом теле #3, чтобы жёлтая строка на карточке была видна.
     content_issues: () => P({ subjects: [], bodies: [{ n: 3, why: "незакрытая { ×1 (демо)" }] }),
