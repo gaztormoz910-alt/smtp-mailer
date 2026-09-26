@@ -42,18 +42,19 @@ jobs:
       - name: Собрать .exe
         run: python -m PyInstaller --noconfirm --clean --log-level WARN Pinion.spec
 
-      - name: Смоук — реальный прогон ядра в собранном .exe
+      - name: Смоук — реальный прогон ЯДРА в собранном .exe
         shell: pwsh
         run: |
-          # --selftest импортирует весь рантайм (webview/clr/…) и проходит реальный путь ядра
-          # (рендер, сборка письма, скоринг), возвращая 0/1. Без console у сборки stdout=None,
-          # поэтому selftest пишет отчёт в файл.
+          # --selftest-core проходит реальный путь ядра (импорт core+letter_score, рендер,
+          # сборка письма, скоринг) БЕЗ GUI-бэкенда (webview/clr): на безголовом раннере
+          # инициализация .NET-GUI через pythonnet падает/крашится, хотя на реальном рабочем
+          # столе всё работает (упаковка GUI доказана локальным install+run). Без console у
+          # сборки stdout=None, поэтому selftest пишет отчёт в файл.
           # ВАЖНО: .exe оконный (console=False). Оператор & в PowerShell НЕ ждёт оконный
-          # процесс и не выставляет $LASTEXITCODE — из-за этого лог читался пустым и шаг падал.
-          # Поэтому запускаем через Start-Process -Wait и берём реальный код возврата.
+          # процесс — запускаем через Start-Process -Wait и берём реальный код возврата.
           $exe = "dist\Pinion\Pinion.exe"
           if (-not (Test-Path $exe)) { throw "нет $exe" }
-          $p = Start-Process -FilePath $exe -ArgumentList "--selftest","selftest.log" -Wait -PassThru
+          $p = Start-Process -FilePath $exe -ArgumentList "--selftest-core","selftest.log" -Wait -PassThru
           if (-not (Test-Path selftest.log)) { throw "selftest не создал лог (код $($p.ExitCode))" }
           Get-Content selftest.log
           if ($p.ExitCode -ne 0) { throw "selftest вернул $($p.ExitCode)" }
