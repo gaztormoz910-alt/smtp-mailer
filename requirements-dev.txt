@@ -1,0 +1,5 @@
+# Инструменты сборки/проверки (НЕ рантайм приложения):
+-r requirements.txt
+pyinstaller==6.22.2     # пин: воспроизводимая сборка
+numpy                   # tools/make_icon.py, tools/check_icon.py — линейный ресемплинг иконки
+pillow                  # tools/make_icon.py, tools/check_icon.py — работа с изображениями
