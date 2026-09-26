@@ -10,6 +10,11 @@ from pathlib import Path
 
 from core.appenv import writable_base, APP_NAME, app_version
 
+# Каталог запуска ДО chdir: относительные пути из аргументов (напр. лог --selftest от CI)
+# должны считаться отсюда, иначе после chdir в BASE они уедут в папку .exe и вызвавший
+# их не найдёт.
+_ORIG_CWD = Path.cwd()
+
 # Каталоги данных/логов создаём РЯДОМ С .exe (в заморозке) или в корне исходников.
 # chdir туда же: часть кода пишет по относительным путям — так они не разъедутся.
 BASE = writable_base()
@@ -214,7 +219,9 @@ def run_selftest(log_path: str, core_only: bool = False) -> int:
 def main() -> None:
     arg = sys.argv[1].lower() if len(sys.argv) > 1 else ""
     if arg in ("--selftest", "--selftest-core"):
-        log = sys.argv[2] if len(sys.argv) > 2 else str(BASE / "selftest.log")
+        raw = sys.argv[2] if len(sys.argv) > 2 else str(BASE / "selftest.log")
+        # относительный путь — от каталога запуска (до chdir), чтобы CI нашёл лог там же.
+        log = raw if os.path.isabs(raw) else str(_ORIG_CWD / raw)
         sys.exit(run_selftest(log, core_only=(arg == "--selftest-core")))
     if arg in ("ctk", "old", "tk", "gui"):
         run_ctk()
