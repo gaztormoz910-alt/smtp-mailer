@@ -1,5 +1,8 @@
-customtkinter
-python-dotenv
-requests
-PySocks
-pywebview
+# Рантайм-зависимости Pinion. Правило: КАЖДЫЙ сторонний импорт кода — здесь,
+# иначе PyInstaller молча не положит пакет и релиз упадёт у пользователя.
+customtkinter          # старый интерфейс (python main.py ctk)
+python-dotenv          # исторически; в коде сейчас не импортируется (оставлено безвредно)
+requests               # core/proxy_manager: гео и авто-обновление списков по URL
+PySocks                # import socks: туннелирование SMTP через SOCKS-прокси
+pywebview              # веб-интерфейс (вход по умолчанию)
+pythonnet             # import clr: Windows-бэкенд pywebview (edgechromium); pywebview тянет его на win32, пиним явно

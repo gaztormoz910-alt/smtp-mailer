@@ -1,0 +1,106 @@
+name: build-installer
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:          # кнопка "Run workflow": собрать без публикации
+
+permissions:
+  contents: write             # нужно, чтобы создать релиз и залить в него файл
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Установить зависимости
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.22.2      # пин: воспроизводимая сборка
+
+      - name: Определить версию
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' -replace '^v', '' } else { '0.0.0' }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Записать версию в единственный источник
+        run: python tools/set_version.py ${{ steps.ver.outputs.version }}
+
+      - name: Собрать .exe
+        run: python -m PyInstaller --noconfirm --clean --log-level WARN Pinion.spec
+
+      - name: Смоук — реальный прогон ядра в собранном .exe
+        shell: pwsh
+        run: |
+          # Запуск ОКНА почти ничего не доказывает и может зависнуть в CI. Вместо этого
+          # гоняем встроенный --selftest: он импортирует весь рантайм (webview/clr/…) и
+          # проходит реальный путь ядра (рендер, сборка письма, скоринг), возвращая 0/1.
+          # Без console у сборки stdout=None, поэтому selftest пишет отчёт в файл.
+          $exe = "dist\Pinion\Pinion.exe"
+          if (-not (Test-Path $exe)) { throw "нет $exe" }
+          & $exe --selftest "selftest.log"
+          if ($LASTEXITCODE -ne 0) { Get-Content selftest.log; throw "selftest вернул $LASTEXITCODE" }
+          $log = Get-Content selftest.log -Raw
+          if ($log -notmatch 'SELFTEST_OK') { $log; throw "нет токена SELFTEST_OK" }
+          Get-Content selftest.log
+
+      - name: Проверить версию в ресурсе .exe
+        shell: pwsh
+        run: |
+          $vi = (Get-Item "dist\Pinion\Pinion.exe").VersionInfo.FileVersion
+          $want = "${{ steps.ver.outputs.version }}"
+          if ($vi -ne $want) { throw "версия в .exe '$vi' != тега '$want'" }
+          "exe FileVersion=$vi"
+
+      - name: Собрать установщик
+        shell: pwsh
+        run: |
+          # На windows-latest Inno Setup обычно уже стоит; если образ сменится и его не
+          # окажется — ставим сами, чтобы workflow не развалился молча.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe не найден" }
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" Pinion.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Проверить установщик
+        shell: pwsh
+        run: |
+          $f = "installer\Pinion-setup.exe"
+          if (-not (Test-Path $f)) { throw "нет файла $f" }
+          $mb = [math]::Round((Get-Item $f).Length / 1MB, 1)
+          "installer = $mb MB"
+          if ($mb -lt 15) { throw "установщик подозрительно мал: $mb MB" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pinion-setup
+          path: installer/Pinion-setup.exe
+
+      - name: Опубликовать релиз
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Pinion ${{ steps.ver.outputs.version }}
+          files: installer/Pinion-setup.exe
+          body: |
+            **Windows 10/11, 64-bit.** Скачайте `Pinion-setup.exe` ниже и запустите —
+            Python и все библиотеки внутри, ставить отдельно ничего не нужно.
+
+            При первом запуске Windows покажет синий экран «Windows защитила ваш
+            компьютер». Это ожидаемо для любого установщика без платной цифровой
+            подписи: нажмите **Подробнее** → **Выполнить в любом случае**.
+
+            Программа устанавливается в профиль пользователя, права администратора
+            не требуются.

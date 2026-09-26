@@ -24,8 +24,10 @@ from core.queue_manager import Recipient
 from core.smtp_manager import SmtpManager, SmtpStatus, connect_smtp, smtp_keep_alive
 from core.stats import SendStats
 from core.domain_config import get_delay, get_warmup_factor, get_domain_group, get_max_per_conn
+from core.appenv import writable_base
 
-STATE_DIR = Path(__file__).resolve().parent.parent / "data"
+# Состояние очереди пишется рядом с .exe (в заморозке), а не в _internal.
+STATE_DIR = writable_base() / "data"
 STATE_FILE = STATE_DIR / "queue-state.json"
 
 import re

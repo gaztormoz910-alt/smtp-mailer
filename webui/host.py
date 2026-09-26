@@ -50,7 +50,10 @@ try:
 except ImportError:  # запуск с CWD=webui
     from letter_score import score_letter as _score_letter
 
-WEB_DIR = Path(__file__).resolve().parent / "web"
+# В заморозке web/ лежит в _MEIPASS/webui/web (кладётся через datas), а не рядом
+# с host.py — поэтому путь берём через resource_path, а не от __file__.
+from core.appenv import resource_path as _res, app_version as _app_version, APP_NAME as _APP_NAME
+WEB_DIR = _res("webui/web")
 _rnd = SystemRandom()
 
 # Диалог выбора файлов: одни и те же типы для всех загрузок данных.
@@ -1040,8 +1043,10 @@ class Api:
 
 def main() -> None:
     api = Api()
+    # Заголовок начинается с имени приложения + версия: по нему CI-смоук и проверки
+    # находят окно (title обязан начинаться с "Pinion").
     webview.create_window(
-        "SMTP MAILER",
+        f"{_APP_NAME} {_app_version()}",
         str(WEB_DIR / "index.html"),
         js_api=api,
         width=1400,

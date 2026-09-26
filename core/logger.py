@@ -12,7 +12,10 @@ from typing import Any
 
 import queue
 
-LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+from core.appenv import writable_base
+
+# Пишем рядом с .exe (в заморозке), а не в _internal: это пользовательские логи.
+LOGS_DIR = writable_base() / "logs"
 
 
 class JsonLogger:

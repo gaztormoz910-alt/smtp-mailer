@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-PRESETS_DIR = Path(__file__).resolve().parent.parent / "data" / "presets"
+from core.appenv import writable_base
+
+# Рядом с .exe (в заморозке), не в _internal: пресеты создаёт пользователь.
+PRESETS_DIR = writable_base() / "data" / "presets"
 
 
 def save_preset(filepath: str, data: dict) -> None:
