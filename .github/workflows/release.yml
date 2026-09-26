@@ -45,17 +45,20 @@ jobs:
       - name: Смоук — реальный прогон ядра в собранном .exe
         shell: pwsh
         run: |
-          # Запуск ОКНА почти ничего не доказывает и может зависнуть в CI. Вместо этого
-          # гоняем встроенный --selftest: он импортирует весь рантайм (webview/clr/…) и
-          # проходит реальный путь ядра (рендер, сборка письма, скоринг), возвращая 0/1.
-          # Без console у сборки stdout=None, поэтому selftest пишет отчёт в файл.
+          # --selftest импортирует весь рантайм (webview/clr/…) и проходит реальный путь ядра
+          # (рендер, сборка письма, скоринг), возвращая 0/1. Без console у сборки stdout=None,
+          # поэтому selftest пишет отчёт в файл.
+          # ВАЖНО: .exe оконный (console=False). Оператор & в PowerShell НЕ ждёт оконный
+          # процесс и не выставляет $LASTEXITCODE — из-за этого лог читался пустым и шаг падал.
+          # Поэтому запускаем через Start-Process -Wait и берём реальный код возврата.
           $exe = "dist\Pinion\Pinion.exe"
           if (-not (Test-Path $exe)) { throw "нет $exe" }
-          & $exe --selftest "selftest.log"
-          if ($LASTEXITCODE -ne 0) { Get-Content selftest.log; throw "selftest вернул $LASTEXITCODE" }
-          $log = Get-Content selftest.log -Raw
-          if ($log -notmatch 'SELFTEST_OK') { $log; throw "нет токена SELFTEST_OK" }
+          $p = Start-Process -FilePath $exe -ArgumentList "--selftest","selftest.log" -Wait -PassThru
+          if (-not (Test-Path selftest.log)) { throw "selftest не создал лог (код $($p.ExitCode))" }
           Get-Content selftest.log
+          if ($p.ExitCode -ne 0) { throw "selftest вернул $($p.ExitCode)" }
+          $log = Get-Content selftest.log -Raw
+          if ($log -notmatch 'SELFTEST_OK') { throw "нет токена SELFTEST_OK" }
 
       - name: Проверить версию в ресурсе .exe
         shell: pwsh
