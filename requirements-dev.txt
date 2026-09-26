@@ -1,5 +1,5 @@
-# Инструменты сборки/проверки (НЕ рантайм приложения):
+# Build/verification tooling (NOT the app runtime). ASCII only (see requirements.txt note).
 -r requirements.txt
-pyinstaller==6.22.2     # пин: воспроизводимая сборка
-numpy                   # tools/make_icon.py, tools/check_icon.py — линейный ресемплинг иконки
-pillow                  # tools/make_icon.py, tools/check_icon.py — работа с изображениями
+pyinstaller==6.22.2     # pinned: reproducible build
+numpy                   # tools/make_icon.py, tools/check_icon.py — linear-light icon resample
+pillow                  # tools/make_icon.py, tools/check_icon.py — image handling

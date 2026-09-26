@@ -11,6 +11,11 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # UTF-8 mode: чтобы pip/PyInstaller/наши скрипты читали UTF-8-файлы (requirements,
+      # version_info.txt) при локали cp1252 на раннере, а не падали на не-ASCII байтах.
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
