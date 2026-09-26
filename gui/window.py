@@ -29,7 +29,7 @@ class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
 
-        self.title("SMTP MAILER")
+        self.title("Pinion")
         self.geometry("1400x800")
         self.minsize(1024, 768)
         self.configure(fg_color=COLOR_BG)

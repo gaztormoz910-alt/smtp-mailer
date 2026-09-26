@@ -1,4 +1,4 @@
-// Фронтенд SMTP MAILER. Общается с Python-бэкендом через мост pywebview:
+// Фронтенд Pinion. Общается с Python-бэкендом через мост pywebview:
 // window.pywebview.api.<метод>() возвращает Promise с JSON-результатом.
 //
 // ОПТИМИЗАЦИЯ БОЛЬШИХ ОБЪЁМОВ: фронт НИКОГДА не тащит весь массив данных. Мост
@@ -932,7 +932,7 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     </table></td></tr></table>`;
   const legendLinks = `[[LINK]] (${N_LINK})`;
   const mock = {
-    ping: () => P({ ok: true, app: "SMTP MAILER (demo)" }),
+    ping: () => P({ ok: true, app: "Pinion (demo)" }),
     status: () => P({ subjects: N_SUBJ, bodies: 7, senders: sndrs.length, links: N_LINK, recipients: N_REC, proxies: viewCnt(proxies, pxChecked), smtp: viewCnt(smtps, smChecked) }),
     page_content: (kind, o, l) => {
       const src = kind === "subjects" ? subj : kind === "senders" ? sndrs : kind === "bodies" ? bodies : kind === "links" ? links : [];

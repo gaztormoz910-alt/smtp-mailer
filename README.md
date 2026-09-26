@@ -1,142 +1,210 @@
-# SMTP MAILER
+# Pinion
 
-SMTP mass mailing tool with proxy support, spintax, anti-spam headers,
-real-time statistics, and campaign management.
+**Pinion** — десктопное Windows-приложение для массовых email-рассылок через пул
+SMTP-аккаунтов и SOCKS-прокси. Интерфейс по умолчанию — веб (pywebview, тёмная
+тема); сохранён и старый на CustomTkinter. Ниша контента — Dating / знакомства:
+каждое письмо должно выглядеть как личное сообщение живого человека и довести
+получателя до клика, не попав в спам.
 
-## Quick Start
+---
 
-### Windows
-Double-click **`start.bat`** or run in terminal:
-```
-python main.py
-```
+## Установка (готовый .exe)
 
-### macOS / Linux
-```bash
-chmod +x start.command
-./start.command
-```
+Скачать последнюю версию установщика (постоянная ссылка, всегда указывает на свежий релиз):
 
-### Manual
+**[⬇ Pinion-setup.exe](https://github.com/Pinion/smtp-mailer/releases/latest/download/Pinion-setup.exe)**
+
+1. Скачайте `Pinion-setup.exe` и запустите двойным кликом.
+2. При первом запуске Windows покажет синий экран **«Windows защитила ваш
+   компьютер»** — это ожидаемо для любого установщика без платной цифровой
+   подписи. Нажмите **Подробнее → Выполнить в любом случае**.
+3. Программа ставится в профиль пользователя
+   (`%LOCALAPPDATA%\Programs\Pinion`), **права администратора не нужны**.
+   Python и все библиотеки уже внутри — ставить отдельно ничего не требуется.
+
+Требования: **Windows 10/11, 64-bit**.
+
+---
+
+## Запуск из исходников
+
 ```bash
 pip install -r requirements.txt
-python main.py
+python main.py            # веб-интерфейс (pywebview) — по умолчанию
+python main.py ctk        # старый интерфейс на CustomTkinter
 ```
 
-## Features
+Зависимости: `pywebview`, `pythonnet` (Windows-бэкенд pywebview), `customtkinter`,
+`PySocks`, `requests`. Python 3.13.
 
-| Feature | Description |
+Служебные режимы (headless-прогон ядра для CI/самопроверки, без окна):
+
+```bash
+python main.py --selftest selftest.log        # ядро + GUI-бэкенд (best-effort)
+python main.py --selftest-core selftest.log   # только ядро, без GUI-импортов
+```
+
+При старте рядом с `.exe` (в сборке) или в корне исходников создаются каталоги
+`data/`, `data/presets/`, `logs/` — путь считает `core/appenv.py`.
+
+---
+
+## Возможности
+
+| Возможность | Описание |
 |---|---|
-| **Proxy Support** | SOCKS4/5, HTTP(S) — file or URL loading, auto-check, rotation |
-| **SMTP Accounts** | SSL/STARTTLS, PySocks tunneling, round-robin rotation |
-| **Spintax** | Recursive `{a|b|{c|d}}` in subjects & bodies |
-| **Link Macros** | `[[LINK]]`, `[[LINK1]]`..`[[LINKN]]` with consistent mode |
-| **Sender Names** | Random names, RFC 2047 encoding via `formataddr` |
-| **Email Bodies** | Multi-body with `===END===` delimiter, auto HTML detection |
-| **Recipients** | CSV (email + name) or TXT, auto-format detection |
-| **Control Inject** | Inject control emails every N messages (round-robin) |
-| **CC / BCC** | Probabilistic CC/BCC with configurable percentage |
-| **Anti-Spam** | `Message-ID`, `Date`, `MIME-Version`, UTF-8, `formataddr` |
-| **Statistics** | Real-time dashboard, per-SMTP/per-proxy stats |
-| **JSON Logs** | Structured daily logs, export to JSON/CSV |
-| **Save State** | Resume interrupted campaigns from `queue-state.json` |
-| **Presets** | Save/load all settings to JSON for one-click campaigns |
+| **Прокси** | SOCKS5 (HTTP/HTTPS принудительно → socks5), загрузка из файла/URL, авто-обновление; проверка живости = реальный TCP-тест SMTP-серверов через прокси + DNSBL + гео + скоринг |
+| **SMTP-аккаунты** | `host:port:email:password` (гибкие разделители), туннелирование через PySocks, SSL (465) / STARTTLS (587) / PLAIN, поддельный EHLO, ротация round-robin |
+| **Спинтакс** | Рекурсивный `{a|{b|c}}` любой вложенности в темах и телах |
+| **Переменные** | `{{name}}`, `{{email}}`, `{{senderName}}` |
+| **Ссылки** | Пулы `[[LINK]]`, `[[LINK1]]`…, режим единых ссылок, уникальный GET-параметр на каждую ссылку |
+| **Макросы** | `[%%RndString(n)%%]`, `[%%RndNumber(lo,hi)%%]` |
+| **Уникализация HTML** | Софт сам добавляет CSS-шум, реалистичные комментарии, вариацию пробелов в тегах. Омоглифы / entities / zero-width **убраны** (2026 — детектятся фильтрами как фишинг) |
+| **Анти-фингерпринтинг** | Имитация реального клиента по домену: boundary, Message-ID, порядок заголовков, charset/кодировка, Date со сдвигом, вариация имени отправителя, Reply-To ~35% |
+| **Многопоточная отправка** | Один воркер на живой аккаунт, общая очередь, перемешанная по доменам, профили задержек/лимитов по провайдеру + прогрев |
+| **CC / BCC** | Вероятностные CC/BCC с настраиваемым процентом (BCC — только в envelope) |
+| **Контрольные адреса** | Инъекция контрольных писем каждые N сообщений |
+| **Статистика** | Дашборд в реальном времени, метрики per-SMTP / per-proxy, экспорт JSON/CSV |
+| **Логи** | Структурные JSON-lines (общий + лог отправки), асинхронная запись |
+| **Возобновление** | Продолжение прерванной кампании из `data/queue-state.json` |
+| **Пресеты** | Сохранение/загрузка всех настроек кампании в JSON |
 
-## Tabs
+---
 
-1. **Setup** — Load proxies and SMTP accounts, check connectivity
-2. **Content** — Load subjects, bodies, links, sender names; spintax sandbox
-3. **Campaign** — Load recipients, configure CC/BCC, control inject, presets
-4. **Send** — Test send, start/stop/pause campaign, speed control
-5. **Stats** — Real-time dashboard, per-account stats, export
+## Вкладки
 
-## File Formats
+1. **Настройки** — загрузка прокси и SMTP-аккаунтов, «Проверить все».
+2. **Контент** — темы, тела, ссылки, имена отправителей + песочница-предпросмотр.
+3. **Кампания** — база получателей, CC/BCC, control inject, пресеты, «Создать очередь».
+4. **Отправка** — тестовое письмо, параметры скорости, СТАРТ/СТОП/ПАУЗА, возобновление.
+5. **Статистика** — прогресс, карточки, таблицы SMTP/прокси, экспорт.
 
-### Proxies (`proxies.txt`)
+---
+
+## Форматы входных файлов
+
+### Прокси (`.txt`)
 ```
 socks5://user:pass@host:port
-http://host:port
+socks5://host:port
 host:port:user:pass
+host:port
 ```
+`#` — комментарий. HTTP/HTTPS автоматически переводятся в socks5 (для туннелирования SMTP нужен SOCKS).
 
-### SMTP (`smtps.txt`)
-Format: `host:port:email:password` (encryption auto-detected by port: 465 → SSL, 587 → STARTTLS, other → plain/STARTTLS). Password may contain colons.
+### SMTP (`.txt`)
+Формат `host:port:email:password` (пароль может содержать `:`; парсер также пробует
+разделители `| ; ,` и таб). Шифрование по порту: 465 → SSL, 587 → STARTTLS, иначе PLAIN/STARTTLS.
 ```
 smtp.gmail.com:587:user@gmail.com:password
 mail.example.com:465:sender@example.com:secret
 ```
-Optional per-account proxy: append `|>proxy` — e.g. `smtp.example.com:587:u@x.com:pw|>socks5://1.2.3.4:1080`.
 
-### Subjects (`subjects.txt`)
+### Темы (`subjects.txt`)
+Один спинтакс-шаблон на строку:
 ```
-{Hello|Hi|Hey} {{name}}, {check this|look at this}!
+{Привет|Здравствуй} {{name}}, {это ты|тебя искал}?
 ```
 
-### Bodies (`bodies.txt`)
+### Тела (`bodies.txt` / `.html`)
+Блоки, разделённые строкой `===END===`; HTML/plain определяется автоматически;
+markdown-ограждения ``` срезаются.
 ```html
-<html><body><p>Hi {{name}}, visit [[LINK]]</p></body></html>
+<html><body><p>Привет, {{name}}! Загляни: [[LINK]]</p></body></html>
 ===END===
-<html><body><p>Dear {{name}}, click [[LINK1]]</p></body></html>
+Привет, {{name}}. Открой: [[LINK1]]
 ```
 
-### Recipients (`recipients.csv`)
-```csv
-email,name
-john@example.com,John
-alice@test.org,Alice
-```
+### Ссылки (`links.txt`, `links1.txt`, …)
+Один URL (или спинтакс-шаблон) на строку; имя файла задаёт макрос
+`[[LINK]]` / `[[LINK1]]` / …
 
-## Build Executable (optional)
+### Имена отправителей (`senders.txt`)
+Одно имя на строку.
 
-Not required for normal use — the `start.bat` / `start.command` launchers are simpler and avoid build issues. To make a standalone binary:
+### База получателей
+`.txt` (email по строке, опционально `email,name`) или `.csv` (колонка `email`
+обязательна, `name`/`имя` — опционально; разделитель `,` или `;` — автоопределение).
+
+---
+
+## Сборка и релиз
+
+Версия хранится в **едином источнике** — файле `VERSION`.
+
+### Выпуск новой версии (через GitHub Actions)
+
+Один тег запускает сборку и публикацию:
 
 ```bash
-pip install pyinstaller
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
-customtkinter ships asset files (themes, fonts) that PyInstaller must bundle via `--add-data`. The path separator differs per OS: `;` on Windows, `:` on macOS/Linux.
+GitHub Actions (`.github/workflows/release.yml`) на `windows-latest`:
+собирает `.exe` (PyInstaller, `Pinion.spec`, onedir: pywebview + pythonnet +
+customtkinter), гоняет смоук `Pinion.exe --selftest-core` (реальный путь ядра),
+проверяет версию в ресурсе `.exe`, собирает установщик (Inno Setup, `Pinion.iss`)
+и публикует `Pinion-setup.exe` в GitHub Releases на постоянную ссылку
+`releases/latest/download/Pinion-setup.exe`.
 
-**Windows:**
-```bat
-for /f %i in ('python -c "import customtkinter,os;print(os.path.dirname(customtkinter.__file__))"') do set CTK=%i
-pyinstaller --onefile --windowed --name CharlyMailer --add-data "%CTK%;customtkinter/" main.py
-```
+### Локальная сборка
 
-**macOS / Linux:**
 ```bash
-CTK=$(python3 -c "import customtkinter,os;print(os.path.dirname(customtkinter.__file__))")
-pyinstaller --onefile --windowed --name CharlyMailer --add-data "$CTK:customtkinter/" main.py
-```
-The executable appears in the `dist/` folder. Without `--add-data` for customtkinter the built app fails to start (missing assets).
-
-## Project Structure
-```
-├── main.py              # Entry point
-├── start.bat            # Windows launcher
-├── start.command        # macOS/Linux launcher
-├── requirements.txt     # Dependencies
-├── core/
-│   ├── content.py       # Spintax, macros, subjects, bodies, links, senders
-│   ├── logger.py        # JSON-lines logger, send log, export
-│   ├── presets.py        # Save/load campaign presets
-│   ├── proxy_manager.py # Proxy parsing, checking, rotation
-│   ├── queue_manager.py # Recipients, control inject, queue building
-│   ├── sender.py        # MIME builder, test send, campaign engine
-│   ├── smtp_manager.py  # SMTP accounts, PySocks, connectivity
-│   ├── stats.py         # Thread-safe real-time statistics
-│   └── storage.py       # File I/O helpers
-├── gui/
-│   ├── theme.py         # Brand palette & tokens
-│   ├── window.py        # Main window, shared managers, presets
-│   ├── tab_setup.py     # Proxy & SMTP configuration
-│   ├── tab_content.py   # Content management (subjects, bodies, links, senders)
-│   ├── tab_campaign.py  # Recipients, CC/BCC, control inject, presets
-│   ├── tab_send.py      # Test send, campaign controls
-│   └── tab_stats.py     # Statistics dashboard
-├── data/                # Runtime data (queue state, presets)
-└── logs/                # Daily JSON logs
+python tools/set_version.py 1.0.1     # записать версию в VERSION + version_info.txt
+python -m PyInstaller --noconfirm --clean Pinion.spec
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion=1.0.1" Pinion.iss
 ```
 
-## License
+Неочевидности локальной сборки:
+- Собирать **вне OneDrive** (`--distpath`/`--workpath` в temp), иначе OneDrive лочит файлы.
+- Inno Setup стоит в **user-scope**: `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`.
+- В заморозке данные пишутся рядом с `.exe` через `core/appenv.writable_base()`,
+  ресурсы читаются из `_MEIPASS` через `resource_path`.
 
-Private use only.
+### Проверочные скрипты
+
+```bash
+python tools/verify_release_setup.py   # целостность пайплайна релиза (токен RELEASE_SETUP_OK)
+python test_ablock_fix.py              # регресс контента: нет обфускации, ссылки целы
+```
+
+---
+
+## Структура проекта
+
+```
+├── main.py               # точка входа: веб / ctk / --selftest
+├── run_web.py            # прямой запуск веб-интерфейса
+├── VERSION               # единый источник версии
+├── Pinion.spec           # сборка PyInstaller (onedir)
+├── Pinion.iss            # установщик Inno Setup
+├── core/                 # ядро (логика, без GUI)
+│   ├── appenv.py         # пути и версия (resource_path / writable_base / app_version)
+│   ├── storage.py        # загрузка файлов/URL
+│   ├── proxy_manager.py  # прокси: парсинг, проверка, ротация
+│   ├── smtp_manager.py   # SMTP: парсинг, подключение через прокси, проверка
+│   ├── content.py        # спинтакс, переменные, ссылки, уникализация
+│   ├── queue_manager.py  # получатели, control inject, сборка очереди
+│   ├── domain_config.py  # профили отправки по группам доменов
+│   ├── sender.py         # движок рассылки, сборка MIME
+│   ├── stats.py          # потокобезопасная статистика
+│   ├── logger.py         # JSON-lines логгер, экспорт
+│   ├── presets.py        # сохранение/загрузка пресетов
+│   ├── blacklist.py      # общий модуль DNSBL
+│   └── countries.py      # ISO-код → русское название страны
+├── webui/                # веб-интерфейс (по умолчанию)
+│   ├── host.py           # pywebview-хост, мост js_api
+│   ├── letter_score.py   # локальный скорер письма в превью
+│   └── web/              # index.html, app.js, style.css
+├── gui/                  # старый интерфейс CustomTkinter
+├── tools/                # make_icon / check_icon / set_version / verify_release_setup
+├── data/                 # рантайм: состояние очереди, пресеты
+└── logs/                 # ежедневные JSON-логи
+```
+
+---
+
+## Лицензия
+
+Только для приватного использования.

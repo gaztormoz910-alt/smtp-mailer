@@ -1,7 +1,7 @@
-"""Запуск нового веб-интерфейса SMTP MAILER (pywebview + HTML/CSS/JS).
+"""Запуск веб-интерфейса Pinion (pywebview + HTML/CSS/JS).
 
-Старый интерфейс на CustomTkinter по-прежнему доступен через `python main.py`.
-Этот файл — точка входа для новой версии интерфейса на время миграции.
+Старый интерфейс на CustomTkinter доступен через `python main.py ctk`.
+Этот файл — прямая точка входа в веб-интерфейс (то же, что `python main.py`).
 """
 from pathlib import Path
 

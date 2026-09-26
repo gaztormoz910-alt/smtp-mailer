@@ -1,9 +1,9 @@
 #!/bin/bash
-# SMTP MAILER — macOS / Linux launcher
+# Pinion — macOS / Linux launcher
 # Usage: chmod +x start.command && ./start.command
 
 echo "============================================"
-echo "  SMTP MAILER — Launcher"
+echo "  Pinion — Launcher"
 echo "============================================"
 echo ""
 
@@ -21,5 +21,5 @@ echo "[*] Installing dependencies..."
 pip3 install -r requirements.txt --quiet 2>/dev/null || pip install -r requirements.txt --quiet
 
 echo ""
-echo "[*] Starting SMTP MAILER..."
+echo "[*] Starting Pinion..."
 python3 main.py

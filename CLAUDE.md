@@ -1,4 +1,4 @@
-# CLAUDE.md — SMTP MAILER
+# CLAUDE.md — Pinion
 
 Справочник по архитектуре и правилам проекта для любого агента, работающего в
 этом репозитории. Документ описывает **фактическое поведение текущего кода**
@@ -12,11 +12,13 @@
 
 ## Что это за проект
 
-SMTP MAILER — десктопное приложение на Python + CustomTkinter (тёмная тема) для
-**массовых email-рассылок** через пул SMTP-аккаунтов и SOCKS-прокси. Ниша, под
+Pinion — десктопное Windows-приложение на Python для **массовых email-рассылок**
+через пул SMTP-аккаунтов и SOCKS-прокси. Интерфейс по умолчанию — веб (pywebview,
+тёмная тема); сохранён и старый на CustomTkinter (`python main.py ctk`). Ниша, под
 которую затачивался контент, — Dating / знакомства; цель каждого письма —
 выглядеть как личное сообщение живого человека и довести получателя до клика по
-ссылке, не попав в спам.
+ссылке, не попав в спам. Готовый установщик `Pinion-setup.exe` публикуется в
+GitHub Releases (см. раздел «Сборка, установщик и релиз»).
 
 Ключевые возможности:
 
@@ -35,9 +37,12 @@ SMTP MAILER — десктопное приложение на Python + CustomTk
 - Пресеты кампаний (JSON), возобновление прерванной кампании из сохранённого
   состояния очереди, CC/BCC, контрольные адреса (control inject).
 
-Запуск: `python main.py` (нужны зависимости: `customtkinter`, `PySocks`,
-`requests`). При старте `main.py` создаёт каталоги `data/`, `data/presets/`,
-`logs/`.
+Запуск из исходников: `python main.py` — веб-интерфейс (pywebview); `python main.py ctk`
+— старый CustomTkinter; `python main.py --selftest <лог>` / `--selftest-core <лог>` —
+headless-прогон ядра для CI/проверок. Зависимости: `customtkinter`, `PySocks`,
+`requests`, `pywebview`, `pythonnet` (Windows-бэкенд pywebview). При старте создаются
+каталоги `data/`, `data/presets/`, `logs/` рядом с `.exe` (в сборке) или в корне
+исходников — путь считает `core/appenv.py`.
 
 ---
 
@@ -61,6 +66,8 @@ SMTP MAILER — десктопное приложение на Python + CustomTk
 | `core/logger.py` | `JsonLogger` — singleton с **асинхронным писателем** (фоновый поток + очередь). Общий лог `YYYY-MM-DD.jsonl` и лог отправки `YYYY-MM-DD_send.jsonl`; экспорт JSON/CSV. |
 | `core/presets.py` | `save_preset` / `load_preset` — сериализация пресета кампании в JSON (каталог `data/presets/`). |
 | `core/countries.py` | Словарь `COUNTRIES_RU`: ISO-код страны → русское название (для отображения гео прокси). |
+| `core/blacklist.py` | Общий модуль DNS-блоклистов: `check_ip` (IP по DNSBL), `check_domain` (домен по DBL), `is_freemail`, кэш с TTL, санити-контракт зон. Фикс бага: `127.255.255.x`/`127.0.0.1` ≠ листинг. Используется и прокси-, и SMTP-менеджером. |
+| `core/appenv.py` | Единая точка правды о путях и версии: `resource_path` (чтение вшитых ресурсов из `sys._MEIPASS` в сборке), `writable_base` (куда писать `logs/`/`data/` — рядом с `.exe`), `app_version` (из файла `VERSION`), `APP_NAME="Pinion"`. |
 
 Пустые `core/__init__.py` и `gui/__init__.py` делают пакеты импортируемыми.
 
@@ -78,11 +85,25 @@ SMTP MAILER — десктопное приложение на Python + CustomTk
 | `gui/tab_send.py` | Вкладка «Отправка»: тестовое письмо, параметры (задержка, разброс, потоки, писем/коннект), СТАРТ/СТОП/ПАУЗА, предпросмотр/лог, диалог возобновления прерванной кампании. |
 | `gui/tab_stats.py` | Вкладка «Статистика»: прогресс-бар, карточки (скорость, ETA, отправлено, ошибки), таблицы SMTP/прокси, экспорт JSON/CSV. Опрос `SendStats.snapshot` раз в секунду через `after`. |
 
+### Веб-интерфейс `webui/` (по умолчанию)
+
+Интерфейс по умолчанию с 2026 — веб (pywebview): Python-бэкенд + HTML/CSS/JS
+фронтенд. Он использует те же менеджеры ядра `core/`, что и старый `gui/`.
+
+| Модуль | Назначение |
+|---|---|
+| `webui/host.py` | pywebview-хост. Класс `Api` — мост в JS: его методы зовутся как `window.pywebview.api.<метод>(...)` и возвращают JSON-словари. Держит **единые** менеджеры (прокси/SMTP/контент/статистика) — состояние общее с фронтендом. WEB_DIR ищется через `resource_path("webui/web")`; заголовок окна — `f"{APP_NAME} {версия}"`. |
+| `webui/letter_score.py` | Локальный скорер письма для превью: 3-осевой расчёт (точная копия внешней логики скоринга) + гиббериш-детектор + разброс оценок по веткам спинтакса. Вызывается в самотесте и во вкладке предпросмотра. |
+| `webui/web/` | Статика фронтенда: `index.html` (разметка вкладок), `app.js` (логика + мок-бэкенд для демо), `style.css` (тёмная тема). Не Python. |
+
+Пустой `webui/__init__.py` делает пакет импортируемым.
+
 ### Скрипты в корне
 
 | Файл | Назначение |
 |---|---|
-| `main.py` | Точка входа: создаёт каталоги, патчит `CTkScrollableFrame` (авто-скрытие скроллбара и отступы), ставит тёмную тему, запускает `App().mainloop()`. |
+| `main.py` | Точка входа. По умолчанию открывает веб-интерфейс (`run_web`); `main.py ctk` — старый CustomTkinter (`run_ctk`); `main.py --selftest[-core] <лог>` — headless-прогон ядра (`run_selftest`) для CI/проверок. Создаёт каталоги `data/`/`logs/`, ставит AppUserModelID. |
+| `run_web.py` | Прямая точка входа в веб-интерфейс (то же, что `python main.py`): создаёт каталоги и зовёт `webui.host.main`. |
 | `translate.py` | Разовый скрипт-утилита: заменил англоязычные строки UI на русские во всех `gui/*.py` (прямым текстовым replace). Историческая справка, не часть рантайма. |
 | `scrape.py` | Отдельная утилита: вытягивает ссылки вида `/statyi/...` со страницы (urllib + regex). К рассылке прямого отношения не имеет. |
 | `test_ablock_fix.py` | Ручной регресс-тест контента (2026): 20 прогонов доказывают, что движок БОЛЬШЕ не добавляет омоглифы/zero-width/entity-подмену, а спинтакс и ссылки `<a>` целы. |
@@ -309,8 +330,10 @@ SMTP MAILER — десктопное приложение на Python + CustomTk
 ### Среда и хуки
 
 - Платформа — Windows 11, оболочка PowerShell (доступен и Bash-инструмент).
-  Python 3.13 (по аудиту). Зависимости: `customtkinter`, `PySocks`, `requests`.
-- Запуск приложения: `python main.py`.
+  Python 3.13. Зависимости: `pywebview`, `pythonnet` (Windows-бэкенд pywebview),
+  `customtkinter`, `PySocks`, `requests`. Пути и версию считает `core/appenv.py`.
+- Запуск приложения: `python main.py` (веб), `python main.py ctk` (старый CTk),
+  `python main.py --selftest[-core] <лог>` (headless-прогон ядра для CI).
 - Ручной регресс-тест контента (нет обфускации, ссылки целы): `python test_ablock_fix.py`.
 - Глобальный **Stop-хук** `unlazy` не даёт завершить сессию, пока в `.unlazy/`
   есть незакрытые гейты. **`CHECK:`-команды унаследованного ledger — это код:**
@@ -336,6 +359,45 @@ SMTP MAILER — десктопное приложение на Python + CustomTk
   перемешанная по доменам), с профилями доменов и прогревом, а не один цикл.
 - Добавлены модуль `core/domain_config.py`, модуль `core/countries.py`, вкладка
   `gui/tab_plan.py` (план распределения) — их нет в старых заметках.
+
+---
+
+## Сборка, установщик и релиз
+
+Готовый установщик `Pinion-setup.exe` публикуется в GitHub Releases на постоянную
+ссылку `releases/latest/download/Pinion-setup.exe`. Версия хранится в **едином
+источнике** — файле `VERSION`.
+
+### Файлы пайплайна
+
+| Файл | Назначение |
+|---|---|
+| `VERSION` | Единственный источник версии (строка `X.Y.Z`). Читается `core/appenv.app_version`. |
+| `Pinion.spec` | Сборка PyInstaller (onedir): `Analysis(['main.py'])`, вшивает `webui/web` и `VERSION`, `collect_all` для webview/customtkinter, `console=False`, иконка `assets/Pinion.ico`, ресурс версии `version_info.txt`. |
+| `Pinion.iss` | Установщик Inno Setup: ставит в `{localappdata}\Programs\Pinion`, `PrivilegesRequired=lowest` (без админа), стабильный GUID, `[UninstallDelete]` для logs/data. Файл в UTF-8 с BOM (чтобы ISCC читал кириллицу на cp1252-раннере). |
+| `.github/workflows/release.yml` | GitHub Actions по тегу `v*`: ставит зависимости, `set_version`, PyInstaller, смоук `--selftest-core`, проверка версии в ресурсе `.exe`, Inno Setup, проверка размера, публикация релиза (`softprops/action-gh-release`). `PYTHONUTF8=1` — pip читает UTF-8 при cp1252. |
+
+### Скрипты `tools/`
+
+| Файл | Назначение |
+|---|---|
+| `tools/set_version.py` | Записывает версию в единый источник: обновляет `VERSION` и генерирует `version_info.txt` (4-int кортеж для ресурса `.exe`; gitignored). Токен `SET_VERSION_OK`. |
+| `tools/make_icon.py` | Генерация `.ico` из исходного изображения: ресайз в линейном свете (sRGB→linear→premultiply→LANCZOS→обратно), «энергосохраняющая» резкость, 10 размеров {16…256}. |
+| `tools/check_icon.py` | Проверка качества иконки: яркость (пол затемнения / потолок разгона / линейный запас), геометрия, набор размеров. Токен `CHECK_ICON_OK`. |
+| `tools/verify_release_setup.py` | Проверка целостности релиз-пайплайна (наличие/согласованность spec/iss/workflow/VERSION, ASCII в requirements). Токен `RELEASE_SETUP_OK`. |
+| `tools/check_installed.py` | Проверка «глазами пользователя» (Часть 6.6): качает установщик по постоянной ссылке `releases/latest/download`, ставит молча, сверяет sha256 иконки и версию установленной копии с репо, запускает окно (поиск ПО PID, не по заголовку), меряет иконки окна через `WM_GETICON`, тихо удаляет. Токен `CHECK_INSTALLED_OK`. Флаги: `--source` (локальный .exe), `--no-launch`, `--keep`. |
+
+### Как выпустить новую версию
+
+```bash
+git tag v1.0.1 && git push origin v1.0.1   # → Actions соберёт .exe и опубликует релиз
+```
+
+Локально: `python tools/set_version.py X.Y.Z` → `python -m PyInstaller --noconfirm
+--clean Pinion.spec` → `ISCC.exe /DAppVersion=X.Y.Z Pinion.iss`. Собирать **вне
+OneDrive** (иначе лочит файлы); ISCC в user-scope
+`%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`. Подробности и разобранные грабли
+CI — в заметке `memory/` `pinion-release-pipeline`.
 
 ---
 

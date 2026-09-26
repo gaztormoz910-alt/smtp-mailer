@@ -1,4 +1,4 @@
-"""pywebview-хост нового веб-интерфейса SMTP MAILER (стек как в email-validator:
+"""pywebview-хост веб-интерфейса Pinion (стек как в email-validator:
 pywebview + HTML/CSS/JS фронтенд, Python-бэкенд через мост js_api).
 
 Класс Api — это и есть мост: его методы вызываются из JavaScript как
@@ -191,7 +191,7 @@ class Api:
 
     # ── сервис ──────────────────────────────────────────────────────────
     def ping(self) -> dict:
-        return {"ok": True, "app": "SMTP MAILER"}
+        return {"ok": True, "app": "Pinion"}
 
     def status(self) -> dict:
         return {
