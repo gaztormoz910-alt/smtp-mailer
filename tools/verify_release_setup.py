@@ -87,6 +87,17 @@ if os.path.exists(WF):
         if needle not in wf:
             fails.append(f"release.yml: нет ожидаемого шага/строки {needle!r}")
 
+# requirements*.txt обязаны быть ASCII: pip на не-UTF-8 Windows-локали (cp1252) падает при
+# чтении файла с не-ASCII байтами (этим упал первый CI-прогон релиза).
+for rel in ("requirements.txt", "requirements-dev.txt"):
+    p = os.path.join(REPO, rel)
+    if os.path.exists(p):
+        b = open(p, "rb").read()
+        try:
+            b.decode("cp1252")
+        except Exception as ex:
+            fails.append(f"{rel}: не читается как cp1252 ({ex}) — pip на англ. Windows-раннере упадёт; сделай ASCII")
+
 # постоянная ссылка корректна для реального репозитория
 if not OWNER_REPO:
     fails.append("не задан owner/repo для постоянной ссылки")
