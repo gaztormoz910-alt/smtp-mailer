@@ -244,11 +244,9 @@
                 <span>Связать прокси с аккаунтом<br><span class="hint">стабильный IP на аккаунт — безопаснее для Gmail</span></span>
               </label>
             </div>
-            <p class="sub" style="margin-top:10px;line-height:1.5">Перед каждым письмом — случайная пауза <b>от … до …</b> секунд, чтобы не как робот. В начале рассылки с каждого аккаунта письма идут <b>медленнее</b> (прогрев для инбокса), затем задержка плавно сходится к твоему диапазону.</p>
           </div>
           <div class="card">
             <h2><span class="ic">⏱️</span> Прогноз рассылки</h2>
-            <p class="sub">Оценка ДО старта по числу живых SMTP, потокам и задержке. Приблизительно: реальная скорость зависит от прогрева и ответа серверов.</p>
             <div class="est-grid">
               <div class="est"><b id="est-speed">—</b><span>писем/мин</span></div>
               <div class="est"><b id="est-dur">—</b><span>длительность</span></div>
@@ -305,7 +303,7 @@
           <div class="card scroll">
             <h2><span class="ic">🛡️</span> По прокси</h2>
             <div class="tbl-wrap" style="margin-top:8px">
-              <table class="tbl"><thead><tr><th>Прокси</th><th class="num neut-h">Исп.</th><th class="num err-h">✗</th><th>Статус</th></tr></thead>
+              <table class="tbl"><thead><tr><th>Прокси</th><th class="num ok-h" title="Успешно отправлено через этот прокси">✓</th><th class="num err-h">✗</th><th>Статус</th></tr></thead>
                 <tbody id="st-proxy"><tr><td colspan="4" style="color:var(--dim2);text-align:center;padding:22px">Нет данных</td></tr></tbody></table>
             </div>
           </div>
@@ -348,7 +346,7 @@
             </div>
           </div>
           <div class="pv-group"><div class="t">Уникальных писем</div>
-            <div class="pv-metrics">
+            <div class="pv-metrics combo">
               <div class="pv-metric"><b id="pv-combo-body">—</b><span>с этого текста</span></div>
               <div class="pv-metric"><b id="pv-combo-all">—</b><span>со всех текстов</span></div>
             </div>

@@ -744,9 +744,9 @@ class CampaignSender:
             # запланированная антиспам-пауза (и прогрев), а не зависание. Короткие паузы
             # (<3с) не логируем, чтобы не засорять — там и так видно поток писем.
             if actual_delay >= 3:
-                _wm = " · прогрев" if warmup > 1.0 else ""
-                self._emit(f"⏳ [{smtp_acc.email}] пауза {actual_delay:.0f}с перед → {rcpt.email}"
-                           f" (антиспам{_wm})")
+                _wm = " + прогрев" if warmup > 1.05 else ""
+                self._emit(f"⏳ [{smtp_acc.email}] жду {actual_delay:.0f}с как человек"
+                           f" (антиспам{_wm}), затем письмо → {rcpt.email}")
 
             self.stop_event.wait(actual_delay)
             if self.stop_event.is_set():
@@ -898,9 +898,13 @@ class CampaignSender:
                 _ctrl = " [КОНТРОЛЬ]" if is_control else ""
                 _plabel = proxy_addr or "прямое"
                 _extra = ((" +CC" if use_cc else "") + (" +BCC" if use_bcc else ""))
+                # ВАЖНО для наглядности: показываем и ПАУЗУ перед письмом («ждал Nс» — это
+                # человекоподобная задержка), и сетевое время самой отправки («сеть Xс»).
+                # Раньше была только «отпр 0.5с» — её принимали за интервал и думали, что софт
+                # «шлёт за полсекунды как робот», хотя реально между письмами были паузы в секунды.
                 self._emit(
                     f"✓ {self._sent_atomic}/{total_recipients} → {rcpt.email}{_ctrl} · "
-                    f"{smtp_acc.email} · {_plabel} · отпр {_send_time:.1f}с{_extra}")
+                    f"{smtp_acc.email} · {_plabel} · ждал {actual_delay:.0f}с, сеть {_send_time:.1f}с{_extra}")
 
             except Exception as exc:
                 # Письмо не ушло → освобождаем забронированный слот (строгий кэп): его займёт

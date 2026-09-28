@@ -535,8 +535,8 @@ function updateEstimate() {
   }
   let avg = (a + b) / 2, autoNote = "";
   if (avg <= 0) { avg = 6; autoNote = "Задержка 0 → авто-профиль по домену (взято ≈6 с). "; }
-  const perEmail = Math.max(0.5, avg) + SEND_OVERHEAD_SEC;   // пауза + сетевой round-trip отправки
-  const steadyPerMin = workers * 60 / perEmail;              // установившаяся скорость
+  const avgDelay = Math.max(0.5, avg);
+  const steadyPerMin = workers * 60 / (avgDelay + SEND_OVERHEAD_SEC);  // скорость ПОСЛЕ прогрева
   const recip = lastRecip || 0;
   if (!recip) {
     es.textContent = Math.max(1, Math.round(steadyPerMin));
@@ -544,20 +544,26 @@ function updateEstimate() {
     en.textContent = autoNote + "Загрузи базу получателей — тогда покажу длительность и время финиша.";
     return;
   }
-  // Прогрев: первые письма с КАЖДОГО аккаунта идут медленнее (движок ×3→×1). Честная надбавка
-  // ко времени — первые ~12 писем на воркера несут примерно двойную задержку. Для больших баз
-  // ничтожно, для маленьких заметно (раньше показывало «<1м», хотя реально ~минута). Прогрев
-  // идёт параллельно на всех воркерах → надбавка НЕ ×workers.
-  const emailsPerWorker = recip / workers;
-  const warmExtraSec = Math.min(emailsPerWorker, 12) * perEmail;
-  const totalSec = (recip / steadyPerMin) * 60 + warmExtraSec;
+  // ТОЧНЫЙ учёт ПРОГРЕВА — та же кривая, что в движке (core.domain_config.get_warmup_factor):
+  // задержка каждого k-го письма с аккаунта умножается на 1 + 2·exp(-4·k/full), full≈warmup_start·20
+  // (для Gmail full=100). Первые письма идут в ~3× медленнее — раньше прогноз это ИГНОРИРОВАЛ и
+  // был вдвое оптимистичнее (показывал 10/мин и «1м», а по факту было ~6/мин и ~2м). Считаем время
+  // ОДНОГО воркера по этой кривой; воркеры работают параллельно, поэтому это и есть длительность.
+  const WARM_FULL = 100;
+  const nPerWorker = Math.max(1, Math.round(recip / workers));
+  const warmCount = Math.min(nPerWorker, WARM_FULL);
+  let workerSec = 0;
+  for (let k = 0; k < warmCount; k++)
+    workerSec += avgDelay * (1 + 2 * Math.exp(-4 * k / WARM_FULL)) + SEND_OVERHEAD_SEC;
+  workerSec += (nPerWorker - warmCount) * (avgDelay + SEND_OVERHEAD_SEC);  // прогретый хвост ×1
+  const totalSec = workerSec;
   // Показываем СРЕДНЮЮ (эффективную) скорость: писем/мин = получатели / длительность, тогда
-  // «скорость × длительность = вся база» и число не завышено (согласовано с прогревом).
+  // «скорость × длительность = вся база» и число согласовано с реальной рассылкой.
   const effPerMin = totalSec > 0 ? recip / (totalSec / 60) : steadyPerMin;
   es.textContent = Math.max(1, Math.round(effPerMin));
   ed.textContent = fmtDur(totalSec);
   ef.textContent = fmtWhen(new Date(Date.now() + totalSec * 1000));
-  en.textContent = autoNote + `${workers} воркер(ов) × ${recip} получателей. Учтён прогрев (первые письма медленнее) — оценка средняя, реальная скорость около этой.`;
+  en.textContent = autoNote + `${workers} воркер(ов) × ${recip} получателей. Учтён прогрев по кривой движка — первые письма ~×3 медленнее, оценка средняя.`;
 }
 // Секундомер рассылки: mm:ss или h:mm:ss. Значение берём из snapshot.elapsed_sec (бэкенд его
 // замораживает на финише) в общем tick() — без отдельных таймеров, чтобы фронт не нагружался.

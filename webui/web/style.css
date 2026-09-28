@@ -335,6 +335,12 @@ body.busy{cursor:progress}
 .pv-metric{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px}
 .pv-metric b{display:block;font-family:var(--mono);font-size:16px;color:var(--accent)}
 .pv-metric span{font-size:10.5px;color:var(--dim)}
+/* Счётчик комбинаций: числа в научной записи длинные («≈ 1.9·10^18») — уменьшаем кегль и
+   уплотняем плитку, чтобы значение влезало без переноса и блок не выглядел громоздким. */
+.pv-metrics.combo{gap:6px}
+.pv-metrics.combo .pv-metric{padding:8px 9px}
+.pv-metrics.combo b{font-size:12.5px;line-height:1.25;word-break:break-word}
+.pv-metrics.combo span{font-size:10px}
 
 .pv-main{background:#3a3d44;display:flex;flex-direction:column;min-height:0;overflow:auto;padding:20px;align-items:center;gap:14px}
 .pv-main.dark{background:#1c1e22}
