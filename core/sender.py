@@ -11,7 +11,9 @@ import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.charset import Charset, BASE64, QP
-from email.utils import formataddr, formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid, format_datetime
+from datetime import datetime, timezone, timedelta
+import zlib
 from collections import defaultdict
 from itertools import zip_longest
 from pathlib import Path
@@ -141,6 +143,18 @@ def _generate_message_id(domain: str, sender_email: str = "") -> str:
     return rnd.choice(templates)()
 
 
+# Правдоподобные часовые пояса «живых людей» (в минутах от UTC): Америки, Европа/Африка,
+# Индия(+5:30), Азия. У реального человека пояс НЕ скачет от письма к письму — поэтому
+# выбираем его СТАБИЛЬНО по адресу отправителя (crc32), но РАЗНЫМ между аккаунтами. Раньше
+# Date всегда шёл в поясе машины — все письма «разных людей» имели один TZ (кросс-фингерпринт).
+_TZ_OFFSETS_MIN = [-480, -420, -360, -300, -240, -180, 0, 60, 120, 180, 330, 480, 540, 600]
+
+
+def _sender_tz(from_email: str) -> timezone:
+    h = zlib.crc32((from_email or "x").encode("utf-8", "ignore"))
+    return timezone(timedelta(minutes=_TZ_OFFSETS_MIN[h % len(_TZ_OFFSETS_MIN)]))
+
+
 def _vary_sender_name(name: str, rnd: random.SystemRandom) -> str:
     # Лёгкая «человеческая» вариативность отображаемого имени: у живых людей оно приходит
     # в разном виде (полное / только имя / имя+инициал / строчными «на бегу»). Это анти-
@@ -168,28 +182,34 @@ def _client_agent(style: str, rnd: random.SystemRandom):
     Gmail-веб не ставит ничего. Статический X-Mailer был бы фингерпринтом (его и убирали),
     поэтому значение варьируется по сборкам и соответствует имитируемому клиенту, а часть
     писем идёт вовсе без него. Возвращает (имя_заголовка, значение) или None."""
+    # Версии/сборки — АКТУАЛЬНЫЕ на сентябрь 2026 (устаревшая версия сама по себе фингерпринт):
+    # Apple Mail 2.38xx–41xx, iOS-билды 22–24 (iOS 18–20); Outlook 16.0.17xxx–19xxx;
+    # Thunderbird ESR 140+ (и монтли до ~148). Yahoo-веб X-Mailer НЕ ставит (как Gmail-веб) —
+    # старая строка YahooMailWebService/0.8.x была устаревшим следом, поэтому убрана.
     if style == 'apple':
         if rnd.random() < 0.85:
-            build = f"{rnd.randint(3600,3800)}.{rnd.randint(100,900)}.{rnd.randint(1,99)}"
-            ios = f"{rnd.randint(20,22)}{rnd.choice('ABCDEF')}{rnd.randint(10,99)}"
+            build = f"{rnd.randint(3800,4100)}.{rnd.randint(100,900)}.{rnd.randint(1,99)}"
+            ios = f"{rnd.randint(22,24)}{rnd.choice('ABCDEF')}{rnd.randint(10,99)}"
             return ("X-Mailer", rnd.choice([
                 f"Apple Mail (2.{build})", f"iPhone Mail ({ios})", f"iPad Mail ({ios})",
             ]))
     elif style == 'outlook':
         if rnd.random() < 0.70:
             return ("X-Mailer", rnd.choice([
-                "Microsoft Outlook 16.0", "Microsoft Outlook 15.0",
-                f"Microsoft Outlook 16.0.{rnd.randint(10000,19999)}.{rnd.randint(10000,99999)}",
+                "Microsoft Outlook 16.0",
+                f"Microsoft Outlook 16.0.{rnd.randint(17000,19500)}.{rnd.randint(10000,99999)}",
             ]))
-    elif style == 'yahoo':
-        if rnd.random() < 0.40:
-            return ("X-Mailer", f"YahooMailWebService/0.8.{rnd.randint(100,140)}.{rnd.randint(100,900)}")
     elif style == 'generic':
         if rnd.random() < 0.30:
-            rv = rnd.choice(["102.0", "115.0", "128.0"])
+            rv = rnd.choice(["128.0", "140.0", "141.0", "145.0", "146.0"])
+            os_part = rnd.choice([
+                "Windows NT 10.0; Win64; x64",
+                "Macintosh; Intel Mac OS X 10.15",
+                "X11; Linux x86_64",
+            ])
             return ("User-Agent",
-                    f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{rv}) Gecko/20100101 Thunderbird/{rv}")
-    return None  # gmail и «не выпал шанс» — без подписи клиента (как Gmail-веб)
+                    f"Mozilla/5.0 ({os_part}; rv:{rv}) Gecko/20100101 Thunderbird/{rv}")
+    return None  # gmail, yahoo и «не выпал шанс» — без подписи клиента (как веб-почта)
 
 
 def build_message(
@@ -244,7 +264,9 @@ def build_message(
     
     jitter_sec = rnd.randint(-300, 0)
     jitter_time = time_module.time() + jitter_sec
-    date_header = formatdate(timeval=jitter_time, localtime=True)
+    # Date в правдоподобном часовом поясе отправителя (стабильном на аккаунт), а не в поясе
+    # машины — чтобы письма разных аккаунтов выглядели как люди из разных TZ (см. _sender_tz).
+    date_header = format_datetime(datetime.fromtimestamp(jitter_time, _sender_tz(from_email)))
 
     sender_domain = from_email.split("@")[-1] if "@" in from_email else "localhost"
     message_id = _generate_message_id(sender_domain, from_email)
