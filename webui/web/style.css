@@ -46,9 +46,18 @@ body{
 /* Слово-марка одним куском: flex-gap у .brand разносит логотип и слово, но
    ВНУТРИ слова зазора быть не должно — иначе «Pinion» читается как «Pin ion». */
 .brand .wm{display:inline-flex;align-items:baseline;gap:0;letter-spacing:.3px}
-.tabs{display:flex; gap:3px; flex:1; justify-content:center}
+.tabs{display:flex; gap:3px; flex:1; justify-content:safe center; flex-wrap:nowrap;
+  overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; scrollbar-color:#3a3f4c transparent}
+/* Тонкий горизонтальный скролл вкладок: появляется САМ, когда все кнопки шире окна
+   (overflow-x:auto), и не занимает места, когда всё влезает. safe center — центрируем,
+   пока помещается, а при нехватке места прижимаем к началу, чтобы левые вкладки не ушли
+   под край и все были доступны прокруткой. Работает на ЛЮБОЙ ширине, не только <900px. */
+.tabs::-webkit-scrollbar{height:6px}
+.tabs::-webkit-scrollbar-thumb{background:#3a3f4c;border-radius:20px;border:0}
+.tabs::-webkit-scrollbar-thumb:hover{background:#4a505f}
+.tabs::-webkit-scrollbar-track{background:transparent}
 .tab{
-  position:relative; background:transparent; color:var(--dim);
+  position:relative; flex:0 0 auto; background:transparent; color:var(--dim);
   border:1px solid transparent; padding:8px 16px; border-radius:9px;
   cursor:pointer; font-size:13.5px; font-weight:600; font-family:var(--sans);
   transition:background .12s,color .12s;
@@ -443,7 +452,7 @@ body.busy{cursor:progress}
      ВБОК внутри своей полосы, а не сворачиваются. */
   .topbar{gap:10px; padding:0 12px; flex-wrap:nowrap}
   .bridge{display:none}
-  .tabs{justify-content:flex-start; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden}
-  .tabs::-webkit-scrollbar{height:0}
-  .tab{flex:0 0 auto; padding:7px 11px; font-size:12.5px}
+  /* на узком уплотняем сами вкладки; тонкий горизонтальный скролл уже включён в базовых
+     стилях .tabs (появляется, как только кнопки шире окна). */
+  .tab{padding:7px 11px; font-size:12.5px}
 }
