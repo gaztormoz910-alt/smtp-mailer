@@ -381,6 +381,53 @@ def _tidy_spaces(text: str, html_mode: bool) -> str:
 _DOCTYPE_RE = re.compile(r"<!doctype", re.I)
 
 
+# ── Ротация типографики (безопасная «очеловечивающая» вариативность) ───────────
+# ПОЧЕМУ: реальные почтовые клиенты и рассыльщики шлют письма РАЗНЫМИ шрифтами/кеглем —
+# это часть «фингерпринта» отправителя, о которой просил владелец. Софт раньше шрифт НЕ
+# варьировал вообще. Теперь на КАЖДОЕ письмо выбираем один набор типографики. Это НЕ ломает
+# контраст (шрифт/кегль/интерлиньяж — не цвет) и НЕ конфликтует с дизайном шаблона: свойство
+# добавляем ТОЛЬКО если во всём письме его нет ни разу (тогда значение одно на всё письмо —
+# без «смешанных» шрифтов). Если автор шаблона задал шрифт сам (design-спинтакс) — уважаем и
+# не трогаем. Видимую вариативность цвета/структуры/выравнивания даёт ШАБЛОН, а не движок.
+_FONT_STACKS = [
+    "Arial, Helvetica, sans-serif",
+    "'Helvetica Neue', Helvetica, Arial, sans-serif",
+    "Georgia, 'Times New Roman', serif",
+    "'Trebuchet MS', Verdana, sans-serif",
+    "Verdana, Geneva, sans-serif",
+    "Tahoma, 'Segoe UI', sans-serif",
+    "'Segoe UI', Roboto, Arial, sans-serif",
+    "Georgia, serif",
+]
+_FONT_FAMILY_RE = re.compile(r"font-family\s*:", re.I)
+_FONT_SIZE_RE   = re.compile(r"font-size\s*:", re.I)
+_LINE_H_RE      = re.compile(r"line-height\s*:", re.I)
+_FIRST_STYLE_RE = re.compile(r'style="([^"]*)"', re.I)
+
+
+def _diversify_typography(html: str) -> str:
+    add = []
+    if not _FONT_FAMILY_RE.search(html):
+        add.append(f"font-family:{_rnd.choice(_FONT_STACKS)}")
+    if not _FONT_SIZE_RE.search(html):
+        add.append(f"font-size:{_rnd.choice([15, 16, 16, 17, 18])}px")
+    if not _LINE_H_RE.search(html):
+        add.append(f"line-height:{_rnd.choice(['1.4', '1.5', '1.55', '1.6'])}")
+    if not add:
+        return html
+    props = ";".join(add)
+
+    def _inject(m: re.Match) -> str:
+        inner = m.group(1)
+        if inner and not inner.rstrip().endswith(';'):
+            inner += ';'
+        return f'style="{inner}{props}"'
+
+    # Вставляем в ПЕРВЫЙ style-атрибут (обычно внешний контейнер) — свойства наследуются
+    # вниз. Если style-атрибутов в письме нет вовсе — вернётся без изменений (безопасно).
+    return _FIRST_STYLE_RE.sub(_inject, html, count=1)
+
+
 def render(
     template: str,
     variables: dict[str, str] | None = None,
@@ -448,6 +495,11 @@ def render(
                 tag = tag[:-1] + ' >'
             return tag
         result = re.sub(r'<[^>]+>', _randomize_whitespace, result)
+
+        # Ротация типографики (шрифт/кегль/интерлиньяж) — один набор на письмо, только где
+        # шаблон их не задал. Делаем ДО добавления DOCTYPE, чтобы попасть в контейнер, а не
+        # в строку <!DOCTYPE …>.
+        result = _diversify_typography(result)
 
         # DOCTYPE обязателен: без него Outlook рендерит письмо в quirks mode и ломает
         # table-вёрстку Light HTML (это и флагует локальный скорер письма). Шаблон мог
