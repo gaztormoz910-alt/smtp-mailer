@@ -860,12 +860,18 @@ function clientHTML(key, cfg, d, dark, mobile) {
     </div>`;
 }
 function frameDoc(html, dark, imagesOff) {
-  const bg = dark ? "#1f2023" : "#ffffff", fg = dark ? "#e8e8ea" : "#1a1a1a";
-  const link = dark ? "#7db3ff" : "#2563eb";
+  const bg = dark ? "#1f2023" : "#ffffff", fg = dark ? "#e8e8ea" : "#202124";
+  const link = dark ? "#8ab4f8" : "#1a56db";
   const hide = imagesOff ? "img{display:none!important}" : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-    html,body{margin:0}body{background:${bg};color:${fg};font:14px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:18px;word-break:break-word}
-    a{color:${link}} img{max-width:100%;height:auto} table{max-width:100%} ${hide}</style></head><body>${html}</body></html>`;
+  // Нейтральный «вьюпорт клиента»: письмо рендерится КАК ЕСТЬ (свои шрифты/кегль/цвета/отступы),
+  // без искусственного padding:18px и форс-кегля 14px — иначе превью не совпадало с тем, что реально
+  // уходит получателю (особенно после ротации шрифта/кегля движком). Отступы вокруг письма рисует
+  // ВНЕШНИЙ хром клиента (clientHTML), а не тело. Дефолтный шрифт/цвет ссылки — как у веб-клиента
+  // по умолчанию (нужны только для тел БЕЗ своих стилей; inline-стили письма их перекрывают).
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    html,body{margin:0;padding:0}
+    body{background:${bg};color:${fg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif}
+    img{max-width:100%;height:auto} a{color:${link}} ${hide}</style></head><body>${html}</body></html>`;
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#preview-overlay").classList.remove("show"); });
 

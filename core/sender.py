@@ -737,9 +737,13 @@ class CampaignSender:
                 try:
                     conn = connect_smtp(smtp_acc, proxy=proxy)
                     sent_on_conn = 0
+                    self.proxy_mgr.report_result(proxy, True)  # прокси жив — сбросить счётчик неудач
                 except Exception as exc:
                     self._emit(f"{tag}Connect error: {exc}")
                     self.stats.record_error(smtp_acc.email, proxy_addr, smtp_dead=True)
+                    # Дохлый прокси во время рассылки понижаем, чтобы get_next не отдавал его снова
+                    # (после N подряд неудач коннекта он выпадет из ротации).
+                    self.proxy_mgr.report_result(proxy, False)
                     self.global_q.put(rcpt)
                     conn = None
                     smtp_acc = get_valid_account()

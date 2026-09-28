@@ -40,6 +40,9 @@ class ProxyEntry:
     # проверка возвращала голый True/False, и владелец видел «171 ms + Мёртвый» без объяснения.
     # У SMTP-аккаунта есть аналогичный last_error — прокси теперь тоже объясняет свою смерть.
     last_error: str = ""
+    # Счётчик ПОДРЯД идущих неудач коннекта во время рассылки (сбрасывается успехом). По
+    # достижении порога прокси метится DEAD и выпадает из ротации — см. ProxyManager.report_result.
+    send_fails: int = 0
 
 
     @property
@@ -518,6 +521,31 @@ class ProxyManager:
                 if p.status == ProxyStatus.ALIVE and p.blacklist_clean is not False:
                     return p
             return None
+
+    # Порог подряд идущих неудач коннекта, после которого прокси выбывает из ротации во время
+    # рассылки. Небольшой (живой прокси столько подряд не падает; успех сбрасывает счётчик),
+    # но не 1 — чтобы одиночный сетевой блик не убивал рабочий прокси.
+    SEND_FAIL_LIMIT = 3
+
+    def report_result(self, proxy: "ProxyEntry | None", ok: bool) -> None:
+        """Обратная связь ИЗ РАССЫЛКИ: удалось ли подключиться через этот прокси. Раньше дохлый
+        прокси во время рассылки не понижался — get_next мог отдавать его снова и снова. Теперь
+        успех сбрасывает счётчик неудач, а SEND_FAIL_LIMIT подряд неудач метят прокси DEAD (он
+        выпадает из ротации; если живых прокси не осталось — рассылка идёт без прокси, напрямую).
+        ЭВРИСТИКА: причину неудачи коннекта (прокси vs SMTP-аккаунт) достоверно не отличить,
+        поэтому порог >1 — вина аккаунта размазывается ротацией по разным прокси и редко копит
+        SEND_FAIL_LIMIT на одном живом прокси."""
+        if proxy is None:
+            return
+        with self._lock:
+            if ok:
+                proxy.send_fails = 0
+                return
+            proxy.send_fails += 1
+            if proxy.send_fails >= self.SEND_FAIL_LIMIT and proxy.status == ProxyStatus.ALIVE:
+                proxy.status = ProxyStatus.DEAD
+                if not proxy.last_error:
+                    proxy.last_error = f"🔌 {self.SEND_FAIL_LIMIT} неудачи коннекта во время рассылки"
 
     def sort_by_score(self) -> None:
         with self._lock:
