@@ -160,6 +160,38 @@ def _vary_sender_name(name: str, rnd: random.SystemRandom) -> str:
     return name                                    # чаще всего — как задано
 
 
+def _client_agent(style: str, rnd: random.SystemRandom):
+    """Варьируемая, КЛИЕНТ-СПЕЦИФИЧНАЯ подпись почтовой программы (X-Mailer/User-Agent).
+
+    ПОЧЕМУ так, а не «никогда» и не «всегда одинаково»: реальные Apple Mail, Outlook,
+    Thunderbird СТАВЯТ такой заголовок, и у разных людей он РАЗНЫЙ (версии/сборки), а
+    Gmail-веб не ставит ничего. Статический X-Mailer был бы фингерпринтом (его и убирали),
+    поэтому значение варьируется по сборкам и соответствует имитируемому клиенту, а часть
+    писем идёт вовсе без него. Возвращает (имя_заголовка, значение) или None."""
+    if style == 'apple':
+        if rnd.random() < 0.85:
+            build = f"{rnd.randint(3600,3800)}.{rnd.randint(100,900)}.{rnd.randint(1,99)}"
+            ios = f"{rnd.randint(20,22)}{rnd.choice('ABCDEF')}{rnd.randint(10,99)}"
+            return ("X-Mailer", rnd.choice([
+                f"Apple Mail (2.{build})", f"iPhone Mail ({ios})", f"iPad Mail ({ios})",
+            ]))
+    elif style == 'outlook':
+        if rnd.random() < 0.70:
+            return ("X-Mailer", rnd.choice([
+                "Microsoft Outlook 16.0", "Microsoft Outlook 15.0",
+                f"Microsoft Outlook 16.0.{rnd.randint(10000,19999)}.{rnd.randint(10000,99999)}",
+            ]))
+    elif style == 'yahoo':
+        if rnd.random() < 0.40:
+            return ("X-Mailer", f"YahooMailWebService/0.8.{rnd.randint(100,140)}.{rnd.randint(100,900)}")
+    elif style == 'generic':
+        if rnd.random() < 0.30:
+            rv = rnd.choice(["102.0", "115.0", "128.0"])
+            return ("User-Agent",
+                    f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{rv}) Gecko/20100101 Thunderbird/{rv}")
+    return None  # gmail и «не выпал шанс» — без подписи клиента (как Gmail-веб)
+
+
 def build_message(
     from_email: str,
     to_email: str,
@@ -260,6 +292,18 @@ def build_message(
     # у части писем выглядит естественно и не является триггером.
     if rnd.random() < 0.35:
         header_pool["Reply-To"] = from_header
+
+    # List-Unsubscribe — ожидаемый для массовых рассылок заголовок. Gmail/Yahoo (2024)
+    # требуют его от крупных отправителей, а почтовики/анти-спам-тесты трактуют наличие как
+    # признак легитимности и это снижает долю жалоб (жалобы — фактор №1 бана). ВАЖНО: это
+    # ЗАГОЛОВОК, а не видимый блок отписки в теле (тот сам по себе спам-триггер и промпты его
+    # запрещают). Цель — mailto на адрес самого отправителя (у каждого аккаунта свой).
+    header_pool["List-Unsubscribe"] = f"<mailto:{from_email}?subject=unsubscribe>"
+
+    # Клиент-специфичная варьируемая подпись почтовой программы (очеловечивание): см. _client_agent.
+    agent = _client_agent(style, rnd)
+    if agent:
+        header_pool[agent[0]] = agent[1]
 
     for key in order:
         if key in header_pool:

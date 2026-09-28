@@ -43,6 +43,9 @@ body{
   border:1px solid rgba(74,222,128,.3);
 }
 .brand b{color:var(--accent)} .brand span{color:var(--text)}
+/* Слово-марка одним куском: flex-gap у .brand разносит логотип и слово, но
+   ВНУТРИ слова зазора быть не должно — иначе «Pinion» читается как «Pin ion». */
+.brand .wm{display:inline-flex;align-items:baseline;gap:0;letter-spacing:.3px}
 .tabs{display:flex; gap:3px; flex:1; justify-content:center}
 .tab{
   position:relative; background:transparent; color:var(--dim);
@@ -73,6 +76,11 @@ body{
 .grid-2x2{display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:14px; flex:1 1 auto; min-height:0}
 .split-send{display:grid; grid-template-columns:minmax(340px,420px) 1fr; gap:14px; flex:1 1 auto; min-height:0}
 .split-camp{display:grid; grid-template-columns:1fr minmax(320px,380px); gap:14px; flex:1 1 auto; min-height:0}
+/* Боковая колонка из нескольких карточек: скроллится ВНУТРИ себя, а карточки НЕ
+   сжимаются ниже своего контента. Без этого (min-height:0 + flex-shrink:1 по
+   умолчанию) карточки схлопывались и их содержимое наезжало на соседние. */
+.side-scroll{display:flex; flex-direction:column; gap:14px; min-height:0; overflow-y:auto; overflow-x:hidden; padding-right:2px}
+.side-scroll > .card{flex:0 0 auto}
 
 /* ── карточка ── */
 .card{
@@ -418,3 +426,24 @@ body.busy{cursor:progress}
 .pv-var-worst{margin-top:7px;font-size:11px;color:var(--text)}
 .pv-var-worst .s{color:var(--dim);margin:3px 0;font-style:italic}
 .pv-var-worst .it{color:#fca5a5;line-height:1.5}
+
+/* ── Адаптация под узкое окно софта: колонки складываются в одну, а область
+   контента начинает скроллиться целиком, чтобы ничего не обрезалось и не
+   наезжало на маленьком окне. Триггер — ширина клиентской области < 900px. ── */
+@media (max-width:900px){
+  .content{overflow:auto}
+  .panel.active{height:auto; min-height:100%}
+  .split-camp,.split-send,.grid2.fill,.grid-2x2{grid-template-columns:1fr}
+  .grid-2x2{grid-template-rows:auto auto}
+  /* высокие карточки-списки не должны растягивать страницу до бесконечности */
+  .grid-2x2 .card.scroll,.split-send .card.scroll,.split-camp > .card.scroll{max-height:78vh}
+  /* Шапка ОСТАЁТСЯ ОДНОЙ СТРОКОЙ (никакого переноса в несколько рядов — это была
+     каша). Уплотняем отступы, прячем текст статуса «соединение» (индикатор-точка не
+     обязателен на узком окне), а если вкладки всё же не влезают — они скроллятся
+     ВБОК внутри своей полосы, а не сворачиваются. */
+  .topbar{gap:10px; padding:0 12px; flex-wrap:nowrap}
+  .bridge{display:none}
+  .tabs{justify-content:flex-start; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden}
+  .tabs::-webkit-scrollbar{height:0}
+  .tab{flex:0 0 auto; padding:7px 11px; font-size:12.5px}
+}

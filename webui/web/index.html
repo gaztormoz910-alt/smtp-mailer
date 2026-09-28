@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo">✉</span><b>Pin</b><span>ion</span></div>
+    <div class="brand"><span class="logo">✉</span><span class="wm"><b>Pin</b><span>ion</span></span></div>
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="setup">Настройки<span class="badge" id="tb-setup">0</span></button>
       <button class="tab" data-tab="content">Контент<span class="badge" id="tb-content">0</span></button>
@@ -160,7 +160,7 @@
           <div class="pager" id="recipients-pager" hidden><button class="btn ghost sm pg-prev">‹ Назад</button><span class="pg-label"></span><button class="btn ghost sm pg-next">Вперёд ›</button></div>
           <div class="msg" id="recipients-msg"></div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:14px;min-height:0">
+        <div class="side-scroll">
           <div class="card">
             <h2><span class="ic">📬</span> Копии CC / BCC</h2>
             <p class="sub">CC виден получателю, BCC — скрытая копия. % — доля писем с копией.</p>
@@ -223,7 +223,7 @@
         <button class="btn sm ghost" id="resume-clear">Сбросить</button>
       </div>
       <div class="split-send">
-        <div style="display:flex;flex-direction:column;gap:14px;min-height:0;overflow:auto">
+        <div class="side-scroll">
           <div class="card">
             <h2><span class="ic">✈️</span> Тестовое письмо</h2>
             <p class="sub">Отправит одно письмо на твой адрес через живой SMTP.</p>
