@@ -555,6 +555,7 @@ class CampaignSender:
         self._max_retries = 3
         self._sent_atomic = 0
         self._sent_lock = threading.Lock()
+        self._bind_proxy = False
 
     @property
     def running(self) -> bool:
@@ -565,11 +566,12 @@ class CampaignSender:
         return not self.pause_event.is_set()
 
 
-    def start(self, delay: float = 1.0, jitter: float = 0.5, max_threads: int = 0, 
-              max_per_conn: int = 50, max_per_acc: int = 0) -> None:
+    def start(self, delay: float = 1.0, jitter: float = 0.5, max_threads: int = 0,
+              max_per_conn: int = 50, max_per_acc: int = 0, bind_proxy: bool = False) -> None:
         if self._running:
             return
         self._running = True
+        self._bind_proxy = bool(bind_proxy)
         self.stop_event.clear()
         self.pause_event.set()
         self.stats.resume()
@@ -643,6 +645,12 @@ class CampaignSender:
             worker_threads.append(t)
             t.start()
 
+        # Фоновое авто-оживление: раз в REVIVE_INTERVAL_SEC аккуратно ре-тестит временно
+        # выбывшие (soft-DEAD) аккаунты/прокси и возвращает выжившие в ротацию. Сданные
+        # окончательно (gave_up: 5xx-бан или исчерпан лимит попыток) НЕ трогает — не долбит.
+        revival = threading.Thread(target=self._revival_loop, daemon=True, name="Revival")
+        revival.start()
+
         for t in worker_threads:
             t.join()
 
@@ -652,9 +660,40 @@ class CampaignSender:
         if self.on_finished:
             self.on_finished()
             
+    # Как часто фоновый поток пытается оживить выбывшие аккаунты/прокси (секунды). Не агрессивно:
+    # редкий и мягкий ре-тест, плюс жёсткие пороги сдачи (gave_up) — почтовик не долбим.
+    REVIVE_INTERVAL_SEC = 300
+
+    def _pick_proxy(self, account) -> Any:
+        """Прокси для аккаунта: при включённой привязке — стабильный на аккаунт (get_for_account,
+        сам переприпишет при смерти прокси), иначе — общий round-robin (get_next). Явную привязку
+        `email:pass|>proxy` уважает connect_smtp независимо от этого режима."""
+        if self._bind_proxy:
+            return self.proxy_mgr.get_for_account(account.email)
+        return self.proxy_mgr.get_next()
+
+    def _revival_loop(self) -> None:
+        # Ждём интервал; wait вернёт True, если пришёл stop → выходим сразу.
+        while not self.stop_event.wait(self.REVIVE_INTERVAL_SEC):
+            if not self._running:
+                break
+            for acc in self.smtp_mgr.revive_candidates():
+                if self.stop_event.is_set():
+                    return
+                ok = self.smtp_mgr.liveness(acc, self._pick_proxy(acc))
+                self.smtp_mgr.apply_revive(acc, ok)
+                self._emit(f"↻ оживление {acc.email}: {'жив, вернул в ротацию' if ok else 'нет'}")
+                self.stop_event.wait(2)  # мягкая пауза между ре-тестами (без бурста)
+            for px in self.proxy_mgr.revive_candidates():
+                if self.stop_event.is_set():
+                    return
+                ok = self.proxy_mgr.liveness(px)
+                self.proxy_mgr.apply_revive(px, ok)
+                self.stop_event.wait(2)
+
     def _smtp_worker_thread(self, delay: float, jitter: float, max_per_conn: int, max_per_acc: int, on_progress: Callable) -> None:
         conn = None
-        
+
         def get_valid_account() -> SmtpAccount | None:
             for _ in range(self.smtp_mgr.count_alive):
                 acc = self.smtp_mgr.get_next()
@@ -668,10 +707,10 @@ class CampaignSender:
         smtp_acc = get_valid_account()
         if not smtp_acc:
             return
-            
-        proxy = self.proxy_mgr.get_next()
+
+        proxy = self._pick_proxy(smtp_acc)
         proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
-        
+
         sent_on_conn = 0
         _send_time = 0.0
         
@@ -729,7 +768,7 @@ class CampaignSender:
                     if not smtp_acc:
                         self.global_q.put(rcpt)
                         break
-                    proxy = self.proxy_mgr.get_next()
+                    proxy = self._pick_proxy(smtp_acc)
                     proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
                 
                 tag = f"{smtp_acc.email} "
@@ -738,18 +777,21 @@ class CampaignSender:
                     conn = connect_smtp(smtp_acc, proxy=proxy)
                     sent_on_conn = 0
                     self.proxy_mgr.report_result(proxy, True)  # прокси жив — сбросить счётчик неудач
+                    self.smtp_mgr.report_connect_result(smtp_acc, True)  # аккаунт подключился — сброс
                 except Exception as exc:
                     self._emit(f"{tag}Connect error: {exc}")
                     self.stats.record_error(smtp_acc.email, proxy_addr, smtp_dead=True)
-                    # Дохлый прокси во время рассылки понижаем, чтобы get_next не отдавал его снова
-                    # (после N подряд неудач коннекта он выпадет из ротации).
+                    # Дохлый прокси понижаем; аккаунт после серии неудач коннекта тоже временно
+                    # выбывает (soft-DEAD) — чтобы не долбить недоступный аккаунт. Порог у аккаунта
+                    # выше, чем у прокси, поэтому сперва выбывают плохие прокси, а не аккаунт.
                     self.proxy_mgr.report_result(proxy, False)
+                    self.smtp_mgr.report_connect_result(smtp_acc, False)
                     self.global_q.put(rcpt)
                     conn = None
                     smtp_acc = get_valid_account()
                     if not smtp_acc:
                         break
-                    proxy = self.proxy_mgr.get_next()
+                    proxy = self._pick_proxy(smtp_acc)
                     proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
                     continue
 
@@ -804,7 +846,7 @@ class CampaignSender:
                     _nxt = get_valid_account()
                     if _nxt is not None:
                         smtp_acc = _nxt
-                        proxy = self.proxy_mgr.get_next()
+                        proxy = self._pick_proxy(smtp_acc)
                         proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
                         conn = None
                     self.global_q.task_done()
@@ -850,11 +892,13 @@ class CampaignSender:
                 err_str = str(exc)
                 smtp_code = getattr(exc, "smtp_code", 0)
                 if smtp_code and smtp_code >= 500:
-                    smtp_acc.status = SmtpStatus.DEAD
-                    smtp_acc.last_error = err_str
+                    # 5xx = жёсткий отказ сервера (бан/блок/relay denied): аккаунт СДАЁМ
+                    # НАВСЕГДА (gave_up) — оживление его не тронет, чтобы не долбить 5xx и не
+                    # усугубить бан почтовика.
+                    self.smtp_mgr.mark_hard_dead(smtp_acc, err_str)
                     self.stats.record_error(
                         smtp_acc.email, proxy_addr, smtp_dead=True)
-                    conn = None 
+                    conn = None
                 else:
                     self.stats.record_error(smtp_acc.email, proxy_addr)
                     conn = None

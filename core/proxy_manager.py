@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import Enum
@@ -43,6 +44,10 @@ class ProxyEntry:
     # Счётчик ПОДРЯД идущих неудач коннекта во время рассылки (сбрасывается успехом). По
     # достижении порога прокси метится DEAD и выпадает из ротации — см. ProxyManager.report_result.
     send_fails: int = 0
+    # Авто-оживление: сколько раз ре-тест дохлого прокси провалился. Достигнут порог →
+    # gave_up=True: прокси СДАН окончательно, больше не ре-тестим (не долбим впустую).
+    revive_attempts: int = 0
+    gave_up: bool = False
 
 
     @property
@@ -546,6 +551,54 @@ class ProxyManager:
                 proxy.status = ProxyStatus.DEAD
                 if not proxy.last_error:
                     proxy.last_error = f"🔌 {self.SEND_FAIL_LIMIT} неудачи коннекта во время рассылки"
+
+    # Порог ре-тестов оживления: после стольких провалов ре-теста прокси СДАЁТСЯ окончательно
+    # (gave_up=True) и больше не проверяется — чтобы не долбить впустую.
+    MAX_REVIVE_ATTEMPTS = 2
+
+    def get_for_account(self, account_key: str) -> "ProxyEntry | None":
+        """Стабильно-привязанный прокси для аккаунта (режим «связать прокси с аккаунтом»):
+        один и тот же аккаунт всегда получает один и тот же ЖИВОЙ прокси (стабильный IP →
+        меньше риск блокировки почтовика). Ключ хешируется в индекс, дальше линейный поиск
+        первого живого — поэтому смерть одного прокси сдвигает только привязанные к нему
+        аккаунты, остальные не трогает. Нет прокси/живых нет → None (рассылка идёт напрямую)."""
+        with self._lock:
+            total = len(self._proxies)
+            if not total:
+                return None
+            start = zlib.crc32(account_key.encode("utf-8", "ignore")) % total
+            for i in range(total):
+                p = self._proxies[(start + i) % total]
+                if p.status == ProxyStatus.ALIVE and p.blacklist_clean is not False:
+                    return p
+            return None
+
+    def revive_candidates(self) -> list["ProxyEntry"]:
+        with self._lock:
+            return [p for p in self._proxies
+                    if p.status == ProxyStatus.DEAD and not p.gave_up]
+
+    def liveness(self, proxy: "ProxyEntry") -> bool:
+        """Тихая проверка досягаемости прокси (реальный TCP-тест SMTP-хостов) БЕЗ мутации
+        статуса — решение принимает apply_revive. Для ре-теста оживления."""
+        try:
+            return _smtp_tcp_test(proxy)
+        except Exception:
+            return False
+
+    def apply_revive(self, proxy: "ProxyEntry", ok: bool) -> None:
+        """Результат ре-теста дохлого прокси: ok → снова ALIVE (счётчики сброшены и в ротацию);
+        провал → +1 попытка, по достижении порога прокси СДАН (gave_up, больше не ре-тестим)."""
+        with self._lock:
+            if ok:
+                proxy.status = ProxyStatus.ALIVE
+                proxy.send_fails = 0
+                proxy.revive_attempts = 0
+                proxy.last_error = ""
+            else:
+                proxy.revive_attempts += 1
+                if proxy.revive_attempts >= self.MAX_REVIVE_ATTEMPTS:
+                    proxy.gave_up = True
 
     def sort_by_score(self) -> None:
         with self._lock:

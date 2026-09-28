@@ -186,6 +186,141 @@ def find_content_issues(items: list[str], is_subject: bool = False) -> list[dict
     return out
 
 
+# ── Подсчёт числа уникальных раскрытий шаблона ─────────────────────────────────
+# ПОЧЕМУ отдельно от spin(): владелец хочет ВИДЕТЬ, сколько разных писем даёт один
+# шаблон и все вместе, ДО рассылки. spin() раскрывает СЛУЧАЙНО и вернуть счётчик не
+# может, а перебирать все варианты нельзя — их бывают триллионы. Поэтому считаем число
+# комбинаций математически, тем же разбором грамматики, что и spin():
+#   • {{перем}} прячем (одна подстановка на получателя → множитель 1, как в spin);
+#   • {a|b|c} — сумма вариантов веток (ветки могут быть вложенными → рекурсия);
+#   • подряд идущие куски перемножаются (независимый выбор);
+#   • [[LINKn]] умножает на размер пула (в режиме urls) или на сумму раскрытий
+#     каждой строки пула (в режиме spintax) — это «человеческая» вариативность ссылок.
+# Возвращаем Python-int (без потолка) — число бывает астрономическим, и это честно.
+# NB: GET-параметр к ссылке и CSS-шум/комментарии движок добавляет СЛУЧАЙНО на каждую
+# отправку (почти бесконечная доп.уникальность) — в структурный счёт их не берём, о
+# них говорит подпись в UI: тут показываем комбинации САМОГО текста, а не шум движка.
+_LINK_TOKEN = "\x01"   # маркер [[LINKn]] внутри строки при подсчёте: \x01<key>\x01
+_VAR_TOKEN = "\x02"    # маркер спрятанной {{переменной}} (в исходных письмах не встречается)
+
+
+def _split_top_alternatives(inner: str) -> list[str]:
+    # Режем содержимое группы по «|» ТОЛЬКО верхнего уровня (вложенные {…} не трогаем).
+    parts: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for ch in inner:
+        if ch == "{":
+            depth += 1; cur.append(ch)
+        elif ch == "}":
+            depth -= 1; cur.append(ch)
+        elif ch == "|" and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def _run_link_factor(run: str, link_factor: dict[str, int]) -> int:
+    # Литеральный кусок (без групп): множитель = произведение факторов всех [[LINKn]] в нём.
+    factor = 1
+    i = 0
+    while True:
+        a = run.find(_LINK_TOKEN, i)
+        if a < 0:
+            break
+        b = run.find(_LINK_TOKEN, a + 1)
+        if b < 0:
+            break
+        key = run[a + 1:b]
+        factor *= link_factor.get(key, 1)
+        i = b + 1
+    return factor
+
+
+def _count_expansions(s: str, link_factor: dict[str, int]) -> int:
+    # Число раскрытий строки s (может содержать сбалансированные {…}). Куски перемножаем,
+    # группы дают сумму раскрытий веток. Несбалансированную «{» (битый шаблон) трактуем как
+    # литерал — не падаем (о битых шаблонах предупреждает validate_template отдельно).
+    total = 1
+    n = len(s)
+    i = 0
+    run_start = 0
+    while i < n:
+        if s[i] == "{":
+            total *= _run_link_factor(s[run_start:i], link_factor)
+            depth = 1
+            j = i + 1
+            while j < n and depth:
+                if s[j] == "{":
+                    depth += 1
+                elif s[j] == "}":
+                    depth -= 1
+                j += 1
+            if depth:  # группа не закрыта — остаток считаем литералом
+                total *= _run_link_factor(s[i:], link_factor)
+                return total
+            inner = s[i + 1:j - 1]
+            group = sum(_count_expansions(alt, link_factor)
+                        for alt in _split_top_alternatives(inner))
+            total *= group
+            i = j
+            run_start = j
+        else:
+            i += 1
+    total *= _run_link_factor(s[run_start:], link_factor)
+    return total
+
+
+def count_combinations(
+    template: str,
+    link_pools: dict[str, list[str]] | None = None,
+    link_mode: str = "urls",
+    consistent_links: bool = False,
+) -> int:
+    """Сколько РАЗНЫХ писем даёт шаблон (число раскрытий спинтакса × вариативность ссылок).
+    Считает математически, без перебора; возвращает int (может быть очень большим).
+
+    consistent_links (флаг «Единые ссылки»): когда ВКЛ, один и тот же [[LINKn]] в письме
+    даёт ОДИН URL (движок кэширует выбор на письмо), поэтому повторы ссылки НЕ множатся —
+    иначе счёт завышается на порядки (кнопка + текстовая ссылка = один и тот же оффер).
+    Когда ВЫКЛ (по умолчанию), каждый [[LINK]] выбирается независимо → множим на каждое
+    вхождение, как и делает движок.
+
+    Оговорки честности: (1) это число КОМБИНАЦИЙ веток (при совпадающих ветках — верхняя
+    оценка; точный подсчёт различных строк вычислительно неподъёмен на таких объёмах);
+    (2) случайный GET-параметр к ссылке и CSS-шум движок добавляет на КАЖДУЮ отправку —
+    это ещё бесконечно больше уникальности, в структурный счёт её не берём (консервативно)."""
+    if not template:
+        return 1
+    link_factor: dict[str, int] = {}
+    if link_pools:
+        for key, pool in link_pools.items():
+            if not pool:
+                link_factor[key] = 1
+            elif link_mode == "spintax":
+                # каждая строка пула — свой спинтакс-шаблон ссылки: суммируем их раскрытия
+                link_factor[key] = sum(count_combinations(u) for u in pool) or 1
+            else:
+                link_factor[key] = len(pool)
+    # Прячем {{переменные}} (в spin они тоже прячутся до раскрытия) и метим [[LINKn]].
+    t = _MACRO_RE.sub(_VAR_TOKEN, template)
+    marked = _LINK_RE.sub(lambda m: f"{_LINK_TOKEN}{m.group(1)}{_LINK_TOKEN}", t)
+
+    if consistent_links and link_factor:
+        # Единые ссылки: считаем спинтакс со ссылками-ЗАГЛУШКАМИ (множитель 1), затем
+        # умножаем на размер пула по КАЖДОМУ присутствующему ключу РОВНО один раз —
+        # сколько бы раз [[LINKn]] ни повторялся в письме, оффер-URL там один.
+        spin_only = _count_expansions(marked, {})
+        link_mult = 1
+        for key in set(_LINK_RE.findall(template)):
+            link_mult *= link_factor.get(key, 1)
+        return spin_only * link_mult
+
+    return _count_expansions(marked, link_factor)
+
+
 # \s* перед закрывающим «>» — терпим «</p >», «</a >» (пробел в закрывающем теге —
 # валидный HTML; движок его больше не создаёт, но шаблон автора может содержать).
 _BR_RE = re.compile(r'<br\s*/?>', re.IGNORECASE)

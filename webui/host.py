@@ -28,7 +28,7 @@ import webview
 from core.content import (
     ContentManager,
     render as render_body, is_html as is_html_body, html_to_plain_text,
-    plain_to_html, validate_template, find_content_issues,
+    plain_to_html, validate_template, find_content_issues, count_combinations,
 )
 from core.proxy_manager import ProxyManager, ProxyStatus, set_user_smtp_targets
 from core.smtp_manager import SmtpManager, SmtpStatus
@@ -118,6 +118,21 @@ def _body_title(b: str) -> str:
     t = _TAG_RE.sub(" ", t)
     t = " ".join(t.split())
     return t
+
+
+def _fmt_big(n: int) -> str:
+    # Человекочитаемое ОГРОМНОЕ число комбинаций: точное с пробелами-разделителями до
+    # 10 млн, дальше — научная запись «≈ D.DD·10^E». Число реально бывает астрономическим
+    # (спинтакс даёт триллионы), полностью его печатать бессмысленно — но и «∞» врать не
+    # хотим: показываем честный порядок величины.
+    if n < 0:
+        n = 0
+    if n < 10_000_000:
+        return f"{n:,}".replace(",", " ")
+    s = str(n)
+    exp = len(s) - 1
+    mant = s[0] + ("." + s[1:3] if len(s) > 1 else "")
+    return f"≈ {mant}·10^{exp}"
 
 
 def _senders(n: int) -> str:
@@ -714,6 +729,15 @@ class Api:
         # его не обнажил). Если непусто — превью покажет баннер «этот шаблон уйдёт битым».
         subject_issue = validate_template(subject)
         body_issue = validate_template(body_src) if body_src else []
+        # Сколько РАЗНЫХ писем даёт показанный шаблон тела (спинтакс × вариативность ссылок) —
+        # честный ответ на «сколько уникальных писем с одного шаблона». Пусто, если тел нет.
+        try:
+            combos = _fmt_big(count_combinations(
+                body_src, self.content_mgr.link_pools or None, self.content_mgr.link_mode,
+                consistent_links=self.content_mgr.consistent_links)
+            ) if body_src else ""
+        except Exception:
+            combos = ""
         # Честный локальный разбор ПОКАЗАННОГО письма: открываемость/кликабельность/
         # доставляемость + контраст (не «пустое» ли оно). Тему берём отрендеренную,
         # тело — по видимому тексту (что реально попадёт в ящик).
@@ -731,9 +755,40 @@ class Api:
             "bodies": len(bodies), "subjects": self.content_mgr.subject_count,
             "subject_issue": subject_issue, "body_issue": body_issue,
             "score": score,
+            "combinations": combos,   # уникальных писем с ЭТОГО шаблона (строка «≈ 3.4·10^6»)
             # True → база получателей не загружена, имя {{name}} в превью пустое; фронт
             # показывает подсказку, чтобы владелец не принял пустое имя за баг.
             "no_recipients": no_recipients,
+        }
+
+    def combinations(self) -> dict:
+        # Сводка уникальности контента для боковой панели превью: сколько разных писем даёт
+        # весь пул тел, весь пул тем и общий охват кампании (тема×текст×имя отправителя).
+        # Всё считается математически (без перебора), числа честные и бывают огромными.
+        cm = self.content_mgr
+        pools = cm.link_pools or None
+        mode = cm.link_mode
+        consistent = cm.consistent_links
+        body_total = 0
+        for b in cm.bodies:
+            try:
+                body_total += count_combinations(b, pools, mode, consistent_links=consistent)
+            except Exception:
+                body_total += 1
+        subj_total = 0
+        for s in cm.subjects:
+            try:
+                subj_total += count_combinations(s, pools, mode, consistent_links=consistent)
+            except Exception:
+                subj_total += 1
+        senders = cm.sender_name_count
+        # Полный охват = независимый выбор (тема) × (текст) × (имя отправителя, если есть).
+        grand = body_total * (subj_total or 1) * (senders or 1)
+        return {
+            "bodies": cm.body_count, "subjects": cm.subject_count, "senders": senders,
+            "body_total": _fmt_big(body_total),
+            "subject_total": _fmt_big(subj_total),
+            "grand_total": _fmt_big(grand),
         }
 
     def score_variants(self, n: Any = 30) -> dict:
@@ -964,15 +1019,20 @@ class Api:
         # аккаунты по кругу, никто не простаивает и никто не перегружен (у каждого ≈ поровну).
         # per_conn=0 оставляем: коннект переиспользуется в пределах профиля домена.
         per_acc = -(-len(queue) // alive)  # ceil; alive>0 гарантирован проверкой выше
+        # Галка «связать прокси с аккаунтом»: каждый аккаунт стабильно шлёт через один и тот же
+        # прокси (стабильный IP → меньше риск блокировки почтовика). Явную привязку email:pass|>proxy
+        # уважает connect_smtp в любом режиме.
+        bind_proxy = bool(params.get("bind_proxy"))
         self._sender.start(
             delay=base,
             jitter=jit,
             max_threads=max_threads,
             max_per_conn=0,        # авто-лимит по профилю домена (поле убрано из UI)
             max_per_acc=per_acc,   # ровная раскидка: ≤ ceil(писем/живых) на каждый аккаунт
+            bind_proxy=bind_proxy,
         )
         return {"started": True, "queued": len(queue), "per_acc": per_acc,
-                "threads": max_threads, "alive": alive}
+                "threads": max_threads, "alive": alive, "bind_proxy": bind_proxy}
 
     def pause_campaign(self) -> dict:
         if self._sender:

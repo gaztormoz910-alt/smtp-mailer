@@ -36,6 +36,14 @@ class SmtpAccount:
     sent_count: int = 0
     last_error: str = ""
     ping_ms: int = 0
+    # Отказоустойчивость рассылки:
+    #  connect_fails — ПОДРЯД неудачи коннекта во время рассылки (сброс успехом); порог → soft-DEAD;
+    #  revive_attempts — провалы ре-теста оживления; порог → gave_up;
+    #  gave_up — аккаунт СДАН окончательно (5xx-бан ИЛИ исчерпан лимит оживления): больше НЕ трогаем
+    #  и НЕ ре-тестим — чтобы не долбить почтовик и не спровоцировать бан.
+    connect_fails: int = 0
+    revive_attempts: int = 0
+    gave_up: bool = False
     # Опционально привязанный к аккаунту прокси (ProxyEntry). None → аккаунт
     # работает через общий пул прокси. ТЗ задачи 2, вариант В.
     bound_proxy: Any = None
@@ -694,3 +702,67 @@ class SmtpManager:
                 if a.status == SmtpStatus.ALIVE:
                     return a
             return None
+
+    # Порог ПОДРЯД идущих неудач коннекта в рассылке, после которого аккаунт временно
+    # выбывает (soft-DEAD) — чтобы не долбить впустую недоступный аккаунт. Успех сбрасывает.
+    CONNECT_FAIL_LIMIT = 5
+    # Порог провалов ре-теста оживления, после которого аккаунт СДАЁТСЯ окончательно.
+    MAX_REVIVE_ATTEMPTS = 2
+
+    def report_connect_result(self, account: SmtpAccount, ok: bool) -> None:
+        """Обратная связь из рассылки: удалось ли подключиться к аккаунту. Успех сбрасывает
+        счётчик; CONNECT_FAIL_LIMIT подряд неудач → аккаунт soft-DEAD (выпадает из ротации,
+        но НЕ gave_up — его потом попробует оживить ре-тест). Порог > порога прокси (3), чтобы
+        сначала успели выбыть плохие прокси, а аккаунт не пострадал за чужую вину."""
+        with self._lock:
+            if ok:
+                account.connect_fails = 0
+                return
+            account.connect_fails += 1
+            if account.connect_fails >= self.CONNECT_FAIL_LIMIT and account.status == SmtpStatus.ALIVE:
+                account.status = SmtpStatus.DEAD
+                if not account.last_error:
+                    account.last_error = f"🔌 {self.CONNECT_FAIL_LIMIT} неудач коннекта в рассылке"
+
+    def mark_hard_dead(self, account: SmtpAccount, reason: str = "") -> None:
+        """Жёсткая смерть (ответ сервера 5xx — бан/блок/relay denied): аккаунт СДАЁТСЯ СРАЗУ И
+        НАВСЕГДА (gave_up). Его НЕ ре-тестят и НЕ используют — иначе долбёж 5xx усугубит бан."""
+        with self._lock:
+            account.status = SmtpStatus.DEAD
+            account.gave_up = True
+            if reason:
+                account.last_error = reason
+
+    def revive_candidates(self) -> list[SmtpAccount]:
+        with self._lock:
+            return [a for a in self._accounts
+                    if a.status == SmtpStatus.DEAD and not a.gave_up]
+
+    def apply_revive(self, account: SmtpAccount, ok: bool) -> None:
+        """Результат ре-теста: ok → снова ALIVE (счётчики сброшены, вернулся в ротацию);
+        провал → +1 попытка, по достижении MAX_REVIVE_ATTEMPTS аккаунт СДАН (gave_up)."""
+        with self._lock:
+            if ok:
+                account.status = SmtpStatus.ALIVE
+                account.connect_fails = 0
+                account.revive_attempts = 0
+                account.last_error = ""
+            else:
+                account.revive_attempts += 1
+                if account.revive_attempts >= self.MAX_REVIVE_ATTEMPTS:
+                    account.gave_up = True
+
+    def liveness(self, account: SmtpAccount, proxy: Any | None = None,
+                 timeout: int | None = None) -> bool:
+        """Тихая проверка «можно ли сейчас подключиться» БЕЗ мутации статуса (решение о
+        статусе принимает apply_revive). Для ре-теста оживления."""
+        conn_timeout = int(timeout) if timeout else _CONNECT_TIMEOUT
+        try:
+            smtp = connect_smtp(account, proxy=proxy, timeout=conn_timeout)
+            try:
+                smtp.quit()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False

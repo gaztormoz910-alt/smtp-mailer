@@ -141,6 +141,11 @@ body{
 .inp.num{width:74px;text-align:center}
 .check{display:inline-flex; align-items:center; gap:9px; color:var(--text); font-size:13px; cursor:pointer; user-select:none}
 .check input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+/* Опция-галка с описанием в две строки (напр. «связать прокси»): чекбокс прижат к ВЕРХУ
+   первой строки, а не к центру блока — иначе на многострочной подписи он «плавал». Флекс
+   не даёт чекбоксу сжаться. Подпись — нормальным текстом (не капсом, как .field label). */
+.check.opt{align-items:flex-start; line-height:1.4}
+.check.opt input{flex:0 0 auto; margin-top:1px}
 .hint{color:var(--dim2);font-size:11px}
 
 /* ── прогресс ── */
@@ -261,6 +266,12 @@ body.busy{cursor:progress}
 .metric b{font-family:var(--mono);font-size:26px;line-height:1;color:var(--text)}
 .metric.ac b{color:var(--accent)} .metric.er b{color:var(--error)} .metric.in b{color:var(--info)}
 .metric small{color:var(--dim);font-size:11px;font-family:var(--sans)}
+
+/* ── Прогноз рассылки (писем/мин · длительность · время финиша) ── */
+.est-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.est{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 6px;text-align:center;min-width:0}
+.est b{display:block;font-family:var(--mono);font-size:17px;line-height:1.15;color:var(--accent);word-break:break-word}
+.est span{display:block;font-size:10px;color:var(--dim);margin-top:4px;text-transform:uppercase;letter-spacing:.3px}
 
 .state-banner{
   display:none; align-items:center; gap:12px; padding:11px 14px; margin-bottom:12px;

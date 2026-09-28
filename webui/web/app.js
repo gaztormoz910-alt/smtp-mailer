@@ -460,6 +460,7 @@ function gatherParams() {
   return {
     delay_min: $("#p-delay-min").value, delay_max: $("#p-delay-max").value,
     threads: $("#p-threads").value,
+    bind_proxy: !!($("#p-bind-proxy") && $("#p-bind-proxy").checked),
   };
 }
 $("#btn-start").addEventListener("click", () => {
@@ -474,6 +475,63 @@ $("#btn-pause").addEventListener("click", () => {
 });
 $("#btn-stop").addEventListener("click", () => api().stop_campaign().then(() => tick()));
 $("#log-clear").addEventListener("click", () => { $("#console").innerHTML = `<div class="empty">Лог очищен</div>`; lastLogLen = 0; });
+
+// ── Прогноз рассылки: писем/мин + длительность + время завершения ────────
+// Оценка ДО старта. Модель проста и честно приблизительна:
+//   воркеров = min(живых SMTP, 50) (или введённые потоки, но не больше живых);
+//   на письмо у одного воркера уходит ≈ средняя задержка + ~1.2 c сетевой отправки;
+//   писем/мин = воркеры × 60 / это_время; длительность = получателей / (писем/мин).
+// Прогрев (первые письма с каждого аккаунта медленнее) и ответ серверов делают реальную
+// скорость чуть НИЖЕ — об этом подпись. Реальную скорость показывает вкладка «Статистика».
+let lastAlive = 0, lastRecip = 0;
+const SEND_OVERHEAD_SEC = 1.2;  // грубый сетевой round-trip самой отправки письма
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const d = Math.floor(sec / 86400); sec -= d * 86400;
+  const h = Math.floor(sec / 3600); sec -= h * 3600;
+  const m = Math.floor(sec / 60);
+  if (d > 0) return `${d}д ${h}ч`;
+  if (h > 0) return `${h}ч ${m}м`;
+  if (m > 0) return `${m}м`;
+  return "<1м";
+}
+function fmtWhen(date) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(date.getDate())}.${p(date.getMonth() + 1)} ${p(date.getHours())}:${p(date.getMinutes())}`;
+}
+function updateEstimate() {
+  const es = $("#est-speed"), ed = $("#est-dur"), ef = $("#est-finish"), en = $("#est-note");
+  if (!es) return;
+  const a = parseFloat($("#p-delay-min").value) || 0;
+  const b = parseFloat($("#p-delay-max").value) || 0;
+  const cap = Math.min(lastAlive || 0, 50);
+  const thIn = parseInt($("#p-threads").value, 10);
+  let workers = cap;
+  if (thIn > 0) workers = Math.min(thIn, cap);
+  if (!workers) {
+    es.textContent = "—"; ed.textContent = "—"; ef.textContent = "—";
+    en.textContent = "Нет живых SMTP — проверь аккаунты во вкладке «Настройки».";
+    return;
+  }
+  let avg = (a + b) / 2, autoNote = "";
+  if (avg <= 0) { avg = 6; autoNote = "Задержка 0 → авто-профиль по домену (взято ≈6 с). "; }
+  const perEmail = Math.max(0.5, avg) + SEND_OVERHEAD_SEC;
+  const perMin = workers * 60 / perEmail;
+  es.textContent = Math.max(1, Math.round(perMin));
+  const recip = lastRecip || 0;
+  if (!recip) {
+    ed.textContent = "—"; ef.textContent = "—";
+    en.textContent = autoNote + "Загрузи базу получателей — тогда покажу длительность и время финиша.";
+    return;
+  }
+  const totalSec = recip / perMin * 60;
+  ed.textContent = fmtDur(totalSec);
+  ef.textContent = fmtWhen(new Date(Date.now() + totalSec * 1000));
+  en.textContent = autoNote + `${workers} воркер(ов) × ${recip} получателей. Первые письма с каждого аккаунта идут медленнее (прогрев) — реальный финиш чуть позже.`;
+}
+["p-delay-min", "p-delay-max", "p-threads"].forEach((id) => {
+  const el = $("#" + id); if (el) el.addEventListener("input", updateEstimate);
+});
 
 let lastLogLen = 0;
 function renderLog(lines) {
@@ -537,6 +595,9 @@ function tick() {
     $("#st-eta").textContent = snap.eta_min || 0;
     renderStatTable("st-smtp", (snap.smtp || []).map((x) => [x.email, x.sent, x.errors, x.status]));
     renderStatTable("st-proxy", (snap.proxy || []).map((x) => [x.address, x.used, x.errors, x.status]));
+    // Прогноз рассылки питается теми же данными (живые SMTP + получатели) — держим свежим.
+    lastAlive = s.alive_smtp || 0; lastRecip = s.recipients || 0;
+    updateEstimate();
   });
 }
 function renderStatTable(id, rows) {
@@ -695,7 +756,20 @@ function openPreview() {
       (r.items || []).map((t) => `<option value="${t.index}">${esc(t.title)}</option>`).join("");
     sel.value = String(PV.index);
   });
+  refreshCombos();
   loadPreview();
+}
+// Счётчик уникальных писем: со ВСЕХ текстов и полный охват (тема×текст×имя). Считает
+// бэкенд математически — числа честные (бывают астрономическими, тогда научная запись).
+function refreshCombos() {
+  const all = $("#pv-combo-all"), grand = $("#pv-combo-grand");
+  if (!all) return;
+  api().combinations().then((r) => {
+    all.textContent = r.body_total || "—";
+    grand.textContent = (r.grand_total && r.subjects)
+      ? `Всего писем (тема×текст×имя): ${r.grand_total}`
+      : "Загрузи темы и имена — покажу полный охват кампании.";
+  }).catch(() => {});
 }
 function loadPreview() {
   $("#pv-loading").style.display = "block"; $("#pv-client-frame").style.display = "none";
@@ -708,6 +782,7 @@ function loadPreview() {
     const m = d.metrics || {};
     $("#pv-m-html").textContent = m.html_size || 0; $("#pv-m-text").textContent = m.text_len || 0;
     $("#pv-m-links").textContent = m.links || 0; $("#pv-m-img").textContent = m.images || 0;
+    $("#pv-combo-body").textContent = d.combinations || "—";  // уникальных писем с показанного текста
     // Баннер: показанный шаблон (тема/тело) уйдёт получателю битым — честное предупреждение.
     const iss = (d.subject_issue || []).concat(d.body_issue || []);
     const w = $("#pv-warn");
@@ -990,10 +1065,11 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     load_campaign_preset: (name) => P({ ok: true, name, cc: "cc@x.com", bcc: "", cc_pct: 20, bcc_pct: 0, control: "me@x.com", control_every_n: 5, consistent_links: true, email_only: false }),
     load_proxies_url: () => P({ added: 0, total: proxies.length, alive: 0, dead: 0 }),
     body_titles: () => P({ items: bodies.map((b, i) => ({ index: i, title: b.slice(0, 40) })) }),
-    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, text: "hey, I saved something for you. take a look: https://example.com/offer", is_html: true, format: "HTML", no_recipients: false, metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [], score: { overall: 62, grade: "B", grade_color: "#86efac", deliverability: 100, openrate: 48, clickability: 55, verdict: "Письмо рабочее, но есть точки роста.", ctr_estimate: { val: "0.6-1.0%", tag: "↓ чуть ниже нормы", up: false, norm: "0.8-1.5%" }, checks: { openrate: [{ ok: true, text: "Личное обращение в теме: есть" }, { ok: false, text: "Вопрос в теме: нет" }], clickability: [{ ok: true, text: "Длина тела: 120 симв. (норма 50-600)" }, { ok: false, text: "Анкор без глагола: \"take a look\"" }], deliverability: [{ ok: true, text: "Длина темы: 30 симв. (норма 20-70)" }] }, tips: [], issues: [], contrast: { ok: true, ratio: 8.1, text: "Контраст в норме (минимум 8.1:1)" }, structure: { score: 92, status: "отлично", issues: [{ t: "info", text: "Нет <meta charset> — не страшно (MIME задаёт utf-8)" }] }, vertical: "dating", anchor: "take a look" } }),
+    preview_email: () => P({ from_name: "Мария Соколова", from_email: "sender1@mail1.com", subject: "у нас для тебя кое-что есть", preheader: "Загляни, пока предложение действует", html: demoBody, text: "hey, I saved something for you. take a look: https://example.com/offer", is_html: true, format: "HTML", no_recipients: false, metrics: { html_size: 980, text_len: 120, links: 1, images: 0 }, bodies: 7, subjects: N_SUBJ, subject_issue: [], body_issue: [], combinations: "≈ 2.4·10^5", score: { overall: 62, grade: "B", grade_color: "#86efac", deliverability: 100, openrate: 48, clickability: 55, verdict: "Письмо рабочее, но есть точки роста.", ctr_estimate: { val: "0.6-1.0%", tag: "↓ чуть ниже нормы", up: false, norm: "0.8-1.5%" }, checks: { openrate: [{ ok: true, text: "Личное обращение в теме: есть" }, { ok: false, text: "Вопрос в теме: нет" }], clickability: [{ ok: true, text: "Длина тела: 120 симв. (норма 50-600)" }, { ok: false, text: "Анкор без глагола: \"take a look\"" }], deliverability: [{ ok: true, text: "Длина темы: 30 симв. (норма 20-70)" }] }, tips: [], issues: [], contrast: { ok: true, ratio: 8.1, text: "Контраст в норме (минимум 8.1:1)" }, structure: { score: 92, status: "отлично", issues: [{ t: "info", text: "Нет <meta charset> — не страшно (MIME задаёт utf-8)" }] }, vertical: "dating", anchor: "take a look" } }),
     score_variants: () => P({ available: true, count: 40, min: 41, median: 58, max: 79, worst: { overall: 41, grade: "D", subject: "you almost missed this...", anchor: "take a look", fails: ["Конкретика / интрига в теме: нет", "Вопрос в теме: нет", "Эмодзи в теме: нет", "Призыв к действию: нет", "Анкор без глагола: \"take a look\""] } }),
     // Демо: показываем предупреждение о битом теле #3, чтобы жёлтая строка на карточке была видна.
     content_issues: () => P({ subjects: [], bodies: [{ n: 3, why: "незакрытая { ×1 (демо)" }] }),
+    combinations: () => P({ bodies: 7, subjects: N_SUBJ, senders: sndrs.length, body_total: "≈ 8.4·10^9", subject_total: "1 280", grand_total: "≈ 3.1·10^16" }),
     plan: () => P({ alive: 2, total: N_REC, rows: [{ email: "sender1@mail1.com", count: N_REC / 2 }, { email: "sender2@mail2.com", count: N_REC / 2 }], text: `2 отправителя разошлют ровно по ${N_REC / 2} писем.`, threads: 2, per_conn: N_REC / 2 }),
     send_test: () => P({ ok: true, info: "отправлено за 1.8 сек через sender1@mail1.com" }),
     queue_state: () => P({ exists: false }),
