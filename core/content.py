@@ -376,6 +376,11 @@ def _tidy_spaces(text: str, html_mode: bool) -> str:
     return "".join(parts)
 
 
+# Наличие DOCTYPE проверяем одним регэкспом (компиляция один раз, а не на каждое письмо):
+# render зовётся на КАЖДУЮ отправку и на каждый прогон превью-скора.
+_DOCTYPE_RE = re.compile(r"<!doctype", re.I)
+
+
 def render(
     template: str,
     variables: dict[str, str] | None = None,
@@ -443,6 +448,15 @@ def render(
                 tag = tag[:-1] + ' >'
             return tag
         result = re.sub(r'<[^>]+>', _randomize_whitespace, result)
+
+        # DOCTYPE обязателен: без него Outlook рендерит письмо в quirks mode и ломает
+        # table-вёрстку Light HTML (это и флагует локальный скорер письма). Шаблон мог
+        # его не содержать — гарантируем сами, на уровне движка, как и List-Unsubscribe
+        # в sender: это невидимая структурная норма, одинаковая у ВСЕХ реальных клиентов,
+        # поэтому её ОТСУТСТВИЕ — аномалия для фильтров, а НАЛИЧИЕ — норма (не фингерпринт).
+        # Ставим строго первым символом (срезав возможный BOM/пробелы в начале).
+        if not _DOCTYPE_RE.search(result):
+            result = "<!DOCTYPE html>\n" + result.lstrip("﻿ \t\r\n")
 
     return result
 
