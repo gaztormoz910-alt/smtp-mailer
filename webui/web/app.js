@@ -217,6 +217,17 @@ function setSetupButtons(kind, r) {
       ? `Удалить ${untested} непроверенных «?» (мёртвых/живых не трогает)`
       : "Непроверенных нет — удалять нечего";
   }
+  // «Убрать из ЧС» — только для прокси: активна, когда есть живые-в-блэклисте (r.dirty>0).
+  if (kind === "proxies") {
+    const rb = $("#px-remove-blacklisted");
+    if (rb) {
+      const dirty = r.dirty || 0;
+      rb.disabled = !(loaded && !busyk && dirty > 0);
+      rb.title = dirty > 0
+        ? `Удалить ${dirty} живых прокси из чёрных списков (DNSBL)`
+        : "Прокси в чёрных списках нет";
+    }
+  }
 }
 const STLABEL = { alive: "Живой", dead: "Мёртвый", untested: "?", checking: "Проверка" };
 function badge(st) { return `<span class="badge-st ${st}">${STLABEL[st] || st}</span>`; }
@@ -295,15 +306,16 @@ function fillRange(el) {
 // Лок UI на время проверки: нельзя грузить/настраивать/регулировать/стартовать рассылку.
 // ИСКЛЮЧЕНИЕ — пагинация (.pg-prev/.pg-next): листать страницы данных МОЖНО прямо во время
 // проверки (по просьбе владельца). Вкладки и прокрутка списков тоже не блокируются.
+// Во время проверки прокси/SMTP блокируем ТОЛЬКО органы управления вкладки «Настройки»
+// (загрузка/очистка прокси-SMTP, кнопки проверки, ползунки) — чтобы не менять пул под самой
+// проверкой. Вкладки «Контент», «Кампания», «Отправка», «План» НЕ трогаем: их кнопки живут
+// (просьба владельца — раньше при проверке блокировался весь интерфейс).
 const LOCK_SEL = [
-  "[data-load]", "[data-clear]", "#px-load-url", "#px-check", "#sm-check", "#px-remove-dead", "#sm-remove-dead",
+  '[data-panel="setup"] [data-load]', '[data-panel="setup"] [data-clear]',
+  "#px-load-url", "#px-check", "#sm-check", "#px-remove-dead", "#sm-remove-dead",
+  "#px-remove-blacklisted",
   "#px-recheck-untested", "#sm-recheck-untested", "#px-remove-untested", "#sm-remove-untested",
   "#px-timeout", "#px-threads", "#sm-timeout", "#sm-threads",
-  "#consistent", "#emailonly", "#open-preview", "#open-preview-2",
-  "#cc", "#cc-pct", "#bcc", "#bcc-pct", "#control", "#control-n", "#plan-refresh",
-  "#test-email", "#test-send", "#p-delay-min", "#p-delay-max", "#p-threads",
-  "#btn-start", "#btn-pause", "#btn-stop", "#log-clear",
-  "#resume-btn", "#resume-clear",
 ];
 function setBusy(v) {
   _busy = v;
@@ -316,6 +328,8 @@ function setBusy(v) {
   }
 }
 $("#px-remove-dead").addEventListener("click", () => api().remove_dead_proxies().then(() => { pagers.proxies.reload(); refreshBadges(); }));
+// «Убрать из ЧС» — удаляет живые прокси, оказавшиеся в чёрных списках (item 10).
+$("#px-remove-blacklisted").addEventListener("click", () => api().remove_blacklisted_proxies().then(() => { pagers.proxies.reload(); refreshBadges(); }));
 $("#sm-remove-dead").addEventListener("click", () => api().remove_dead_smtp().then(() => { pagers.smtp.reload(); refreshBadges(); }));
 // «Убрать не пров.» — удаляет ТОЛЬКО непроверенные (отдельно от «Убрать мёртвые»).
 $("#px-remove-untested").addEventListener("click", () => api().remove_untested_proxies().then(() => { pagers.proxies.reload(); refreshBadges(); }));
@@ -330,24 +344,26 @@ function setPct(p, pct) {
 function updateProgress(p, r) {
   const total = r.total || 0, alive = r.alive || 0, dead = r.dead || 0;
   const untested = Math.max(0, total - alive - dead);
-  const running = !!r.running, done = r.done || 0;
+  const running = !!r.running, done = r.done || 0, chkTotal = r.check_total || 0;
   const wrap = $("#" + p + "-progress-wrap");
-  // Бар виден, когда есть данные И (идёт проверка ИЛИ хоть что-то уже проверено). Он ОСТАЁТСЯ
-  // после завершения (untested < total → показан). Свежезагруженный непроверенный пул
-  // (untested == total, проверка не идёт) и пустой пул (total 0) — бар скрыт.
-  const show = total > 0 && (running || untested < total);
+  // Прогрессбар = прогресс САМОЙ ПРОВЕРКИ (сколько аккаунтов ОБРАБОТАНО), а НЕ доля тех, кто
+  // получил однозначный вердикт. Раньше после проверки бар пересчитывался по «живым+мёртвым»
+  // и ОТКАТЫВАЛСЯ назад: аккаунт с мягким отказом (5.7.3 IP-репутация, greylisting) законно
+  // остаётся «?», и бар падал со 100% до 14%. Это и бесило владельца. Теперь: идёт проверка →
+  // done/цель; проверка ЗАВЕРШЕНА → 100% (все выбранные обработаны, даже если часть осталась «?»).
+  const ranThisSession = chkTotal > 0;  // проверку в этой сессии запускали
+  const show = total > 0 && (running || ranThisSession || untested < total);
   wrap.hidden = !show;
   if (!show) { setPct(p, 0); return; }
   let pct;
-  if (untested === 0) {
-    pct = 100;  // 100% ТОЛЬКО когда непроверенных реально не осталось
+  if (running) {
+    pct = chkTotal ? Math.min(99, Math.max(0, Math.floor(done / chkTotal * 100))) : 0;
+  } else if (ranThisSession) {
+    // Проверка завершена — всё обработано → 100% и держим (не откатываем из-за «?»).
+    pct = 100;
   } else {
-    // Пока идёт проверка — плавно по done/цель (real-time); после — по доле проверенных.
-    // Цель — check_total (при «Перепроверить не пров.» это число непроверенных, а не весь
-    // пул), иначе весь пул. Пока есть хоть один непроверенный — потолок 99%.
-    const chkTotal = r.check_total || total;
-    const base = running ? (chkTotal ? done / chkTotal : 0) : (total - untested) / total;
-    pct = Math.min(99, Math.max(0, Math.floor(base * 100)));
+    // Проверку в этой сессии не запускали, но часть пула уже со статусом (загруженное состояние).
+    pct = total ? Math.min(100, Math.floor((total - untested) / total * 100)) : 0;
   }
   setPct(p, pct);
 }
@@ -454,6 +470,10 @@ $("#test-send").addEventListener("click", () => {
   api().send_test(email).then((r) => setMsg("test-msg", (r.ok ? "✓ " : "✗ ") + r.info, r.ok ? "ok" : "err"))
     .finally(() => ($("#test-send").disabled = false));
 });
+// Кнопка «✕» очищает поле тестового адреса и возвращает в него фокус (item 5).
+$("#test-clear").addEventListener("click", () => {
+  const el = $("#test-email"); el.value = ""; el.focus(); setMsg("test-msg", "", "");
+});
 function gatherParams() {
   // Осталось три регулятора: диапазон задержки «от…до» и число потоков.
   // Прочее (разброс/писем-в-мин/на-коннект/на-аккаунт) убрано — дефолты задаёт мост.
@@ -515,19 +535,36 @@ function updateEstimate() {
   }
   let avg = (a + b) / 2, autoNote = "";
   if (avg <= 0) { avg = 6; autoNote = "Задержка 0 → авто-профиль по домену (взято ≈6 с). "; }
-  const perEmail = Math.max(0.5, avg) + SEND_OVERHEAD_SEC;
-  const perMin = workers * 60 / perEmail;
-  es.textContent = Math.max(1, Math.round(perMin));
+  const perEmail = Math.max(0.5, avg) + SEND_OVERHEAD_SEC;   // пауза + сетевой round-trip отправки
+  const steadyPerMin = workers * 60 / perEmail;              // установившаяся скорость
   const recip = lastRecip || 0;
   if (!recip) {
+    es.textContent = Math.max(1, Math.round(steadyPerMin));
     ed.textContent = "—"; ef.textContent = "—";
     en.textContent = autoNote + "Загрузи базу получателей — тогда покажу длительность и время финиша.";
     return;
   }
-  const totalSec = recip / perMin * 60;
+  // Прогрев: первые письма с КАЖДОГО аккаунта идут медленнее (движок ×3→×1). Честная надбавка
+  // ко времени — первые ~12 писем на воркера несут примерно двойную задержку. Для больших баз
+  // ничтожно, для маленьких заметно (раньше показывало «<1м», хотя реально ~минута). Прогрев
+  // идёт параллельно на всех воркерах → надбавка НЕ ×workers.
+  const emailsPerWorker = recip / workers;
+  const warmExtraSec = Math.min(emailsPerWorker, 12) * perEmail;
+  const totalSec = (recip / steadyPerMin) * 60 + warmExtraSec;
+  // Показываем СРЕДНЮЮ (эффективную) скорость: писем/мин = получатели / длительность, тогда
+  // «скорость × длительность = вся база» и число не завышено (согласовано с прогревом).
+  const effPerMin = totalSec > 0 ? recip / (totalSec / 60) : steadyPerMin;
+  es.textContent = Math.max(1, Math.round(effPerMin));
   ed.textContent = fmtDur(totalSec);
   ef.textContent = fmtWhen(new Date(Date.now() + totalSec * 1000));
-  en.textContent = autoNote + `${workers} воркер(ов) × ${recip} получателей. Первые письма с каждого аккаунта идут медленнее (прогрев) — реальный финиш чуть позже.`;
+  en.textContent = autoNote + `${workers} воркер(ов) × ${recip} получателей. Учтён прогрев (первые письма медленнее) — оценка средняя, реальная скорость около этой.`;
+}
+// Секундомер рассылки: mm:ss или h:mm:ss. Значение берём из snapshot.elapsed_sec (бэкенд его
+// замораживает на финише) в общем tick() — без отдельных таймеров, чтобы фронт не нагружался.
+function fmtClock(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const p = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
 }
 ["p-delay-min", "p-delay-max", "p-threads"].forEach((id) => {
   const el = $("#" + id); if (el) el.addEventListener("input", updateEstimate);
@@ -537,12 +574,18 @@ let lastLogLen = 0;
 function renderLog(lines) {
   const c = $("#console");
   if (!lines || !lines.length) { if (!c.children.length || c.querySelector(".empty")) c.innerHTML = `<div class="empty">Лог появится после старта…</div>`; return; }
-  if (lines.length < lastLogLen || c.querySelector(".empty")) { c.innerHTML = ""; lastLogLen = 0; }
+  // Липкий низ: автопрокрутка ТОЛЬКО если пользователь уже внизу лога. Если он прокрутил
+  // вверх (читает старое), новые строки НЕ утаскивают его вниз — даже после конца рассылки
+  // (раньше scrollTop=scrollHeight дёргал вниз на каждом тике). Порог 48px = «почти внизу».
+  const atBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) < 48;
+  let reset = false;
+  if (lines.length < lastLogLen || c.querySelector(".empty")) { c.innerHTML = ""; lastLogLen = 0; reset = true; }
   for (let i = lastLogLen; i < lines.length; i++) {
-    const t = lines[i]; const cls = /✓/.test(t) ? "ok" : /✗|error|Error/.test(t) ? "err" : /Старт|Sending|Spawn|Stop/.test(t) ? "sys" : "";
+    const t = lines[i]; const cls = /✓|✅|🏁/.test(t) ? "ok" : /✗|❌|⛔|error|Error/.test(t) ? "err" : /▶|⚙|🔌|↻|⏳/.test(t) ? "sys" : "";
     const d = document.createElement("div"); d.className = "l " + cls; d.textContent = t; c.appendChild(d);
   }
-  lastLogLen = lines.length; c.scrollTop = c.scrollHeight;
+  lastLogLen = lines.length;
+  if (atBottom || reset) c.scrollTop = c.scrollHeight;  // тянем вниз только когда пользователь и так внизу
 }
 
 // ── Возобновление прерванной кампании ───────────────────────────────────
@@ -598,6 +641,20 @@ function tick() {
     // Прогноз рассылки питается теми же данными (живые SMTP + получатели) — держим свежим.
     lastAlive = s.alive_smtp || 0; lastRecip = s.recipients || 0;
     updateEstimate();
+    // Секундомер: elapsed_sec из snapshot (замирает на финише — бэкенд фиксирует _end_time).
+    // Обновляется здесь же, в общем 1-сек. опросе — никаких отдельных setInterval (без лагов).
+    const secs = Math.max(0, Math.floor(snap.elapsed_sec || 0));
+    const clock = fmtClock(secs);
+    const running = s.running && !s.paused;
+    const finished = !s.running && (snap.sent || 0) + (snap.errors || 0) > 0;
+    const stt = $("#st-timer"); if (stt) stt.textContent = clock;
+    const swt = $("#send-timer");
+    if (swt) {
+      swt.textContent = "⏱ " + clock;
+      swt.classList.remove("run", "done");
+      if (running) swt.classList.add("run");
+      else if (finished) swt.classList.add("done");
+    }
   });
 }
 function renderStatTable(id, rows) {
@@ -1028,13 +1085,13 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
       if (pxRun) { pxDone = Math.min(proxies.length, pxDone + Math.max(1, Math.ceil(proxies.length / 6))); if (pxDone >= proxies.length) { pxRun = false; pxChecked = true; } }
       const n = pxChecked ? proxies.length : (pxRun ? pxDone : 0);
       const w = win(itemsN(proxies, n), o, l);
-      return P({ ...cntN(proxies, n), offset: w.off, limit: w.lim, items: w.arr, running: pxRun, done: n, check_total: proxies.length });
+      return P({ ...cntN(proxies, n), offset: w.off, limit: w.lim, items: w.arr, running: pxRun, done: n, check_total: (pxChecked || pxRun) ? proxies.length : 0 });
     },
     page_smtp: (o, l) => {
       if (smRun) { smDone = Math.min(smtps.length, smDone + Math.max(1, Math.ceil(smtps.length / 6))); if (smDone >= smtps.length) { smRun = false; smChecked = true; } }
       const n = smChecked ? smtps.length : (smRun ? smDone : 0);
       const w = win(itemsN(smtps, n), o, l);
-      return P({ ...cntN(smtps, n), offset: w.off, limit: w.lim, items: w.arr, running: smRun, done: n, check_total: smtps.length });
+      return P({ ...cntN(smtps, n), offset: w.off, limit: w.lim, items: w.arr, running: smRun, done: n, check_total: (smChecked || smRun) ? smtps.length : 0 });
     },
     pick_and_load: (kind) => {
       const t = { subjects: N_SUBJ, bodies: 7, senders: sndrs.length, recipients: N_REC };
@@ -1048,6 +1105,7 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     clear_proxies: () => { proxies = []; pxChecked = false; return P({ total: 0, alive: 0, dead: 0 }); },
     clear_smtp: () => { smtps = []; smChecked = false; return P({ total: 0, alive: 0, dead: 0 }); },
     remove_dead_proxies: () => { proxies = proxies.filter((x) => x.status !== "dead"); return P({ removed: 0, ...viewCnt(proxies, pxChecked) }); },
+    remove_blacklisted_proxies: () => { proxies = proxies.filter((x) => !(x.status === "alive" && x.blacklist === false)); return P({ removed: 0, ...viewCnt(proxies, pxChecked) }); },
     remove_dead_smtp: () => { smtps = smtps.filter((x) => x.status !== "dead"); return P({ removed: 0, ...viewCnt(smtps, smChecked) }); },
     // Удаление непроверенных: в демо после полной проверки «untested» = первые статусы; для
     // наглядности убираем элементы с итоговым статусом untested (SMTP их даёт ~20%).
@@ -1073,7 +1131,7 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     plan: () => P({ alive: 2, total: N_REC, rows: [{ email: "sender1@mail1.com", count: N_REC / 2 }, { email: "sender2@mail2.com", count: N_REC / 2 }], text: `2 отправителя разошлют ровно по ${N_REC / 2} писем.`, threads: 2, per_conn: N_REC / 2 }),
     send_test: () => P({ ok: true, info: "отправлено за 1.8 сек через sender1@mail1.com" }),
     queue_state: () => P({ exists: false }),
-    campaign_state: () => P({ snapshot: { status_text: "Ожидание", sent: 0, errors: 0, total: 0, remaining: 0, running: false, paused: false, started_at: "—", speed_per_min: 0, eta_min: 0, progress: 0, smtp: [], proxy: [] }, log: [], running: false, paused: false, recipients: N_REC, alive_smtp: cnt(smtps).alive, can_start: true }),
+    campaign_state: () => P({ snapshot: { status_text: "Ожидание", sent: 0, errors: 0, total: 0, remaining: 0, running: false, paused: false, started_at: "—", elapsed_sec: 0, speed_per_min: 0, eta_min: 0, progress: 0, smtp: [], proxy: [] }, log: [], running: false, paused: false, recipients: N_REC, alive_smtp: cnt(smtps).alive, can_start: true }),
   };
   window.pywebview = { api: mock };
   onReady();

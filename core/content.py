@@ -515,6 +515,40 @@ def _tidy_spaces(text: str, html_mode: bool) -> str:
 # render зовётся на КАЖДУЮ отправку и на каждый прогон превью-скора.
 _DOCTYPE_RE = re.compile(r"<!doctype", re.I)
 
+# ── Гарантия <meta charset> и viewport (как DOCTYPE) ───────────────────────────
+# ПОЧЕМУ: владелец хочет, чтобы в HTML-письме ВСЕГДА были meta-теги. Кодировку письма и так
+# задаёт MIME-заголовок (utf-8), поэтому <meta charset> — не обязательное, но НОРМАЛЬНОЕ поле
+# любого реального HTML-письма; его ОТСУТСТВИЕ у некоторых фильтров выглядит «непричёсанным»,
+# а НАЛИЧИЕ — норма (не фингерпринт), как DOCTYPE и List-Unsubscribe. Viewport добавляем, чтобы
+# на телефоне письмо масштабировалось корректно. Ставим ТОЛЬКО если шаблон их не задал сам.
+_META_CHARSET_RE = re.compile(r"<meta[^>]+charset", re.I)
+_VIEWPORT_RE = re.compile(r'<meta[^>]+name\s*=\s*["\']?viewport', re.I)
+_HEAD_OPEN_RE = re.compile(r"<head[^>]*>", re.I)
+_DOCTYPE_LINE_RE = re.compile(r"^﻿?\s*<!DOCTYPE[^>]*>[ \t]*\r?\n?", re.I)
+
+
+def _ensure_meta_tags(html: str) -> str:
+    metas = []
+    if not _META_CHARSET_RE.search(html):
+        metas.append('<meta charset="utf-8">')
+    if not _VIEWPORT_RE.search(html):
+        metas.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
+    if not metas:
+        return html
+    block = "".join(metas)
+    # Есть <head> — кладём meta сразу после открывающего тега (правильное место).
+    m = _HEAD_OPEN_RE.search(html)
+    if m:
+        i = m.end()
+        return html[:i] + block + html[i:]
+    # Нет <head> (письмо-фрагмент из таблиц) — ставим meta сразу ПОСЛЕ строки <!DOCTYPE …>,
+    # первыми в документе. Клиенты создают неявный <head> и поднимают meta туда.
+    d = _DOCTYPE_LINE_RE.match(html)
+    if d:
+        i = d.end()
+        return html[:i] + block + "\n" + html[i:]
+    return block + "\n" + html
+
 
 # ── Ротация типографики (безопасная «очеловечивающая» вариативность) ───────────
 # ПОЧЕМУ: реальные почтовые клиенты и рассыльщики шлют письма РАЗНЫМИ шрифтами/кеглем —
@@ -644,6 +678,10 @@ def render(
         # Ставим строго первым символом (срезав возможный BOM/пробелы в начале).
         if not _DOCTYPE_RE.search(result):
             result = "<!DOCTYPE html>\n" + result.lstrip("﻿ \t\r\n")
+
+        # meta charset + viewport — как DOCTYPE, только если шаблон их не задал (после DOCTYPE,
+        # чтобы попасть в <head>/начало документа, а не разорвать строку <!DOCTYPE …>).
+        result = _ensure_meta_tags(result)
 
     return result
 

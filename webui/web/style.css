@@ -117,7 +117,9 @@ body{
 }
 .btn:hover{background:#232733; border-color:#3a4050}
 .btn:active{transform:translateY(1px)}
-.btn:disabled{opacity:.4; cursor:not-allowed; transform:none}
+/* pointer-events:none — отключённая кнопка не перехватывает клик/ховер (иначе в webview
+   первый клик мог «гаситься» на кнопке, побывавшей отключённой) — реагирует с первого раза. */
+.btn:disabled{opacity:.4; cursor:not-allowed; transform:none; pointer-events:none}
 .btn.primary{background:var(--accent); color:#08160c; border-color:var(--accent)}
 .btn.primary:hover{background:var(--accent-d)}
 .btn.accent{color:var(--accent); border-color:rgba(74,222,128,.4); background:var(--accent-bg)}
@@ -203,6 +205,11 @@ body{
 .tbl td{padding:7px 12px;border-bottom:1px solid #17191f;font-family:var(--mono)}
 .tbl tr:hover td{background:#14171e}
 .tbl .num{text-align:right;color:var(--accent)}
+/* Заголовки числовых колонок статистики: ✓ — зелёный, ✗ — КРАСНЫЙ (ошибки), «Исп.» — нейтр.
+   Раньше .tbl .num красил ВСЕ числовые заголовки зелёным, и ✗ (ошибки) был зелёным — путаница. */
+.tbl th.ok-h{color:var(--accent)}
+.tbl th.err-h{color:var(--error)}
+.tbl th.neut-h{color:var(--dim)}
 
 /* ── превью контента (маленькое) ── */
 .preview{
@@ -267,11 +274,21 @@ body.busy{cursor:progress}
 .metric.ac b{color:var(--accent)} .metric.er b{color:var(--error)} .metric.in b{color:var(--info)}
 .metric small{color:var(--dim);font-size:11px;font-family:var(--sans)}
 
-/* ── Прогноз рассылки (писем/мин · длительность · время финиша) ── */
-.est-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
-.est{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 6px;text-align:center;min-width:0}
-.est b{display:block;font-family:var(--mono);font-size:17px;line-height:1.15;color:var(--accent);word-break:break-word}
-.est span{display:block;font-size:10px;color:var(--dim);margin-top:4px;text-transform:uppercase;letter-spacing:.3px}
+/* ── Прогноз рассылки (писем/мин · длительность · время финиша) — компактные плитки,
+   плотно упакованные в карточку, как .pv-metric/.stat-chip ── */
+.est-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+.est{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:7px 5px;text-align:center;min-width:0}
+.est b{display:block;font-family:var(--mono);font-size:15px;line-height:1.12;color:var(--accent);word-break:break-word}
+.est span{display:block;font-size:9.5px;color:var(--dim);margin-top:3px;text-transform:uppercase;letter-spacing:.2px}
+
+/* Секундомер рассылки: моноширинный чип рядом со статусом. Не мигает, не создаёт таймеров —
+   значение обновляет общий опрос tick() (без отдельного setInterval → без лишней нагрузки). */
+.stopwatch{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--dim);
+  background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:6px 12px;white-space:nowrap}
+.stopwatch.run{color:var(--accent);border-color:rgba(74,222,128,.35)}
+.stopwatch.done{color:var(--info);border-color:rgba(56,189,248,.35)}
+/* Кнопка «очистить поле» тестового письма: квадратная, в ряд с инпутом и кнопкой отправки. */
+#test-clear{flex:0 0 auto;padding:8px 11px;line-height:1}
 
 .state-banner{
   display:none; align-items:center; gap:12px; padding:11px 14px; margin-bottom:12px;

@@ -460,6 +460,17 @@ class ProxyManager:
             self._rotation_idx = 0
             return before - len(self._proxies)
 
+    def remove_blacklisted(self) -> int:
+        # Удаляет ЖИВЫЕ прокси, которые в чёрных списках (DNSBL): status ALIVE и
+        # blacklist_clean is False. Отдельная кнопка «Убрать из ЧС» — по просьбе владельца.
+        # Мёртвых, непроверенных и чистых (True/None) не трогает.
+        with self._lock:
+            before = len(self._proxies)
+            self._proxies = [p for p in self._proxies
+                             if not (p.status == ProxyStatus.ALIVE and p.blacklist_clean is False)]
+            self._rotation_idx = 0
+            return before - len(self._proxies)
+
 
     def check_all(
         self,

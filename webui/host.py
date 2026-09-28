@@ -135,6 +135,28 @@ def _fmt_big(n: int) -> str:
     return f"≈ {mant}·10^{exp}"
 
 
+# Компактная подпись тела для выпадашки превью: сворачиваем спинтакс до ПЕРВОЙ ветки,
+# убираем макросы/ссылки/скобки — чтобы в списке были короткие читаемые строки «#N: текст…»,
+# а не многострочная стена «{ {A|B|C}|… }», которая раздувала выпадашку на весь экран.
+_SPIN_INNER_RE = re.compile(r"\{([^{}|]*)\|[^{}]*\}")
+_MACRO2_RE = re.compile(r"\{\{[^}]*\}\}")
+_LINK2_RE = re.compile(r"\[\[[^\]]*\]\]")
+
+
+def _short_body_label(b: str) -> str:
+    t = _DOCTYPE_RE.sub(" ", b)
+    t = _TAG_RE.sub(" ", t)
+    for _ in range(60):  # схлопываем вложенный спинтакс до первой ветки (детерминированно)
+        new = _SPIN_INNER_RE.sub(lambda m: m.group(1), t)
+        if new == t:
+            break
+        t = new
+    t = _MACRO2_RE.sub("", t)
+    t = _LINK2_RE.sub("", t)
+    t = re.sub(r"[{}|]", " ", t)
+    return " ".join(t.split())
+
+
 def _senders(n: int) -> str:
     return f"{n} " + _plural(n, "отправитель", "отправителя", "отправителей")
 
@@ -420,6 +442,12 @@ class Api:
 
     def remove_untested_proxies(self) -> dict:
         removed = self.proxy_mgr.remove_untested()
+        self._dirty_counts("proxies")
+        return {"removed": removed, **self._proxy_counts()}
+
+    def remove_blacklisted_proxies(self) -> dict:
+        # Удаляет живые прокси из чёрных списков (DNSBL) — отдельная кнопка «Убрать из ЧС».
+        removed = self.proxy_mgr.remove_blacklisted()
         self._dirty_counts("proxies")
         return {"removed": removed, **self._proxy_counts()}
 
@@ -846,8 +874,9 @@ class Api:
         # выпадашке выглядят одинаково и выбрать нужное невозможно.
         titles = []
         for i, b in enumerate(self.content_mgr.bodies):
-            title = _body_title(b)[:60]
-            titles.append({"index": i, "title": (title or f"Тело #{i + 1}")})
+            short = _short_body_label(b)[:42]
+            label = f"#{i + 1}" + (f": {short}" if short else "")
+            titles.append({"index": i, "title": label})
         return {"items": titles}
 
     # ── план распределения ──────────────────────────────────────────────
@@ -973,12 +1002,17 @@ class Api:
 
     def start_campaign(self, params: dict | None = None) -> dict:
         params = params or {}
+        # ── Защита от дурака: не стартуем рассылку без всего необходимого ──
         if self._sender and self._sender.running:
             return {"error": "Рассылка уже идёт"}
         if not self._recipients:
-            return {"error": "Нет получателей — загрузите базу"}
+            return {"error": "Нет получателей — загрузите базу во вкладке «Кампания»"}
+        if not self.content_mgr.bodies:
+            return {"error": "Нет текстов писем — загрузите тела во вкладке «Контент»"}
+        if not self.content_mgr.subjects:
+            return {"error": "Нет тем — загрузите темы во вкладке «Контент»"}
         if self.smtp_mgr.count_alive == 0:
-            return {"error": "Нет живых SMTP — проверьте аккаунты"}
+            return {"error": "Нет живых SMTP — загрузите и проверьте аккаунты во вкладке «Настройки»"}
 
         cfg = self._cfg
         queue = build_queue(self._recipients, control_emails=cfg["control"],

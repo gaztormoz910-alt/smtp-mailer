@@ -598,11 +598,11 @@ class CampaignSender:
     def _worker_dispatcher(self, delay: float, jitter: float, max_threads: int, max_per_conn: int, max_per_acc: int) -> None:
         total = len(self.recipients)
         self.stats.start(total)
-        self._emit("Sending started (Multi-threaded)")
+        self._emit(f"▶ Старт рассылки — писем в очереди: {total}")
 
         alive_smtps = [a for a in self.smtp_mgr.accounts if a.status == SmtpStatus.ALIVE]
         if not alive_smtps:
-            self._emit("No alive SMTP accounts — stopping")
+            self._emit("⛔ Нет живых SMTP-аккаунтов — рассылка остановлена")
             self.stats.stop()
             self._running = False
             if self.on_finished:
@@ -613,7 +613,7 @@ class CampaignSender:
         if max_threads > 0:
             num_workers = min(num_workers, max_threads)
             
-        self._emit(f"Spawning {num_workers} threads (Global Queue)...")
+        self._emit(f"⚙ Работают {num_workers} поток(ов) — по одному на живой аккаунт; очередь перемешана по доменам")
 
         shuffled = interleave_by_domain(self.recipients)
         
@@ -657,6 +657,9 @@ class CampaignSender:
         self.stats.stop()
         self._running = False
         self._save_state()
+        snap = self.stats.snapshot
+        self._emit(f"🏁 Рассылка завершена — отправлено {snap['sent']}, ошибок {snap['errors']}, "
+                   f"время {snap['elapsed_sec']}с. Слать больше нечего.")
         if self.on_finished:
             self.on_finished()
             
@@ -693,6 +696,7 @@ class CampaignSender:
 
     def _smtp_worker_thread(self, delay: float, jitter: float, max_per_conn: int, max_per_acc: int, on_progress: Callable) -> None:
         conn = None
+        total_recipients = len(self.recipients)  # для наглядного счётчика «N/всего» в логе
 
         def get_valid_account() -> SmtpAccount | None:
             for _ in range(self.smtp_mgr.count_alive):
@@ -735,7 +739,15 @@ class CampaignSender:
                 actual_delay *= 1.5
                 
             actual_delay = max(0.5, actual_delay)
-            
+
+            # Наглядность «софт НЕ завис»: перед долгой паузой пишем в лог, что это
+            # запланированная антиспам-пауза (и прогрев), а не зависание. Короткие паузы
+            # (<3с) не логируем, чтобы не засорять — там и так видно поток писем.
+            if actual_delay >= 3:
+                _wm = " · прогрев" if warmup > 1.0 else ""
+                self._emit(f"⏳ [{smtp_acc.email}] пауза {actual_delay:.0f}с перед → {rcpt.email}"
+                           f" (антиспам{_wm})")
+
             self.stop_event.wait(actual_delay)
             if self.stop_event.is_set():
                 self.global_q.put(rcpt)
@@ -772,14 +784,17 @@ class CampaignSender:
                     proxy_addr = f"{proxy.host}:{proxy.port}" if proxy else ""
                 
                 tag = f"{smtp_acc.email} "
-                
+                _plabel = proxy_addr or "прямое соединение"
+
                 try:
+                    self._emit(f"🔌 [{smtp_acc.email}] подключаюсь через {_plabel}…")
                     conn = connect_smtp(smtp_acc, proxy=proxy)
                     sent_on_conn = 0
                     self.proxy_mgr.report_result(proxy, True)  # прокси жив — сбросить счётчик неудач
                     self.smtp_mgr.report_connect_result(smtp_acc, True)  # аккаунт подключился — сброс
+                    self._emit(f"✅ [{smtp_acc.email}] соединение установлено — начинаю слать")
                 except Exception as exc:
-                    self._emit(f"{tag}Connect error: {exc}")
+                    self._emit(f"❌ [{smtp_acc.email}] ошибка подключения: {str(exc)[:80]} — беру другой аккаунт/прокси")
                     self.stats.record_error(smtp_acc.email, proxy_addr, smtp_dead=True)
                     # Дохлый прокси понижаем; аккаунт после серии неудач коннекта тоже временно
                     # выбывает (soft-DEAD) — чтобы не долбить недоступный аккаунт. Порог у аккаунта
@@ -880,7 +895,12 @@ class CampaignSender:
                     control=is_control,
                     had_cc=use_cc, had_bcc=use_bcc,
                 )
-                self._emit(f"{tag}✓ → {rcpt.email}")
+                _ctrl = " [КОНТРОЛЬ]" if is_control else ""
+                _plabel = proxy_addr or "прямое"
+                _extra = ((" +CC" if use_cc else "") + (" +BCC" if use_bcc else ""))
+                self._emit(
+                    f"✓ {self._sent_atomic}/{total_recipients} → {rcpt.email}{_ctrl} · "
+                    f"{smtp_acc.email} · {_plabel} · отпр {_send_time:.1f}с{_extra}")
 
             except Exception as exc:
                 # Письмо не ушло → освобождаем забронированный слот (строгий кэп): его займёт
@@ -908,7 +928,7 @@ class CampaignSender:
                     "error", error_text=err_str, control=is_control,
                     had_cc=use_cc, had_bcc=use_bcc,
                 )
-                self._emit(f"{tag}✗ → {rcpt.email}: {err_str[:80]}")
+                self._emit(f"✗ → {rcpt.email} · {smtp_acc.email}: {err_str[:80]}")
                 
                 with self._retry_lock:
                     retries = self._retry_counts.get(rcpt.email, 0)

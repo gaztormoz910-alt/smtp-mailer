@@ -34,6 +34,11 @@ class SendStats:
         self._errors: int = 0
         self._total: int = 0
         self._start_time: float | None = None
+        # Момент ОКОНЧАНИЯ рассылки. Нужен для секундомера: пока рассылка идёт, он None и
+        # прошедшее время растёт от _start_time до «сейчас»; при завершении/остановке
+        # фиксируется, и секундомер ЗАМИРАЕТ (раньше elapsed считался от now всегда и после
+        # финиша продолжал расти — это выглядело как «рассылка ещё идёт»).
+        self._end_time: float | None = None
         self._running: bool = False
         self._paused: bool = False
         self._stopped: bool = False  # True если кампанию остановили вручную (не естественный конец)
@@ -47,6 +52,7 @@ class SendStats:
             self._sent = 0
             self._errors = 0
             self._start_time = time.time()
+            self._end_time = None
             self._running = True
             self._paused = False
             self._stopped = False
@@ -58,12 +64,16 @@ class SendStats:
         with self._lock:
             self._running = False
             self._paused = False
+            if self._end_time is None and self._start_time is not None:
+                self._end_time = time.time()  # фиксируем секундомер на моменте финиша
 
     def mark_stopped(self) -> None:
         with self._lock:
             self._running = False
             self._paused = False
             self._stopped = True
+            if self._end_time is None and self._start_time is not None:
+                self._end_time = time.time()
 
     def pause(self) -> None:
         with self._lock:
@@ -79,6 +89,7 @@ class SendStats:
             self._errors = 0
             self._total = 0
             self._start_time = None
+            self._end_time = None
             self._running = False
             self._paused = False
             self._stopped = False
@@ -115,7 +126,10 @@ class SendStats:
     @property
     def snapshot(self) -> dict:
         with self._lock:
-            elapsed = (time.time() - self._start_time) if self._start_time else 0
+            # Пока идёт — считаем до «сейчас»; после финиша — до зафиксированного _end_time
+            # (секундомер замирает и больше не растёт).
+            _end = self._end_time if (self._end_time and not self._running) else time.time()
+            elapsed = (_end - self._start_time) if self._start_time else 0
             elapsed_min = elapsed / 60 if elapsed > 0 else 0
             speed = self._sent / elapsed_min if elapsed_min > 0.1 else 0.0
             remaining = max(0, self._total - self._sent - self._errors)

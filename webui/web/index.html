@@ -39,6 +39,7 @@
             <button class="btn primary" id="px-check" disabled>✓ Проверить все</button>
             <button class="btn ghost sm" id="px-recheck-untested" disabled>↻ Не пров.</button>
             <button class="btn ghost" id="px-remove-dead" disabled>Убрать мёртвые</button>
+            <button class="btn ghost sm" id="px-remove-blacklisted" disabled>⚑ Из ЧС</button>
             <button class="btn ghost sm" id="px-remove-untested" disabled>🗑 Не пров.</button>
             <button class="btn ghost sm" id="px-clear" data-clear="proxies" disabled>Очистить</button>
           </div>
@@ -228,6 +229,7 @@
             <h2><span class="ic">✈️</span> Тестовое письмо</h2>
             <p class="sub">Отправит одно письмо на твой адрес через живой SMTP.</p>
             <div class="row"><input class="inp mono" id="test-email" placeholder="test@yourmail.com" style="flex:1" />
+              <button class="btn ghost sm" id="test-clear" title="Очистить поле" aria-label="Очистить поле">✕</button>
               <button class="btn accent" id="test-send">Отправить тест</button></div>
             <div class="msg" id="test-msg"></div>
           </div>
@@ -257,6 +259,7 @@
           <div class="card">
             <div class="row" style="justify-content:space-between;margin-bottom:12px">
               <span class="pill-status stop" id="send-status"><span class="dot"></span><span id="send-status-t">Ожидание</span></span>
+              <span class="stopwatch" id="send-timer" title="Время от старта до конца рассылки">⏱ 00:00</span>
               <button class="btn ghost sm" id="open-preview-2">👁 Превью</button>
             </div>
             <div class="row">
@@ -289,19 +292,20 @@
           <div class="metric in"><span>Скорость</span><b id="st-speed">0</b><small> /мин</small></div>
           <div class="metric"><span>Осталось</span><b id="st-remaining">0</b></div>
           <div class="metric"><span>ETA</span><b id="st-eta">0</b><small> мин</small></div>
+          <div class="metric"><span>Секундомер</span><b id="st-timer">00:00</b></div>
         </div>
         <div class="grid2 fill" style="min-height:0">
           <div class="card scroll">
             <h2><span class="ic">📧</span> По SMTP</h2>
             <div class="tbl-wrap" style="margin-top:8px">
-              <table class="tbl"><thead><tr><th>Аккаунт</th><th class="num">✓</th><th class="num">✗</th><th>Статус</th></tr></thead>
+              <table class="tbl"><thead><tr><th>Аккаунт</th><th class="num ok-h">✓</th><th class="num err-h">✗</th><th>Статус</th></tr></thead>
                 <tbody id="st-smtp"><tr><td colspan="4" style="color:var(--dim2);text-align:center;padding:22px">Нет данных</td></tr></tbody></table>
             </div>
           </div>
           <div class="card scroll">
             <h2><span class="ic">🛡️</span> По прокси</h2>
             <div class="tbl-wrap" style="margin-top:8px">
-              <table class="tbl"><thead><tr><th>Прокси</th><th class="num">Исп.</th><th class="num">✗</th><th>Статус</th></tr></thead>
+              <table class="tbl"><thead><tr><th>Прокси</th><th class="num neut-h">Исп.</th><th class="num err-h">✗</th><th>Статус</th></tr></thead>
                 <tbody id="st-proxy"><tr><td colspan="4" style="color:var(--dim2);text-align:center;padding:22px">Нет данных</td></tr></tbody></table>
             </div>
           </div>
