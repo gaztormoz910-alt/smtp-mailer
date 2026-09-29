@@ -30,7 +30,7 @@ $("#tabs").addEventListener("click", (e) => {
 });
 
 function onTabEnter(tab) {
-  if (tab === "setup") { pagers.proxies.reload(); pagers.smtp.reload(); }
+  if (tab === "setup") { pagers.proxies.reload(); pagers.smtp.reload(); updateCheckClocks(); }
   else if (tab === "content") { ["subjects", "bodies", "senders", "links"].forEach((k) => pagers[k].reload()); refreshContentIssues(); }
   else if (tab === "campaign") { pagers.recipients.reload(); saveCampaignCfg(); refreshPresets(); }
   else if (tab === "plan") refreshPlan();
@@ -367,6 +367,47 @@ function updateProgress(p, r) {
   }
   setPct(p, pct);
 }
+// ── Часы + секундомер проверки (у прокси и SMTP — каждый свой) ────────────
+// checkTimers держит для каждого пула: запускали ли, идёт ли сейчас, момент старта и финиша.
+// Часы 🕒: пока не проверяли — живое «сейчас»; клик «Проверить все» ЗАМОРАЖИВАЕТ на моменте
+// старта (видно, КОГДА проверял). Секундомер ⏱: тикает во время проверки и сам замирает на
+// финише (видно, СКОЛЬКО длилась). Длительность считаем как now−start — без накопления, поэтому
+// таймер не дрейфует и не грузит фронт (обновляет один общий 1-сек. апдейтер, только на «Настройках»).
+const checkTimers = {
+  proxies: { everRan: false, running: false, startMs: 0, endMs: 0 },
+  smtp: { everRan: false, running: false, startMs: 0, endMs: 0 },
+};
+function fmtDateTime(dt) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(dt.getDate())}.${p(dt.getMonth() + 1)}.${dt.getFullYear()} ${p(dt.getHours())}:${p(dt.getMinutes())}:${p(dt.getSeconds())}`;
+}
+function startCheckTimer(kind) {
+  checkTimers[kind] = { everRan: true, running: true, startMs: Date.now(), endMs: 0 };
+  updateCheckClocks();
+}
+function stopCheckTimer(kind) {
+  const t = checkTimers[kind];
+  if (t.everRan && t.running) { t.running = false; t.endMs = Date.now(); }
+  updateCheckClocks();
+}
+function updateCheckClocks() {
+  ["proxies", "smtp"].forEach((kind) => {
+    const p = kind === "proxies" ? "px" : "sm";
+    const w = $("#" + p + "-check-when"), d = $("#" + p + "-check-dur");
+    if (!w || !d) return;
+    const t = checkTimers[kind];
+    if (!t.everRan) {
+      // Проверку ещё не запускали → живые часы «сейчас» (замрут на клике «Проверить все»).
+      w.textContent = fmtDateTime(new Date()); w.className = "live";
+      d.textContent = "—"; d.className = "";
+      return;
+    }
+    w.textContent = fmtDateTime(new Date(t.startMs)); w.className = "";  // заморожено на старте
+    const endMs = t.running ? Date.now() : t.endMs;
+    d.textContent = fmtClock(Math.max(0, Math.floor((endMs - t.startMs) / 1000)));
+    d.className = t.running ? "run" : "done";
+  });
+}
 function runCheck(kind, onlyUntested) {
   const p = kind === "proxies" ? "px" : "sm";
   // Значения ползунков: таймаут (сек) и число потоков — передаём в проверку.
@@ -375,6 +416,7 @@ function runCheck(kind, onlyUntested) {
   // onlyUntested=true → «Перепроверить не пров.»: сервер перегонит только «?».
   api()["check_" + kind](threads, timeout, !!onlyUntested).then((r) => {
     if (r.busy || r.empty) return;
+    startCheckTimer(kind);  // часы замерли на моменте старта, секундомер пошёл с 0
     setBusy(true);   // лок настроек/загрузки/старта (пагинация НЕ блокируется)
     pollCheck(kind); // первый poll покажет бар и процент через updateProgress
   });
@@ -384,11 +426,12 @@ function pollCheck(kind) {
   // refresh() перерисовывает ТЕКУЩУЮ страницу (её статусы и счётчики меняются по мере
   // проверки) → renderList → updateProgress сам двигает бар. Здесь только цикл опроса.
   pagers[kind].refresh().then((st) => {
-    if (st.running) setTimeout(() => pollCheck(kind), 700);
+    if (st.running) { updateCheckClocks(); setTimeout(() => pollCheck(kind), 700); }
     else {
       // Проверка завершена. Кэш счётчиков уже сброшен на сервере (on_done), поэтому
       // setBusy(false) → refresh даст ТОЧНЫЕ счётчики (непроверенных 0) → бар станет 100%
       // и ОСТАНЕТСЯ. Ничего не прячем и не форсим 100 вручную — только правда из данных.
+      stopCheckTimer(kind);  // секундомер замер на итоговой длительности
       setBusy(false);
       refreshBadges();
     }
@@ -539,9 +582,12 @@ function updateEstimate() {
   const steadyPerMin = workers * 60 / (avgDelay + SEND_OVERHEAD_SEC);  // скорость ПОСЛЕ прогрева
   const recip = lastRecip || 0;
   if (!recip) {
-    es.textContent = Math.max(1, Math.round(steadyPerMin));
-    ed.textContent = "—"; ef.textContent = "—";
-    en.textContent = autoNote + "Загрузи базу получателей — тогда покажу длительность и время финиша.";
+    // Базы нет — оценивать НЕЧЕГО: без числа получателей ни скорость, ни длительность честно
+    // не посчитать (в начале скорость сильно снижает прогрев, и насколько — зависит от размера
+    // базы). Раньше здесь показывалась «установившаяся» скорость (напр. 19/мин) — она игнорирует
+    // прогрев и вводила в заблуждение (с базой падала до ~7). Теперь до загрузки базы — прочерки.
+    es.textContent = "—"; ed.textContent = "—"; ef.textContent = "—";
+    en.textContent = autoNote + "Загрузи базу получателей — без неё скорость не оценить (в начале её сильно снижает прогрев).";
     return;
   }
   // ТОЧНЫЙ учёт ПРОГРЕВА — та же кривая, что в движке (core.domain_config.get_warmup_factor):
@@ -669,7 +715,10 @@ function renderStatTable(id, rows) {
   b.innerHTML = rows.map((r) => `<tr><td style="max-width:170px;overflow:hidden;text-overflow:ellipsis">${esc(r[0])}</td>
     <td class="num">${r[1]}</td><td class="num" style="color:var(--error)">${r[2]}</td><td>${esc(r[3])}</td></tr>`).join("");
 }
-setInterval(() => { if (activeTab === "send" || activeTab === "stats") tick(); }, 1000);
+setInterval(() => {
+  if (activeTab === "send" || activeTab === "stats") tick();
+  else if (activeTab === "setup") updateCheckClocks();  // живые часы + секундомер проверки
+}, 1000);
 
 // ── МОДАЛ ПРЕВЬЮ ПИСЬМА ─────────────────────────────────────────────────
 const PV = { client: "gmail", device: "desktop", theme: "light", images: "on", index: -1, data: null };
@@ -1020,6 +1069,7 @@ function onReady() {
     b.innerHTML = `<span class="dot"></span>${r.ok ? "мост подключён" : "мост недоступен"}`;
     b.className = "bridge " + (r.ok ? "ok" : "err");
     refreshBadges(); pagers.proxies.reload(); pagers.smtp.reload(); refreshResumeBanner();
+    updateCheckClocks();  // сразу показать живые часы проверки
   });
 }
 if (window.pywebview) onReady();

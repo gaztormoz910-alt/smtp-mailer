@@ -43,6 +43,10 @@
             <button class="btn ghost sm" id="px-remove-untested" disabled>🗑 Не пров.</button>
             <button class="btn ghost sm" id="px-clear" data-clear="proxies" disabled>Очистить</button>
           </div>
+          <div class="chk-clock" title="Когда запущена проверка прокси и сколько она длится/длилась">
+            <span class="cc-when">🕒 <b id="px-check-when">—</b></span>
+            <span class="cc-dur">⏱ <b id="px-check-dur">—</b></span>
+          </div>
           <div class="tune">
             <label class="tune-item">Таймаут <b id="px-timeout-val">10</b> сек
               <input type="range" id="px-timeout" min="3" max="60" value="10" /></label>
@@ -76,6 +80,10 @@
             <button class="btn ghost" id="sm-remove-dead" disabled>Убрать мёртвые</button>
             <button class="btn ghost sm" id="sm-remove-untested" disabled>🗑 Не пров.</button>
             <button class="btn ghost sm" id="sm-clear" data-clear="smtp" disabled>Очистить</button>
+          </div>
+          <div class="chk-clock" title="Когда запущена проверка SMTP и сколько она длится/длилась">
+            <span class="cc-when">🕒 <b id="sm-check-when">—</b></span>
+            <span class="cc-dur">⏱ <b id="sm-check-dur">—</b></span>
           </div>
           <div class="tune">
             <label class="tune-item">Таймаут <b id="sm-timeout-val">15</b> сек

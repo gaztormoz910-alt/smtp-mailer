@@ -290,6 +290,18 @@ body.busy{cursor:progress}
 /* Кнопка «очистить поле» тестового письма: квадратная, в ряд с инпутом и кнопкой отправки. */
 #test-clear{flex:0 0 auto;padding:8px 11px;line-height:1}
 
+/* Часы + секундомер проверки прокси/SMTP (у каждого пула свой). Слева 🕒 — КОГДА запущена
+   проверка (живые часы, пока не проверяли; замирают на моменте клика «Проверить все»);
+   справа ⏱ — СКОЛЬКО она длится/длилась (секундомер тикает во время проверки, замирает на
+   финише). Значение считается как now−start (без накопления) — не дрейфует, фронт не грузит. */
+.chk-clock{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;font-family:var(--mono);font-size:12px}
+.chk-clock > span{display:inline-flex;align-items:center;gap:6px;background:var(--bg);
+  border:1px solid var(--border);border-radius:20px;padding:5px 11px;color:var(--dim);white-space:nowrap}
+.chk-clock b{color:var(--text);font-weight:700}
+.chk-clock b.live{color:var(--dim);font-weight:600}   /* пока не проверяли — приглушённые «сейчас» */
+.chk-clock b.run{color:var(--accent)}                 /* идёт проверка — секундомер зелёный */
+.chk-clock b.done{color:var(--info)}                  /* проверка завершена — итог голубой */
+
 .state-banner{
   display:none; align-items:center; gap:12px; padding:11px 14px; margin-bottom:12px;
   background:rgba(251,191,36,.1); border:1px solid rgba(251,191,36,.35); border-radius:var(--r-sm);
