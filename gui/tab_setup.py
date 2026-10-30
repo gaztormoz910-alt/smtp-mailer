@@ -420,6 +420,7 @@ class SetupTab:
         geo = ""
         ping = ""
         bl = ""
+        exit_info = ""
         if p.status.name == "ALIVE":
             geo_code = getattr(p, "country", "")
             if geo_code:
@@ -428,6 +429,8 @@ class SetupTab:
                 geo = f" [{geo_name}]"
             else:
                 geo = " [?]"
+            if getattr(p, "exit_ip", "") and p.exit_ip != p.host:
+                exit_info = f" → {p.exit_ip}"
             ping = f" {p.ping_ms}ms" if getattr(p, "ping_ms", 0) else ""
             bl_status = getattr(p, "blacklist_clean", None)
             if bl_status is True:
@@ -437,7 +440,7 @@ class SetupTab:
                 bl = f" ⛔BL:{len(hits)}hits"
             else:
                 bl = ""
-        return f" [{p.protocol.upper():6s}] {p.host}:{p.port:<6}  {p.status.value}{ping}{geo}{bl}{server_info}"
+        return f" [{p.protocol.upper():6s}] {p.host}:{p.port:<6}{exit_info}  {p.status.value}{ping}{geo}{bl}{server_info}"
 
     @staticmethod
     def _px_color(status: ProxyStatus) -> str:

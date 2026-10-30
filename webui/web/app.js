@@ -252,7 +252,8 @@ function proxyRow(it) {
   const stBadge = (it.status === "alive" && it.blacklist === false)
     ? `<span class="badge-st blacklist">⚑ Блэклист</span>`
     : badge(it.status);
-  return `<div class="li"><div class="grow"><div class="addr">${esc(it.addr)}</div>
+  const exitInfo = (it.exit_ip && !it.addr.startsWith(it.exit_ip)) ? ` → ${esc(it.exit_ip)}` : "";
+  return `<div class="li"><div class="grow"><div class="addr">${esc(it.addr)}${exitInfo}</div>
     <div class="meta">${meta}</div></div>${flag}${ping}${stBadge}</div>`;
 }
 function smtpRow(it) {

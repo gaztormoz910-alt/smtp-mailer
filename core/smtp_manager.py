@@ -32,6 +32,7 @@ class SmtpAccount:
     port: int
     email: str
     password: str
+    username: str = ""
     status: SmtpStatus = SmtpStatus.UNTESTED
     sent_count: int = 0
     last_error: str = ""
@@ -60,6 +61,10 @@ class SmtpAccount:
     domain_blacklist_clean: Any = None   # домен отправителя в DBL: True/False/None
     domain_blacklist_hits: Any = None
     domain_is_freemail: bool = False     # домен — фримейл (доменную проверку пропускаем)
+
+    def __post_init__(self) -> None:
+        if not self.username:
+            self.username = self.email
 
     @property
     def display_host(self) -> str:
@@ -126,6 +131,27 @@ def _parse_account_fields(line: str) -> SmtpAccount | None:
         if len(parts) < 3:
             continue
 
+        # 5 полей: host:port:user:email:password (формат релеев / SendGrid / SES)
+        if len(parts) >= 5:
+            port = _parse_port(parts[1])
+            if port is not None:
+                host = parts[0].strip()
+                p2 = parts[2].strip()
+                p3 = parts[3].strip()
+                password = delim.join(parts[4:]).strip()
+                if '@' in p2 and '@' not in p3:
+                    email, user = p2, p3
+                elif '@' in p3 and '@' not in p2:
+                    user, email = p2, p3
+                else:
+                    user, email = p2, p3
+                if host and email and password:
+                    return SmtpAccount(
+                        host=host, port=port,
+                        email=email, password=password,
+                        username=user,
+                    )
+
         if len(parts) >= 4:
             port = _parse_port(parts[1])
 
@@ -138,6 +164,7 @@ def _parse_account_fields(line: str) -> SmtpAccount | None:
                     return SmtpAccount(
                         host=host, port=port,
                         email=email, password=password,
+                        username=email,
                     )
 
         host_port = parts[0].strip()
@@ -159,21 +186,38 @@ def _parse_account_fields(line: str) -> SmtpAccount | None:
             return SmtpAccount(
                 host=host, port=port,
                 email=email, password=password,
+                username=email,
             )
 
-    parts = line.split(":", 3)
-    if len(parts) < 4:
-        return None
-    host, port_str, email, password = parts
-    port = _parse_port(port_str)
-    if port is None:
-        return None
-    return SmtpAccount(
-        host=host.strip(),
-        port=port,
-        email=email.strip(),
-        password=password.strip(),
-    )
+    parts = line.split(":", 4)
+    if len(parts) == 5:
+        host, port_str, p2, p3, password = parts
+        port = _parse_port(port_str)
+        if port is not None:
+            if '@' in p2 and '@' not in p3:
+                email, user = p2.strip(), p3.strip()
+            else:
+                user, email = p2.strip(), p3.strip()
+            return SmtpAccount(
+                host=host.strip(),
+                port=port,
+                email=email,
+                password=password.strip(),
+                username=user,
+            )
+    elif len(parts) == 4:
+        host, port_str, email, password = parts
+        port = _parse_port(port_str)
+        if port is None:
+            return None
+        return SmtpAccount(
+            host=host.strip(),
+            port=port,
+            email=email.strip(),
+            password=password.strip(),
+            username=email.strip(),
+        )
+    return None
 
 
 _PROXY_TYPE_MAP = {
@@ -215,16 +259,27 @@ def _get_ssl_ctx() -> ssl.SSLContext:
 
 import string
 
-def _make_smart_ehlo(sender_email: str) -> str:
-    
+def _make_smart_ehlo(sender_email: str, target_host: str = "") -> str:
     rnd = random.SystemRandom()
     domain = sender_email.split("@")[-1] if "@" in sender_email else "localhost"
-    
+    th_lower = (target_host or "").lower()
+
     rnd_str = lambda n: "".join(rnd.choice(string.ascii_lowercase + string.digits) for _ in range(n))
-    
+
+    # Для Microsoft 365, Outlook, Exchange — генерируем реалистичные имена рабочих станций (как у официальных клиентов MUA)
+    if any(h in th_lower for h in ("office365", "outlook", "microsoft")) or domain.lower().endswith("onmicrosoft.com"):
+        outlook_templates = [
+            lambda: f"DESKTOP-{rnd_str(7).upper()}",
+            lambda: f"LAPTOP-{rnd_str(7).upper()}",
+            lambda: f"{rnd.choice(['EUR','AMS','DUB','FRA','LON','PAR'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+            lambda: f"PC-{rnd_str(6).upper()}",
+        ]
+        return rnd.choice(outlook_templates)()
+
     _FREEMAIL_EHLO = {
         'gmail.com': [
             lambda: f"mail-{rnd.choice(['oi','lf','pg','qt','vs','wr','yb','ua','io','il'])}{rnd.randint(1,9)}-f{rnd.randint(100,255)}.google.com",
+            lambda: f"DESKTOP-{rnd_str(7).upper()}",
         ],
         'gmx.com': [lambda: f"mout.gmx.net"],
         'gmx.net': [lambda: f"mout.gmx.net"],
@@ -232,9 +287,11 @@ def _make_smart_ehlo(sender_email: str) -> str:
         'web.de': [lambda: f"mout.web.de"],
         'outlook.com': [
             lambda: f"{rnd.choice(['EUR','AMS','DUB','FRA','LON','PAR'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+            lambda: f"DESKTOP-{rnd_str(7).upper()}",
         ],
         'hotmail.com': [
             lambda: f"{rnd.choice(['EUR','AMS','DUB'])}{rnd.randint(1,9)}PEPF0000{rnd.randint(1000,9999)}.mail.protection.outlook.com",
+            lambda: f"LAPTOP-{rnd_str(7).upper()}",
         ],
         'yahoo.com': [
             lambda: f"sonic{rnd.randint(100,999)}-{rnd.randint(1,99)}.consmr.mail.{rnd.choice(['bf2','ne1','gq1'])}.yahoo.com",
@@ -245,20 +302,16 @@ def _make_smart_ehlo(sender_email: str) -> str:
         'zohomail.eu': [lambda: f"sender{rnd.randint(1,20)}.zoho.eu"],
         'zohomail.com': [lambda: f"sender{rnd.randint(1,20)}.zoho.com"],
     }
-    
+
     domain_lower = domain.lower()
     if domain_lower in _FREEMAIL_EHLO:
         return rnd.choice(_FREEMAIL_EHLO[domain_lower])()
-    
+
     templates = [
+        lambda: f"DESKTOP-{rnd_str(7).upper()}",
+        lambda: f"PC-{rnd_str(6).upper()}",
         lambda: f"mail.{domain}",
         lambda: f"smtp.{domain}",
-        lambda: f"mx.{domain}",
-        lambda: f"relay.{domain}",
-        lambda: f"out.{domain}",
-        lambda: f"mailer.{domain}",
-        lambda: f"mta.{domain}",
-        lambda: f"send.{domain}",
     ]
     return rnd.choice(templates)()
 
@@ -283,9 +336,8 @@ def connect_smtp(
     if bound is not None:
         proxy = bound
 
-    fake_ehlo = _make_smart_ehlo(account.email)
-
     host, port = account.host, account.port
+    fake_ehlo = _make_smart_ehlo(account.email, target_host=host)
     raw_sock = _make_proxy_sock(proxy, host, port, timeout) if proxy else None
 
     if port == 465:
@@ -342,7 +394,23 @@ def connect_smtp(
         except (smtplib.SMTPNotSupportedError, smtplib.SMTPException, EOFError):
             pass
 
-    smtp.login(account.email, account.password)
+    login_user = getattr(account, "username", "") or account.email
+    try:
+        smtp.login(login_user, account.password)
+    except smtplib.SMTPAuthenticationError as auth_err:
+        # Фолбэк для cPanel / Postfix / Exim: если логин в виде email (user@domain) отклонён,
+        # пробуем авторизоваться под коротким именем пользователя (только user до @).
+        local_user = login_user.split("@")[0] if "@" in login_user else ""
+        from core.blacklist import is_freemail
+        domain = login_user.split("@")[-1] if "@" in login_user else ""
+        if local_user and local_user != login_user and not is_freemail(domain):
+            try:
+                smtp.login(local_user, account.password)
+                account.username = local_user
+            except Exception:
+                raise auth_err
+        else:
+            raise auth_err
     return smtp
 
 
@@ -525,15 +593,15 @@ class SmtpManager:
                 # Всё прочее на этапе логина — неоднозначно (обычно про IP/политику),
                 # НЕ хороним: помечаем «не пров.» с понятной причиной, разрешаем повтор.
                 if "web browser" in msg_lower or "5.7.9" in msg_lower:
-                    account.last_error = f"🛡️ Провайдер требует вход через браузер/пароль приложения (не пароль): {msg}"
+                    account.last_error = f"🔑 Требуется пароль приложения (Gmail 5.7.9): {msg}"
                 elif "authentication unsuccessful" in msg_lower or "5.7.3" in msg_lower:
-                    account.last_error = f"🛡️ Отказ по репутации/политике IP (не пароль): {msg}"
+                    account.last_error = f"🛡️ Ошибка авторизации (5.7.3): неверный пароль, отключён Basic-Auth или включен 2FA"
                 elif "basic auth" in msg_lower or "disabled for" in msg_lower:
-                    account.last_error = f"🛡️ Basic-auth отключён провайдером: {msg}"
+                    account.last_error = f"🛡️ Basic-Auth отключён администратором: {msg}"
                 elif any(w in msg_lower for w in ("too many", "rate", "throttl")):
-                    account.last_error = f"⏱️ Троттлинг — повтор через другой прокси: {msg}"
+                    account.last_error = f"⏱️ Троттлинг почтовика — повтор через другой прокси: {msg}"
                 else:
-                    account.last_error = f"⚠️ Неоднозначный отказ логина (перепроверьте с чистого прокси): {msg}"
+                    account.last_error = f"⚠️ Ошибка авторизации: {msg}"
                 account.status = SmtpStatus.UNTESTED
                 return False
 
@@ -617,7 +685,7 @@ class SmtpManager:
                 return False
         return False
 
-    _HOST_MAX_CONCURRENT = 12
+    _HOST_MAX_CONCURRENT = 3
 
     def check_all(
         self,
@@ -653,15 +721,21 @@ class SmtpManager:
                 sem = host_semaphores[acc.host]
                 sem.acquire()
                 try:
+                    # Вежливая микрозадержка между запросами к одному почтовому серверу
+                    # для защиты от детекта Password Spraying (подбора паролей)
+                    import random
+                    time.sleep(random.uniform(0.15, 0.35))
                     # Мягкий отказ (UNTESTED — репутация/политика/троттлинг/таймаут)
                     # повторяем ЧЕРЕЗ ДРУГОЙ прокси: тот же выход вернёт тот же ответ.
                     # Останавливаемся на успехе (ALIVE) или доказанной смерти (DEAD).
                     attempts = 1 + max(0, soft_retries) if proxy_getter else 1
-                    for _ in range(attempts):
+                    for retry_idx in range(attempts):
                         px = proxy_getter() if proxy_getter else None
                         ok = self.check_single(acc, proxy=px, timeout=timeout)
                         if ok or acc.status == SmtpStatus.DEAD:
                             break
+                        if retry_idx < attempts - 1:
+                            time.sleep(0.5)
                 finally:
                     sem.release()
                 return acc

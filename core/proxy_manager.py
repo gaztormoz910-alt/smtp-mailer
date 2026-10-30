@@ -34,6 +34,7 @@ class ProxyEntry:
     status: ProxyStatus = ProxyStatus.UNTESTED
     passed_server: str = ""
     country: str = ""
+    exit_ip: str = ""
     ping_ms: int = 0
     blacklist_clean: bool | None = None
     blacklist_hits: list[str] | None = None
@@ -79,7 +80,8 @@ class ProxyEntry:
 
     @property
     def display(self) -> str:
-        return f"[{self.protocol.upper():6s}]  {self.host}:{self.port}"
+        exit_info = f" -> {self.exit_ip}" if self.exit_ip and self.exit_ip != self.host else ""
+        return f"[{self.protocol.upper():6s}]  {self.host}:{self.port}{exit_info}"
 
 
 _PROXY_RE = re.compile(
@@ -141,7 +143,7 @@ _SMTP_CHECK_TARGETS = [
     ("smtp.zoho.com", 587),
     ("mail.gmx.com", 587),
 ]
-_CHECK_TIMEOUTS = [5, 10]
+_CHECK_TIMEOUTS = [10, 15]
 _CHECK_RETRIES = 1
 _RETRY_PAUSE = 2
 
@@ -193,84 +195,162 @@ def _smtp_tcp_test(proxy: ProxyEntry, to_override: float | None = None) -> bool:
     last_reason = "не удалось пройти SMTP-проверку ни на одном сервере"
 
     for idx, (host, port) in enumerate(targets_to_check):
-        # Таймаут можно задать из UI (ползунок); иначе — прежние значения 5/10 с.
-        timeout = to_override if to_override else (_CHECK_TIMEOUTS[0] if idx == 0 else _CHECK_TIMEOUTS[-1])
-        s = socks.socksocket()
-        try:
-            s.set_proxy(
-                _PROXY_TYPE_MAP.get(proxy.protocol, socks.SOCKS5),
-                proxy.host,
-                proxy.port,
-                username=proxy.username or None,
-                password=proxy.password or None,
-            )
-            s.settimeout(timeout)
-            t0 = time.time()
-            s.connect((host, port))
-            ping_ms = int((time.time() - t0) * 1000)
-            if not getattr(proxy, "ping_ms", 0) or ping_ms < proxy.ping_ms:
-                proxy.ping_ms = ping_ms
+        # Таймаут можно задать из UI (ползунок); иначе — адаптивные 10/15 с.
+        if to_override is not None and float(to_override) > 0:
+            timeout = float(to_override)
+        else:
+            timeout = float(_CHECK_TIMEOUTS[0] if idx == 0 else _CHECK_TIMEOUTS[-1])
 
-            if port == 465:
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                s = context.wrap_socket(s, server_hostname=host)
-
-            banner = s.recv(1024)
-            if banner[:3] != b"220":
-                # Туннель открылся (пинг уже записан выше!), но почтовик не поздоровался кодом 220 —
-                # обычно это значит, что IP прокси в бане у провайдера. Отсюда парадокс «быстрый
-                # пинг + мёртвый»: проверка живости — не пинг, а полное SMTP-рукопожатие.
-                got = banner[:3].decode("latin-1", "replace").strip() if banner else "пусто"
-                last_reason = f"{host}:{port} не прислал '220' (ответ: {got}) — IP прокси, вероятно, в бане у почтовика"
-                continue
-
-            s.sendall(b"EHLO localhost\r\n")
-            ehlo_resp = s.recv(1024)
-            if ehlo_resp[:3] != b"250":
-                got = ehlo_resp[:3].decode("latin-1", "replace").strip() if ehlo_resp else "пусто"
-                last_reason = f"{host}:{port} отклонил EHLO (код: {got})"
-                continue
-
-            s.sendall(b"QUIT\r\n")
-
-            proxy.passed_server = f"{host}:{port}"
-            proxy.last_error = ""  # прошёл проверку — прежняя причина смерти неактуальна
-            return True
-        except socks.ProxyConnectionError:
-            # До самого прокси не достучались (порт закрыт / прокси мёртв) — остальные цели
-            # проверять бессмысленно, причина уже однозначна.
-            proxy.last_error = "прокси не отвечает: SOCKS-подключение отклонено (порт закрыт или прокси мёртв)"
-            return False
-        except socks.SOCKS5AuthError:
-            last_reason = "прокси требует логин/пароль (или пара неверна)"
-            continue
-        except socks.ProxyError as e:
-            # GeneralProxyError и пр.: чаще всего на порт стучимся не тем протоколом
-            # (например, это HTTP-прокси, а мы шлём SOCKS5-рукопожатие).
-            last_reason = f"ошибка SOCKS-туннеля: {e} (возможно, это не SOCKS5-прокси)"
-            continue
-        except TimeoutError:
-            last_reason = f"таймаут {int(timeout)}s: {host}:{port} не ответил через прокси"
-            continue
-        except ConnectionRefusedError:
-            last_reason = f"{host}:{port} отклонил подключение через прокси"
-            continue
-        except OSError as e:
-            last_reason = f"сетевая ошибка на {host}:{port}: {e}"
-            continue
-        except Exception as e:
-            last_reason = f"сбой проверки на {host}:{port}: {e}"
-            continue
-        finally:
+        # Обработка всплесков сокетов при многопоточной проверке (200-500+ потоков):
+        # 1-2 повторные попытки с микропаузой 0.25с при ConnectionResetError / WinError 10054 / ProxyConnectionError
+        max_burst_retries = 2
+        for burst_try in range(max_burst_retries):
+            s = socks.socksocket()
             try:
-                s.close()
-            except Exception:
-                pass
+                s.set_proxy(
+                    _PROXY_TYPE_MAP.get(proxy.protocol, socks.SOCKS5),
+                    proxy.host,
+                    proxy.port,
+                    username=proxy.username or None,
+                    password=proxy.password or None,
+                )
+                s.settimeout(timeout)
+                t0 = time.time()
+                s.connect((host, port))
+                ping_ms = int((time.time() - t0) * 1000)
+                if not getattr(proxy, "ping_ms", 0) or ping_ms < proxy.ping_ms:
+                    proxy.ping_ms = ping_ms
+
+                if port == 465:
+                    context = ssl.create_default_context()
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    s = context.wrap_socket(s, server_hostname=host)
+
+                banner = s.recv(1024)
+                if banner[:3] != b"220":
+                    # Туннель открылся (пинг уже записан выше!), но почтовик не поздоровался кодом 220 —
+                    # обычно это значит, что IP прокси в бане у провайдера. Отсюда парадокс «быстрый
+                    # пинг + мёртвый»: проверка живости — не пинг, а полное SMTP-рукопожатие.
+                    got = banner[:3].decode("latin-1", "replace").strip() if banner else "пусто"
+                    last_reason = f"{host}:{port} не прислал '220' (ответ: {got}) — IP прокси, вероятно, в бане у почтовика"
+                    break  # бан почтовика ретраить бессмысленно, переходим к следующему хосту
+
+                s.sendall(b"EHLO localhost\r\n")
+                ehlo_resp = s.recv(1024)
+                if ehlo_resp[:3] != b"250":
+                    got = ehlo_resp[:3].decode("latin-1", "replace").strip() if ehlo_resp else "пусто"
+                    last_reason = f"{host}:{port} отклонил EHLO (код: {got})"
+                    break
+
+                s.sendall(b"QUIT\r\n")
+
+                proxy.passed_server = f"{host}:{port}"
+                proxy.last_error = ""  # прошёл проверку — прежняя причина смерти неактуальна
+                return True
+
+            except (ConnectionResetError, socks.ProxyConnectionError) as e:
+                # Всплеск сокетов шлюза при резком старте сотен потоков: retry с микропаузой
+                if burst_try < max_burst_retries - 1:
+                    time.sleep(0.25)
+                    continue
+                last_reason = f"сброс подключения на {host}:{port} ({e})"
+                break
+            except socks.SOCKS5AuthError:
+                last_reason = "прокси требует логин/пароль (или пара неверна)"
+                break
+            except socks.ProxyError as e:
+                # GeneralProxyError и пр.: чаще всего на порт стучимся не тем протоколом
+                last_reason = f"ошибка SOCKS-туннеля: {e} (возможно, это не SOCKS5-прокси)"
+                break
+            except TimeoutError:
+                last_reason = f"таймаут {int(timeout)}s: {host}:{port} не ответил через прокси"
+                break
+            except ConnectionRefusedError:
+                last_reason = f"{host}:{port} отклонил подключение через прокси"
+                break
+            except OSError as e:
+                # Перехват WinError 10054 (WSAECONNRESET) внутри OSError на Windows
+                if getattr(e, "winerror", None) == 10054 or "10054" in str(e):
+                    if burst_try < max_burst_retries - 1:
+                        time.sleep(0.25)
+                        continue
+                last_reason = f"сетевая ошибка на {host}:{port}: {e}"
+                break
+            except Exception as e:
+                last_reason = f"сбой проверки на {host}:{port}: {e}"
+                break
+            finally:
+                try:
+                    s.close()
+                except Exception:
+                    pass
 
     proxy.last_error = last_reason
     return False
+
+
+def _fetch_geo_and_dnsbl(proxy: ProxyEntry, on_done=None) -> None:
+    """Определяет реальный выходной IP (Exit IP) и страну через прокси-туннель,
+    а затем проверяет DNSBL СТРОГО по Exit IP (не по входному шлюзу)."""
+    import requests
+    p_url = proxy.url.replace("socks5://", "socks5h://").replace("socks4://", "socks4a://")
+    proxies = {"http": p_url, "https": p_url}
+
+    # 1. Запрос за Exit IP и страной через туннель
+    for api_url in [
+        "http://ip-api.com/json/?fields=status,country,countryCode,query",
+        "https://ipinfo.io/json",
+        "https://api.ipify.org?format=json",
+    ]:
+        try:
+            resp = requests.get(api_url, proxies=proxies, timeout=3.5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if not proxy.country:
+                    proxy.country = data.get("countryCode", data.get("country", ""))
+                exit_ip = data.get("query") or data.get("ip") or ""
+                if exit_ip:
+                    proxy.exit_ip = exit_ip
+                if proxy.country and proxy.exit_ip:
+                    break
+        except Exception:
+            pass
+
+    # Фолбэк для страны: если туннель не отдал, пробуем по host
+    if not proxy.country:
+        for api_url in [f"http://ip-api.com/json/{proxy.host}", f"https://ipinfo.io/{proxy.host}/json"]:
+            try:
+                resp = requests.get(api_url, timeout=3.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    proxy.country = data.get("countryCode", data.get("country", ""))
+                    if proxy.country:
+                        break
+            except Exception:
+                pass
+
+    # 2. ПРОВЕРКА DNSBL:
+    # ИСКЛЮЧИТЕЛЬНО по реальному Exit IP!
+    # Если exit_ip не удалось определить через туннель — НЕ штрафуем по proxy.host,
+    # а оставляем blacklist_clean = None.
+    if proxy.exit_ip:
+        try:
+            is_clean, hits = _check_dnsbl(proxy.exit_ip)
+            proxy.blacklist_clean = is_clean
+            proxy.blacklist_hits = hits if hits else None
+        except Exception:
+            proxy.blacklist_clean = None
+            proxy.blacklist_hits = None
+    else:
+        proxy.blacklist_clean = None
+        proxy.blacklist_hits = None
+
+    if on_done:
+        try:
+            on_done()
+        except Exception:
+            pass
 
 
 def _check_single(proxy: ProxyEntry, on_geo_done=None, timeout: float | None = None) -> ProxyEntry:
@@ -278,45 +358,7 @@ def _check_single(proxy: ProxyEntry, on_geo_done=None, timeout: float | None = N
     for attempt in range(_CHECK_RETRIES + 1):
         if _smtp_tcp_test(proxy, timeout):
             proxy.status = ProxyStatus.ALIVE
-            
-            try:
-                is_clean, hits = _check_dnsbl(proxy.host)
-                proxy.blacklist_clean = is_clean
-                proxy.blacklist_hits = hits if hits else None
-            except Exception:
-                proxy.blacklist_clean = None
-            
-            def _fetch_geo():
-                import requests
-                p_url = proxy.url.replace("socks5://", "socks5h://").replace("socks4://", "socks4a://")
-                proxies = {"http": p_url, "https": p_url}
-                
-                for api_url in ["http://ip-api.com/json/", "https://ipinfo.io/json"]:
-                    try:
-                        resp = requests.get(api_url, proxies=proxies, timeout=4)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            proxy.country = data.get("countryCode", data.get("country", ""))
-                            if proxy.country:
-                                if on_geo_done: on_geo_done()
-                                return
-                    except Exception:
-                        pass
-                        
-                for api_url in [f"http://ip-api.com/json/{proxy.host}", f"https://ipinfo.io/{proxy.host}/json"]:
-                    try:
-                        resp = requests.get(api_url, timeout=4)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            proxy.country = data.get("countryCode", data.get("country", ""))
-                            if proxy.country:
-                                if on_geo_done: on_geo_done()
-                                return
-                    except Exception:
-                        pass
-
-            threading.Thread(target=_fetch_geo, daemon=True).start()
-            
+            _fetch_geo_and_dnsbl(proxy, on_geo_done)
             return proxy
         if attempt < _CHECK_RETRIES:
             time.sleep(1)
@@ -421,6 +463,7 @@ class ProxyManager:
                 p.passed_server = ""
                 p.ping_ms = 0
                 p.country = ""
+                p.exit_ip = ""
                 p.blacklist_clean = None
                 p.blacklist_hits = None
                 p.last_error = ""
@@ -494,11 +537,17 @@ class ProxyManager:
                     on_done()
                 return
 
+            # Перемешивание (shuffle) перед проверкой: запросы равномерно распределяются
+            # по разным шлюзам и портам пула, предотвращая шквал SYN-пакетов в один хост.
+            import random
+            targets_shuffled = list(targets)
+            random.shuffle(targets_shuffled)
+
             checked = 0
             workers = max(1, min(max_workers, total)) if max_workers else total
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {}
-                for p in targets:
+                for p in targets_shuffled:
                     def make_cb(pr=p):
                         return lambda: on_progress(checked, total, pr) if on_progress else None
                     fut = pool.submit(_check_single, p, make_cb(), timeout)

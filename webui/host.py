@@ -400,6 +400,7 @@ class Api:
             "status": _PROXY_TOKEN.get(p.status, "untested"),
             "ping": p.ping_ms,
             "country": p.country or "",
+            "exit_ip": getattr(p, "exit_ip", ""),
             "blacklist": p.blacklist_clean,  # True/False/None
             "score": p.score,
             "error": getattr(p, "last_error", ""),  # причина смерти — как у SMTP-аккаунта
@@ -503,6 +504,7 @@ class Api:
         return {
             "host": f"{a.host}:{a.port}",
             "email": a.email,
+            "username": getattr(a, "username", "") or a.email,
             "enc": a.encryption,
             "status": _SMTP_TOKEN.get(a.status, "untested"),
             "ping": a.ping_ms,
