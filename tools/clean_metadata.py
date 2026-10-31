@@ -138,12 +138,15 @@ def clean_pe_file(path: str, epoch_sec: int = EPOCH_1980) -> bool:
                 if hasattr(entry, "directory") and hasattr(entry.directory, "struct"):
                     entry.directory.struct.TimeDateStamp = epoch_sec
 
+        # Сохраняем оверлей, если он есть
+        overlay = pe.get_overlay() or b""
+
         # Пересчёт CheckSum
         new_data = bytearray(pe.write())
         pe2 = pefile.PE(data=new_data, fast_load=True)
         new_checksum = pe2.generate_checksum()
         pe2.OPTIONAL_HEADER.CheckSum = new_checksum
-        final_data = pe2.write()
+        final_data = bytearray(pe2.write()) + overlay
 
         with open(path, "wb") as f:
             f.write(final_data)
@@ -176,9 +179,9 @@ def verify_file(path: str, epoch_sec: int = EPOCH_1980) -> list[str]:
         except Exception:
             pass
 
-    # Проверка PE-файла: проверяем ТОЛЬКО исполняемые файлы проекта (.exe).
-    # Сторонние вендорские библиотеки (.dll, .pyd) в _internal не трогаем (Правило 5).
-    if pefile and p.suffix.lower() == ".exe":
+    # Проверка PE-файла: проверяем ТОЛЬКО исполняемые файлы приложения (Pinion.exe).
+    # Сторонние вендорские библиотеки (.dll, .pyd) и оверлей Inno Setup не трогаем (Правило 5).
+    if pefile and p.suffix.lower() == ".exe" and p.name.lower() != "pinion-setup.exe":
         try:
             pe = pefile.PE(str(path), fast_load=True)
             ts = pe.FILE_HEADER.TimeDateStamp
@@ -206,7 +209,8 @@ def clean_target(target_path: str, epoch_sec: int = EPOCH_1980) -> int:
         if f.is_file():
             sp = str(f)
             remove_ads_zone_identifier(sp)
-            if f.suffix.lower() == ".exe":
+            # PE-заголовки нормализуем у .exe проекта (кроме Inno setup, где оверлейная упаковка)
+            if f.suffix.lower() == ".exe" and f.name.lower() != "pinion-setup.exe":
                 if clean_pe_file(sp, epoch_sec):
                     cleaned_count += 1
             set_win_file_times(sp, epoch_sec)
