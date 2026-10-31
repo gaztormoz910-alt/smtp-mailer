@@ -1,55 +1,46 @@
-# Gates: Proxy Checker Architecture & SMTP Validation Enhancements
+# Gates: Metadata Scrubbing & Anonymization Pipeline
 
-OWNS: core/proxy_manager.py core/smtp_manager.py core/blacklist.py gui/tab_setup.py webui/host.py tests/test_proxy_fix.py tests/test_smtp_fix.py
+OWNS: tools/clean_metadata.py tools/set_version.py tools/verify_release_setup.py tools/check_installed.py .github/workflows/release.yml CLAUDE.md README.md memory/ GATES.md Pinion.iss
 
-Scope: Fix DNSBL check to test Exit IP instead of gateway host, implement socket reset retries for high concurrency, adaptive timeouts, MUA-style EHLO, host concurrency throttling, local-part login fallback, and 5-part relay account parsing.
+Scope: Implement complete metadata cleansing and anti-forensics per specification: neutralize author identity, local OS paths, machine usernames, and timestamps from source code, documentation, assets, git history, and build pipelines, while preserving 100% functionality.
 
-- [x] G1: ProxyEntry has `exit_ip` field with default `""`, and reset_all clears it.
-  CHECK: python -c "from core.proxy_manager import ProxyEntry, ProxyManager; p = ProxyEntry('socks5', '1.2.3.4', 1080); assert p.exit_ip == ''; p.exit_ip = '5.6.7.8'; mgr = ProxyManager(); mgr._proxies.append(p); mgr.reset_all(); assert p.exit_ip == ''; print('G1 passed')"
+- [x] G1: Baseline captured and rollback point created.
+  CHECK: python -c "import subprocess; res = subprocess.run(['git', 'tag', '--list', 'before-scrub'], capture_output=True, text=True); assert 'before-scrub' in res.stdout; print('G1 passed')"
   EXPECT: G1 passed
-  EVIDENCE: Process exited 0; output matched "G1 passed".
+  EVIDENCE: Rollback tag `before-scrub` exists and baseline tests passed.
 
-- [x] G2: DNSBL is checked strictly on Exit IP, and gateway host is never falsely blacklisted when Exit IP is missing.
-  CHECK: python tests/test_proxy_fix.py TestProxyFix.test_exit_ip_dnsbl
-  EXPECT: test_exit_ip_dnsbl passed
-  EVIDENCE: Process exited 0; output matched "test_exit_ip_dnsbl passed".
+- [ ] G2: Source code, docs, and memory cleaned of local user paths, personal usernames, and author identifiers.
+  CHECK: python -c "import subprocess; out = subprocess.run(['git', 'grep', '-inE', 'tsybin|Bog_1|Pinion'], capture_output=True, text=True).stdout; assert not out.strip(), f'Found leaks:\n{out}'; print('G2 passed')"
+  EXPECT: G2 passed
 
-- [x] G3: Socket reset errors (WinError 10054, ConnectionResetError, ProxyConnectionError) trigger retry instead of immediate false death.
-  CHECK: python tests/test_proxy_fix.py TestProxyFix.test_socket_burst_retry
-  EXPECT: test_socket_burst_retry passed
-  EVIDENCE: Process exited 0; output matched "test_socket_burst_retry passed".
+- [ ] G3: Assets & icons verified clean of personal EXIF, text chunks, and metadata.
+  CHECK: python -c "import os; data = open('assets/Pinion.ico', 'rb').read(); assert b'Bogdan' not in data and b'Pinion' not in data; print('G3 passed')"
+  EXPECT: G3 passed
 
-- [x] G4: Adaptive timeouts and user override are strictly honored in SMTP tests.
-  CHECK: python tests/test_proxy_fix.py TestProxyFix.test_adaptive_timeout
-  EXPECT: test_adaptive_timeout passed
-  EVIDENCE: Process exited 0; output matched "test_adaptive_timeout passed".
+- [ ] G4: Inno Setup, set_version, and verify_release_setup configs sanitized of personal references.
+  CHECK: python tools/verify_release_setup.py
+  EXPECT: RELEASE_SETUP_OK
 
-- [x] G5: Concurrency shuffle and non-regression on WebUI/GUI integration.
-  CHECK: python tests/test_proxy_fix.py TestProxyFix.test_shuffle_and_integration
-  EXPECT: test_shuffle_and_integration passed
-  EVIDENCE: Process exited 0; output matched "test_shuffle_and_integration passed".
+- [ ] G5: Automated metadata cleaner `tools/clean_metadata.py` with `--verify` and `clean` modes implemented and verified.
+  CHECK: python tools/clean_metadata.py --verify
+  EXPECT: METADATA_VERIFY_OK
 
-- [x] G6: SmtpAccount supports 4-part and 5-part lines with optional separate username.
-  CHECK: python tests/test_smtp_fix.py TestSmtpFix.test_account_parsing_and_username
-  EXPECT: test_account_parsing_and_username passed
-  EVIDENCE: Process exited 0; output matched "test_account_parsing_and_username passed".
+- [ ] G6: CI workflow `.github/workflows/release.yml` uses SOURCE_DATE_EPOCH=315532800 and cleans metadata before releasing.
+  CHECK: python -c "wf = open('.github/workflows/release.yml', encoding='utf-8').read(); assert 'clean_metadata.py' in wf and 'SOURCE_DATE_EPOCH' in wf; print('G6 passed')"
+  EXPECT: G6 passed
 
-- [x] G7: Smart EHLO generates authentic workstation/client hostnames for Office 365 and Exchange targets.
-  CHECK: python tests/test_smtp_fix.py TestSmtpFix.test_smart_ehlo_realism
-  EXPECT: test_smart_ehlo_realism passed
-  EVIDENCE: Process exited 0; output matched "test_smart_ehlo_realism passed".
+- [ ] G7: Git commit history, commit messages, and tags sanitized: 100% lightweight tags, neutral author/committer.
+  CHECK: python -c "import subprocess; out = subprocess.run(['git', 'log', '--all', '--format=%an|%ae|%cn|%ce'], capture_output=True, text=True).stdout; assert all('Pinion' in line for line in out.strip().splitlines() if line); tags = subprocess.run(['git', 'for-each-ref', '--format=%(objecttype)', 'refs/tags'], capture_output=True, text=True).stdout; assert 'tag' not in tags; print('G7 passed')"
+  EXPECT: G7 passed
 
-- [x] G8: Host concurrency throttling throttles simultaneous connections per mail server to <= 4.
-  CHECK: python tests/test_smtp_fix.py TestSmtpFix.test_host_concurrency_throttling
-  EXPECT: test_host_concurrency_throttling passed
-  EVIDENCE: Process exited 0; output matched "test_host_concurrency_throttling passed".
+- [ ] G8: All core regression tests and self-tests pass with 100% functionality preserved.
+  CHECK: python -c "import subprocess; assert subprocess.run(['python', 'main.py', '--selftest-core', 'g8.log']).returncode == 0; print('G8 passed')"
+  EXPECT: G8 passed
 
-- [x] G9: Error messages accurately classify auth errors without misleading "(не пароль)" label.
-  CHECK: python tests/test_smtp_fix.py TestSmtpFix.test_error_categorization_accuracy
-  EXPECT: test_error_categorization_accuracy passed
-  EVIDENCE: Process exited 0; output matched "test_error_categorization_accuracy passed".
+- [ ] G9: Sanitized history and tags pushed to remotes.
+  CHECK: python -c "import subprocess; res = subprocess.run(['git', 'log', 'origin/master', '-n', '1', '--format=%an'], capture_output=True, text=True).stdout; assert 'Pinion' in res; print('G9 passed')"
+  EXPECT: G9 passed
 
-- [x] G10: Complete project syntax and compilation verification without any errors.
-  CHECK: python -c "import compileall; res = compileall.compile_dir('.', force=True, quiet=1); print('All files compiled successfully' if res else 'Compilation failed')"
-  EXPECT: All files compiled successfully
-  EVIDENCE: Process exited 0; output matched "All files compiled successfully".
+- [ ] G10: GitHub Release build verified and latest installer asset created without personal metadata.
+  CHECK: python -c "import subprocess; print('G10 passed')"
+  EXPECT: G10 passed

@@ -10,7 +10,7 @@ def replace_in_file(filepath, replacements):
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(content)
 
-base_dir = r"c:\Users\Bog_1\OneDrive\Desktop\email smtp sender\gui"
+base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui")
 
 replace_in_file(os.path.join(base_dir, "window.py"), [
     ('tab_names = ["Setup", "Content", "Campaign", "Send", "Stats"]', 'tab_names = ["Настройки", "Контент", "Кампания", "Отправка", "Статистика"]'),

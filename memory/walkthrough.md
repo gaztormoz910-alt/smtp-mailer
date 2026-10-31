@@ -16,9 +16,9 @@
 
 | Файл | Статус |
 |------|--------|
-| [1_Prompt_Subjects.txt](file:///C:/Pinion/OneDrive/Desktop/Промпты/Email%20Prompts/1_Prompt_Subjects.txt) | ✅ Исправлен (2 правки) |
-| [2_Prompt_Bodies_PlainText.txt](file:///C:/Pinion/OneDrive/Desktop/Промпты/Email%20Prompts/2_Prompt_Bodies_PlainText.txt) | ✅ Исправлен (1 правка) |
-| [3_Prompt_Bodies_LightHTML.txt](file:///C:/Pinion/OneDrive/Desktop/Промпты/Email%20Prompts/3_Prompt_Bodies_LightHTML.txt) | ✅ Исправлен (1 правка) |
+| `1_Prompt_Subjects.txt` | ✅ Исправлен (2 правки) |
+| `2_Prompt_Bodies_PlainText.txt` | ✅ Исправлен (1 правка) |
+| `3_Prompt_Bodies_LightHTML.txt` | ✅ Исправлен (1 правка) |
 
 ---
 

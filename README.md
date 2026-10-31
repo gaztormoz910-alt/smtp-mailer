@@ -12,7 +12,7 @@ SMTP-аккаунтов и SOCKS-прокси. Интерфейс по умол�
 
 Скачать последнюю версию установщика (постоянная ссылка, всегда указывает на свежий релиз):
 
-**[⬇ Pinion-setup.exe](https://github.com/Pinion/smtp-mailer/releases/latest/download/Pinion-setup.exe)**
+**[⬇ Pinion-setup.exe](releases/latest/download/Pinion-setup.exe)**
 
 1. Скачайте `Pinion-setup.exe` и запустите двойным кликом.
 2. При первом запуске Windows покажет синий экран **«Windows защитила ваш

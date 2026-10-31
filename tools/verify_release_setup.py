@@ -6,12 +6,28 @@
 Запуск: python tools/verify_release_setup.py"""
 import os
 import re
+import subprocess
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-OWNER_REPO = "Pinion/smtp-mailer"
+def _detect_owner_repo() -> str:
+    env_repo = os.environ.get("GITHUB_REPOSITORY")
+    if env_repo:
+        return env_repo
+    try:
+        url = subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"], cwd=REPO
+        ).decode("utf-8", "replace").strip()
+        m = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$", url)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+    except Exception:
+        pass
+    return "pinion-mailer/pinion"
+
+OWNER_REPO = _detect_owner_repo()
 PERMLINK = f"https://github.com/{OWNER_REPO}/releases/latest/download/Pinion-setup.exe"
 
 SPEC = os.path.join(REPO, "Pinion.spec")

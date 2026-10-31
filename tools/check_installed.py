@@ -212,7 +212,7 @@ def window_icon_width(hwnd: int, which: int):
 # ── источник установщика: постоянная ссылка релиза ───────────────────────────
 def default_release_url() -> str:
     """Строит releases/latest/download/... из origin (в т.ч. SSH-alias)."""
-    owner, repo = "Pinion", "smtp-mailer"
+    owner, repo = "pinion-mailer", "pinion"
     try:
         url = subprocess.check_output(
             ["git", "config", "--get", "remote.origin.url"], cwd=REPO_ROOT

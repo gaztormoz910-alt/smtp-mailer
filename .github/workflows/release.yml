@@ -16,6 +16,7 @@ jobs:
       # version_info.txt) при локали cp1252 на раннере, а не падали на не-ASCII байтах.
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
+      SOURCE_DATE_EPOCH: "315532800"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,6 +42,11 @@ jobs:
 
       - name: Собрать .exe
         run: python -m PyInstaller --noconfirm --clean --log-level WARN Pinion.spec
+
+      - name: Очистить метаданные и PE-таймстемпы сборки
+        run: |
+          python tools/clean_metadata.py clean dist/Pinion
+          python tools/clean_metadata.py --verify dist/Pinion
 
       - name: Смоук — реальный прогон ЯДРА в собранном .exe
         shell: pwsh
@@ -82,6 +88,11 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "ISCC.exe не найден" }
           & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" Pinion.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Очистить метаданные установщика
+        run: |
+          python tools/clean_metadata.py clean installer
+          python tools/clean_metadata.py --verify installer
 
       - name: Проверить установщик
         shell: pwsh

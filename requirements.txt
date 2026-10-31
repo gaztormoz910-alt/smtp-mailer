@@ -8,3 +8,4 @@ requests               # core/proxy_manager: geo + list auto-refresh over URL
 PySocks                # import socks: tunnel SMTP through SOCKS proxies
 pywebview              # web UI (default entry point)
 pythonnet              # import clr: pywebview Windows backend (edgechromium); pinned explicitly
+pefile                 # tools/clean_metadata: normalize PE timestamps and checksums
