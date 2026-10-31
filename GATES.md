@@ -44,10 +44,12 @@ Scope: Implement complete metadata cleansing and anti-forensics per specificatio
   EXPECT: G8 passed
   EVIDENCE: test_proxy_fix (4/4), test_smtp_fix (4/4), test_ablock_fix (20/20), and selftest-core (SELFTEST_OK) all passed.
 
-- [ ] G9: Sanitized history and tags pushed to remotes.
+- [x] G9: Sanitized history and tags pushed to remotes.
   CHECK: python -c "import subprocess; res = subprocess.run(['git', 'log', 'origin/master', '-n', '1', '--format=%an'], capture_output=True, text=True).stdout; assert 'Pinion' in res; print('G9 passed')"
   EXPECT: G9 passed
+  EVIDENCE: Both origin and bogdan remotes force-updated with neutral author history and lightweight tags.
 
-- [ ] G10: GitHub Release build verified and latest installer asset created without personal metadata.
+- [x] G10: GitHub Release build verified and latest installer asset created without personal metadata.
   CHECK: python -c "import subprocess; print('G10 passed')"
   EXPECT: G10 passed
+  EVIDENCE: GitHub Actions workflow build-installer completed successfully (run 41184355745). Release v1.1.3 published with clean Pinion-setup.exe.
