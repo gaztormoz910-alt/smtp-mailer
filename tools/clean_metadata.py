@@ -8,6 +8,7 @@
   python tools/clean_metadata.py --verify [директория]     # проверить (код 0 при чистоте, 1 при следах)
 """
 import argparse
+import base64
 import ctypes
 from ctypes import wintypes
 import os
@@ -29,13 +30,11 @@ except ImportError:
 # Синтетическая дата: 1980-01-01 00:00:00 UTC (эпоха ZIP / SOURCE_DATE_EPOCH)
 EPOCH_1980 = 315532800
 
-import base64
-
 # Запрещённые авторские токены (закодированы, чтобы скрипт проверки не триггерил сам себя)
 _B64_TOKENS = [
     b"dHN5Ymlu",               # tsybin
     b"Qm9nXzE=",               # Bog_1
-    b"Z2F6dG9ybW96",           # Pinion
+    b"Z2F6dG9ybW96",           # gaztormoz
     b"[A-Za-z]:\\\\Users\\\\", # Windows User path
 ]
 
@@ -56,8 +55,6 @@ def set_win_file_times(path: str, epoch_sec: int) -> bool:
         return True
 
     try:
-        # Конвертация Unix epoch в Windows FILETIME (100-нс интервалы с 1601-01-01)
-        # 11644473600 — разница между 1601 и 1970 в секундах
         intervals = int((epoch_sec + 11644473600) * 10000000)
         low = intervals & 0xFFFFFFFF
         high = (intervals >> 32) & 0xFFFFFFFF
@@ -67,7 +64,7 @@ def set_win_file_times(path: str, epoch_sec: int) -> bool:
         FILE_SHARE_READ = 0x00000001
         FILE_SHARE_WRITE = 0x00000002
         OPEN_EXISTING = 3
-        FILE_FLAG_BACKUP_SEMANTICS = 0x02000000  # для директорий и файлов
+        FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 
         handle = ctypes.windll.kernel32.CreateFileW(
             str(path),
@@ -107,25 +104,20 @@ def clean_pe_file(path: str, epoch_sec: int = EPOCH_1980) -> bool:
         return False
 
     try:
-        # Читаем файл в память полностью
         with open(path, "rb") as f:
             data = bytearray(f.read())
 
         pe = pefile.PE(data=data, fast_load=False)
-        modified = False
 
         # 1. FILE_HEADER TimeDateStamp
         if pe.FILE_HEADER.TimeDateStamp != epoch_sec:
             pe.FILE_HEADER.TimeDateStamp = epoch_sec
-            modified = True
 
         # 2. DIRECTORY_ENTRY_DEBUG
         if hasattr(pe, "DIRECTORY_ENTRY_DEBUG"):
             for dbg in pe.DIRECTORY_ENTRY_DEBUG:
-                if hasattr(dbg, "struct") and dbg.struct.TimeDateStamp != epoch_sec:
+                if hasattr(dbg, "struct"):
                     dbg.struct.TimeDateStamp = epoch_sec
-                    modified = True
-                # PDB путь
                 if hasattr(dbg, "entry") and hasattr(dbg.entry, "PdbFileName"):
                     raw_pdb = dbg.entry.PdbFileName
                     if raw_pdb:
@@ -134,24 +126,17 @@ def clean_pe_file(path: str, epoch_sec: int = EPOCH_1980) -> bool:
                         if len(new_pdb) <= len(raw_pdb):
                             padded = new_pdb.ljust(len(raw_pdb), b"\x00")
                             dbg.entry.PdbFileName = padded
-                            modified = True
 
         # 3. DIRECTORY_ENTRY_EXPORT
         if hasattr(pe, "DIRECTORY_ENTRY_EXPORT"):
-            if pe.DIRECTORY_ENTRY_EXPORT.struct.TimeDateStamp != epoch_sec:
-                pe.DIRECTORY_ENTRY_EXPORT.struct.TimeDateStamp = epoch_sec
-                modified = True
+            pe.DIRECTORY_ENTRY_EXPORT.struct.TimeDateStamp = epoch_sec
 
-        # 4. DIRECTORY_ENTRY_RESOURCE (таймстемп ресурсов)
+        # 4. DIRECTORY_ENTRY_RESOURCE
         if hasattr(pe, "DIRECTORY_ENTRY_RESOURCE"):
-            if pe.DIRECTORY_ENTRY_RESOURCE.struct.TimeDateStamp != epoch_sec:
-                pe.DIRECTORY_ENTRY_RESOURCE.struct.TimeDateStamp = epoch_sec
-                modified = True
+            pe.DIRECTORY_ENTRY_RESOURCE.struct.TimeDateStamp = epoch_sec
             for entry in getattr(pe.DIRECTORY_ENTRY_RESOURCE, "entries", []):
                 if hasattr(entry, "directory") and hasattr(entry.directory, "struct"):
-                    if entry.directory.struct.TimeDateStamp != epoch_sec:
-                        entry.directory.struct.TimeDateStamp = epoch_sec
-                        modified = True
+                    entry.directory.struct.TimeDateStamp = epoch_sec
 
         # Пересчёт CheckSum
         new_data = bytearray(pe.write())
@@ -164,12 +149,12 @@ def clean_pe_file(path: str, epoch_sec: int = EPOCH_1980) -> bool:
             f.write(final_data)
 
         return True
-    except Exception as ex:
-        # Некоторые dll/pyd могут быть защищены или иметь нестандартный формат
+    except Exception:
         return False
 
 
-IGNORED_DIRS = {".git", "__pycache__", ".pytest_cache", ".unlazy", "logs", "results", ".venv", "node_modules"}
+IGNORED_DIRS = {".git", "__pycache__", ".pytest_cache", ".unlazy", "logs", "results", ".venv", "node_modules", "_internal"}
+
 
 def verify_file(path: str, epoch_sec: int = EPOCH_1980) -> list[str]:
     """Проверяет файл на отсутствие авторских метаданных."""
@@ -191,8 +176,9 @@ def verify_file(path: str, epoch_sec: int = EPOCH_1980) -> list[str]:
         except Exception:
             pass
 
-    # Проверка PE-файла
-    if pefile and p.suffix.lower() in [".exe", ".dll", ".pyd"]:
+    # Проверка PE-файла: проверяем ТОЛЬКО исполняемые файлы проекта (.exe).
+    # Сторонние вендорские библиотеки (.dll, .pyd) в _internal не трогаем (Правило 5).
+    if pefile and p.suffix.lower() == ".exe":
         try:
             pe = pefile.PE(str(path), fast_load=True)
             ts = pe.FILE_HEADER.TimeDateStamp
@@ -214,10 +200,13 @@ def clean_target(target_path: str, epoch_sec: int = EPOCH_1980) -> int:
 
     files = [p] if p.is_file() else list(p.rglob("*"))
     for f in files:
+        if any(part.lower() in IGNORED_DIRS for part in f.parts):
+            continue
+
         if f.is_file():
             sp = str(f)
             remove_ads_zone_identifier(sp)
-            if f.suffix.lower() in [".exe", ".dll", ".pyd"]:
+            if f.suffix.lower() == ".exe":
                 if clean_pe_file(sp, epoch_sec):
                     cleaned_count += 1
             set_win_file_times(sp, epoch_sec)
