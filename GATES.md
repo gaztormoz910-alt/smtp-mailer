@@ -10,12 +10,12 @@ Scope: Implement complete metadata cleansing and anti-forensics per specificatio
   EVIDENCE: Rollback tag `before-scrub` exists and baseline tests passed.
 
 - [x] G2: Source code, docs, and memory cleaned of local user paths, personal usernames, and author identifiers.
-  CHECK: python -c "import subprocess; out = subprocess.run(['git', 'grep', '-inE', 'tsybin|Bog_1|gaztormoz', '--', ':!GATES.md'], capture_output=True, text=True).stdout; assert not out.strip(), f'Found leaks:\n{out}'; print('G2 passed')"
+  CHECK: python -c "import subprocess, base64; p = '|'.join(base64.b64decode(x).decode() for x in [b'dHN5Ymlu', b'Qm9nXzE=', b'Z2F6dG9ybW96']); out = subprocess.run(['git', 'grep', '-inE', p], capture_output=True, text=True).stdout; assert not out.strip(), f'Found leaks:\n{out}'; print('G2 passed')"
   EXPECT: G2 passed
   EVIDENCE: Zero leaks found across all repository files.
 
 - [x] G3: Assets & icons verified clean of personal EXIF, text chunks, and metadata.
-  CHECK: python -c "import os; data = open('assets/Pinion.ico', 'rb').read(); assert b'Bogdan' not in data and b'gaztormoz' not in data; print('G3 passed')"
+  CHECK: python -c "import os, base64; data = open('assets/Pinion.ico', 'rb').read(); assert base64.b64decode(b'Qm9nZGFu') not in data and base64.b64decode(b'Z2F6dG9ybW96') not in data; print('G3 passed')"
   EXPECT: G3 passed
   EVIDENCE: Assets inspected; no personal author or camera metadata.
 

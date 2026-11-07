@@ -1015,6 +1015,8 @@ class Api:
             return {"error": "Нет тем — загрузите темы во вкладке «Контент»"}
         if self.smtp_mgr.count_alive == 0:
             return {"error": "Нет живых SMTP — загрузите и проверьте аккаунты во вкладке «Настройки»"}
+        if self.proxy_mgr.count_alive == 0:
+            return {"error": "Нет живых прокси — загрузите и проверьте прокси во вкладке «Настройки»"}
 
         cfg = self._cfg
         queue = build_queue(self._recipients, control_emails=cfg["control"],
@@ -1095,7 +1097,7 @@ class Api:
         return {"snapshot": snap, "log": log, "running": running, "paused": paused,
                 "recipients": len(self._recipients),
                 "alive_smtp": self.smtp_mgr.count_alive,
-                "can_start": len(self._recipients) > 0 and self.smtp_mgr.count_alive > 0}
+                "can_start": len(self._recipients) > 0 and self.smtp_mgr.count_alive > 0 and self.proxy_mgr.count_alive > 0}
 
     # ── возобновление прерванной кампании ───────────────────────────────
     def queue_state(self) -> dict:

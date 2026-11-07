@@ -32,10 +32,10 @@ EPOCH_1980 = 315532800
 
 # Запрещённые авторские токены (закодированы, чтобы скрипт проверки не триггерил сам себя)
 _B64_TOKENS = [
-    b"dHN5Ymlu",               # tsybin
-    b"Qm9nXzE=",               # Bog_1
-    b"Z2F6dG9ybW96",           # gaztormoz
-    b"[A-Za-z]:\\\\Users\\\\", # Windows User path
+    b"dHN5Ymlu",
+    b"Qm9nXzE=",
+    b"Z2F6dG9ybW96",
+    b"[A-Za-z]:\\\\Users\\\\",
 ]
 
 FORBIDDEN_PATTERNS = [
