@@ -1,6 +1,6 @@
 # Gates: Metadata Scrubbing & Anonymization Pipeline
 
-OWNS: tools/clean_metadata.py tools/build_portable_zip.py tools/deep_scan_binary.py tools/set_version.py tools/verify_release_setup.py tools/check_installed.py .github/workflows/release.yml CLAUDE.md README.md memory/ GATES.md Pinion.iss
+OWNS: tools/clean_metadata.py tools/build_portable_zip.py tools/deep_scan_binary.py tools/set_version.py tools/verify_release_setup.py tools/check_installed.py .github/workflows/release.yml CLAUDE.md README.md memory/ GATES.md Pinion.iss VERSION
 
 Scope: Implement complete metadata cleansing and anti-forensics per specification: neutralize author identity, local OS paths, machine usernames, and timestamps from source code, documentation, assets, git history, and build pipelines, while preserving 100% functionality.
 
