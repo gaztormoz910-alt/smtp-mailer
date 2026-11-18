@@ -629,6 +629,31 @@ class Api:
         self._recipients = []
         return {"total": 0}
 
+    # ── экспорт прокси/SMTP в оригинальном формате (для кнопки «Копировать всё») ──
+    def export_proxies_raw(self) -> dict:
+        """Все прокси текущего пула в формате host:port:user:pass (или host:port)."""
+        lines: list[str] = []
+        for p in self.proxy_mgr.proxies:
+            if p.username:
+                lines.append(f"{p.host}:{p.port}:{p.username}:{p.password}")
+            else:
+                lines.append(f"{p.host}:{p.port}")
+        return {"text": "\n".join(lines), "count": len(lines)}
+
+    def export_smtp_raw(self) -> dict:
+        """Все SMTP-аккаунты текущего пула в формате host:port:email:password."""
+        lines: list[str] = []
+        for a in self.smtp_mgr.accounts:
+            line = f"{a.host}:{a.port}:{a.email}:{a.password}"
+            bp = getattr(a, "bound_proxy", None)
+            if bp is not None:
+                if bp.username:
+                    line += f"|>{bp.host}:{bp.port}:{bp.username}:{bp.password}"
+                else:
+                    line += f"|>{bp.host}:{bp.port}"
+            lines.append(line)
+        return {"text": "\n".join(lines), "count": len(lines)}
+
     # ── буфер обмена (надёжно, через Win32) ─────────────────────────────
     def copy_to_clipboard(self, text: str = "") -> dict:
         # Пишем в буфер обмена Windows напрямую через Win32 (CF_UNICODETEXT). Причина:

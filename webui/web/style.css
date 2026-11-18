@@ -368,8 +368,18 @@ body.busy{cursor:progress}
 .btn.xs{padding:4px 8px;font-size:11px}
 .pv-copy{display:flex;flex-wrap:wrap;gap:6px}
 .pv-copy .btn{flex:1 1 auto}
-.btn.copied{color:var(--accent)!important;border-color:rgba(74,222,128,.5)!important;background:var(--accent-bg)!important}
-.btn.copyfail{color:var(--warn)!important;border-color:rgba(251,191,36,.5)!important}
+.btn.copied{color:#08160c!important;border-color:var(--accent)!important;
+  background:var(--accent)!important;font-weight:700;
+  box-shadow:0 0 12px rgba(74,222,128,.55),0 0 24px rgba(74,222,128,.2);
+  animation:copy-flash .45s ease-out}
+.btn.copyfail{color:#08160c!important;border-color:var(--warn)!important;
+  background:var(--warn)!important;font-weight:700;
+  box-shadow:0 0 12px rgba(251,191,36,.55);
+  animation:copy-flash .45s ease-out}
+@keyframes copy-flash{
+  0%{transform:scale(1.18);filter:brightness(1.5)}
+  100%{transform:scale(1);filter:brightness(1)}
+}
 .pv-code-wrap{width:100%;max-width:860px;display:flex;flex-direction:column;gap:6px}
 .pv-code-bar{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--dim)}
 .pv-code-bar span{margin-right:auto}

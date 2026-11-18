@@ -103,24 +103,32 @@ jobs:
           "installer = $mb MB"
           if ($mb -lt 15) { throw "установщик подозрительно мал: $mb MB" }
 
+      - name: Собрать детерминированный портативный ZIP
+        run: |
+          python tools/build_portable_zip.py dist/Pinion dist/Pinion-portable.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: Pinion-setup
           path: installer/Pinion-setup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pinion-portable
+          path: dist/Pinion-portable.zip
 
       - name: Опубликовать релиз
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           name: Pinion ${{ steps.ver.outputs.version }}
-          files: installer/Pinion-setup.exe
+          files: |
+            installer/Pinion-setup.exe
+            dist/Pinion-portable.zip
           body: |
-            **Windows 10/11, 64-bit.** Скачайте `Pinion-setup.exe` ниже и запустите —
+            **Windows 10/11, 64-bit.** Скачайте `Pinion-setup.exe` (установщик) или `Pinion-portable.zip` (портативная версия без установки).
             Python и все библиотеки внутри, ставить отдельно ничего не нужно.
 
-            При первом запуске Windows покажет синий экран «Windows защитила ваш
-            компьютер». Это ожидаемо для любого установщика без платной цифровой
-            подписи: нажмите **Подробнее** → **Выполнить в любом случае**.
-
-            Программа устанавливается в профиль пользователя, права администратора
-            не требуются.
+            При первом запуске Windows может показать экран «Windows защитила ваш компьютер».
+            Это стандартное поведение для любого ПО без платного EV-сертификата:
+            нажмите **Подробнее** → **Выполнить в любом случае**.

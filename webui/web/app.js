@@ -217,6 +217,9 @@ function setSetupButtons(kind, r) {
       ? `Удалить ${untested} непроверенных «?» (мёртвых/живых не трогает)`
       : "Непроверенных нет — удалять нечего";
   }
+  // «Копировать всё» — активна, когда есть хотя бы один элемент и не идёт проверка.
+  const cp = $("#" + p + "-copy-all");
+  if (cp) cp.disabled = !(loaded && !busyk);
   // «Убрать из ЧС» — только для прокси: активна, когда есть живые-в-блэклисте (r.dirty>0).
   if (kind === "proxies") {
     const rb = $("#px-remove-blacklisted");
@@ -316,6 +319,7 @@ const LOCK_SEL = [
   "#px-load-url", "#px-check", "#sm-check", "#px-remove-dead", "#sm-remove-dead",
   "#px-remove-blacklisted",
   "#px-recheck-untested", "#sm-recheck-untested", "#px-remove-untested", "#sm-remove-untested",
+  "#px-copy-all", "#sm-copy-all",
   "#px-timeout", "#px-threads", "#sm-timeout", "#sm-threads",
 ];
 function setBusy(v) {
@@ -335,6 +339,21 @@ $("#sm-remove-dead").addEventListener("click", () => api().remove_dead_smtp().th
 // «Убрать не пров.» — удаляет ТОЛЬКО непроверенные (отдельно от «Убрать мёртвые»).
 $("#px-remove-untested").addEventListener("click", () => api().remove_untested_proxies().then(() => { pagers.proxies.reload(); refreshBadges(); }));
 $("#sm-remove-untested").addEventListener("click", () => api().remove_untested_smtp().then(() => { pagers.smtp.reload(); refreshBadges(); }));
+// «Копировать всё» — прокси и SMTP в оригинальном формате (host:port:user:pass)
+$("#px-copy-all").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const r = await api().export_proxies_raw();
+  if (!r || !r.count) return;
+  const ok = await copyText(r.text);
+  flashCopied(btn, ok);
+});
+$("#sm-copy-all").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const r = await api().export_smtp_raw();
+  if (!r || !r.count) return;
+  const ok = await copyText(r.text);
+  flashCopied(btn, ok);
+});
 
 function setPct(p, pct) {
   $("#" + p + "-progress").style.width = pct + "%";
@@ -796,8 +815,8 @@ function flashCopied(btn, ok) {
   const prev = btn.dataset.label || btn.textContent;
   btn.dataset.label = prev;
   btn.classList.add(ok ? "copied" : "copyfail");
-  btn.textContent = ok ? "✓ Скопировано" : "✕ Скопируй вручную";
-  setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied", "copyfail"); delete btn.dataset.label; }, 1400);
+  btn.textContent = ok ? "✅ Скопировано!" : "⚠ Скопируй вручную";
+  setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied", "copyfail"); delete btn.dataset.label; }, 2000);
 }
 // Что реально уходит получателю в теле: HTML-код для HTML-писем, сырой текст для plain.
 function pvBodySource() {
@@ -828,8 +847,9 @@ $("#pv-toggle-code").addEventListener("click", () => {
   if (wrap.hidden) showCodePanel(); else wrap.hidden = true;
 });
 $("#pv-code-copy").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
   const ta = $("#pv-code"); ta.focus(); ta.select();
-  flashCopied(e.currentTarget, await copyText(ta.value));
+  flashCopied(btn, await copyText(ta.value));
 });
 $("#pv-code-hide").addEventListener("click", () => { $("#pv-code-wrap").hidden = true; });
 // Чек-лист оценки: разворачивается по кнопке (в сайдбаре мало места).
@@ -1168,6 +1188,8 @@ if (!window.pywebview && new URLSearchParams(location.search).has("demo")) {
     // наглядности убираем элементы с итоговым статусом untested (SMTP их даёт ~20%).
     remove_untested_proxies: () => { proxies = proxies.filter((x) => x.status !== "untested"); return P({ removed: 0, ...viewCnt(proxies, pxChecked) }); },
     remove_untested_smtp: () => { smtps = smtps.filter((x) => x.status !== "untested"); return P({ removed: 0, ...viewCnt(smtps, smChecked) }); },
+    export_proxies_raw: () => P({ text: proxies.map((x) => x.addr).join("\n"), count: proxies.length }),
+    export_smtp_raw: () => P({ text: smtps.map((x) => x.host + ":" + x.email + ":password123").join("\n"), count: smtps.length }),
     // Третий арг only_untested — в демо перепроверка проигрывается как обычная (логика
     // «только непроверенные» проверяется на реальном host.py в verify_web).
     check_proxies: (_t, _to, _ou) => { pxChecked = false; pxRun = true; pxDone = 0; return P({ started: true, total: proxies.length, threads: 30, timeout: 10 }); },

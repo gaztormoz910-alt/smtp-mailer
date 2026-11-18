@@ -138,15 +138,10 @@ def clean_pe_file(path: str, epoch_sec: int = EPOCH_1980) -> bool:
                 if hasattr(entry, "directory") and hasattr(entry.directory, "struct"):
                     entry.directory.struct.TimeDateStamp = epoch_sec
 
-        # Сохраняем оверлей, если он есть
-        overlay = pe.get_overlay() or b""
-
-        # Пересчёт CheckSum
-        new_data = bytearray(pe.write())
-        pe2 = pefile.PE(data=new_data, fast_load=True)
-        new_checksum = pe2.generate_checksum()
-        pe2.OPTIONAL_HEADER.CheckSum = new_checksum
-        final_data = bytearray(pe2.write()) + overlay
+        # Пересчёт CheckSum и запись (pe.write() сохраняет оверлей без дублирования)
+        pe.OPTIONAL_HEADER.CheckSum = 0
+        pe.OPTIONAL_HEADER.CheckSum = pe.generate_checksum()
+        final_data = bytearray(pe.write())
 
         with open(path, "wb") as f:
             f.write(final_data)
@@ -156,7 +151,7 @@ def clean_pe_file(path: str, epoch_sec: int = EPOCH_1980) -> bool:
         return False
 
 
-IGNORED_DIRS = {".git", "__pycache__", ".pytest_cache", ".unlazy", "logs", "results", ".venv", "node_modules", "_internal"}
+IGNORED_DIRS = {".git", "__pycache__", ".pytest_cache", ".unlazy", "logs", "results", ".venv", "node_modules", "_internal", "build"}
 
 
 def verify_file(path: str, epoch_sec: int = EPOCH_1980) -> list[str]:
@@ -169,7 +164,7 @@ def verify_file(path: str, epoch_sec: int = EPOCH_1980) -> list[str]:
         if part.lower() in IGNORED_DIRS:
             return []
 
-    # Проверка на запрещённые строки
+    # 1. Проверка текстовых и исходных файлов на запрещённые строки и пути
     if p.suffix.lower() not in [".png", ".ico", ".webp", ".zip", ".exe", ".dll", ".pyd"]:
         try:
             raw = p.read_bytes()
@@ -179,9 +174,20 @@ def verify_file(path: str, epoch_sec: int = EPOCH_1980) -> list[str]:
         except Exception:
             pass
 
-    # Проверка PE-файла: проверяем ТОЛЬКО исполняемые файлы приложения (Pinion.exe).
-    # Сторонние вендорские библиотеки (.dll, .pyd) и оверлей Inno Setup не трогаем (Правило 5).
-    if pefile and p.suffix.lower() == ".exe" and p.name.lower() != "pinion-setup.exe":
+    # 2. Проверка бинарных артефактов (.exe, .zip) на персональные авторские токены
+    if p.suffix.lower() in [".exe", ".zip"]:
+        try:
+            raw_bin = p.read_bytes()
+            for token_b64 in [b"dHN5Ymlu", b"Qm9nXzE=", b"Z2F6dG9ybW96"]:
+                tok = base64.b64decode(token_b64)
+                if tok.lower() in raw_bin.lower():
+                    errors.append(f"{path}: обнаружен авторский идентификатор ({tok.decode(errors='ignore')})")
+        except Exception:
+            pass
+
+    # Проверка PE-файла: проверяем исполняемые файлы приложения (Pinion.exe и Pinion-setup.exe).
+    # Сторонние вендорские библиотеки (.dll, .pyd) не трогаем (Правило 5).
+    if pefile and p.suffix.lower() == ".exe":
         try:
             pe = pefile.PE(str(path), fast_load=True)
             ts = pe.FILE_HEADER.TimeDateStamp
@@ -209,8 +215,8 @@ def clean_target(target_path: str, epoch_sec: int = EPOCH_1980) -> int:
         if f.is_file():
             sp = str(f)
             remove_ads_zone_identifier(sp)
-            # PE-заголовки нормализуем у .exe проекта (кроме Inno setup, где оверлейная упаковка)
-            if f.suffix.lower() == ".exe" and f.name.lower() != "pinion-setup.exe":
+            # PE-заголовки нормализуем у .exe файлов приложения (Pinion.exe и Pinion-setup.exe)
+            if f.suffix.lower() == ".exe":
                 if clean_pe_file(sp, epoch_sec):
                     cleaned_count += 1
             set_win_file_times(sp, epoch_sec)
@@ -237,15 +243,29 @@ def verify_target(target_path: str, epoch_sec: int = EPOCH_1980) -> list[str]:
 
 def main():
     parser = argparse.ArgumentParser(description="Pinion metadata cleaner & verifier")
-    parser.add_argument("pos_target", nargs="?", default=None, help="Target path to clean or verify")
+    parser.add_argument("args", nargs="*", help="Action ('clean'/'verify') and/or target paths")
     parser.add_argument("--verify", action="store_true", help="Run in verify-only mode")
     parser.add_argument("--target", default=None, help="Explicit target path")
-    args = parser.parse_args()
+    parsed = parser.parse_args()
 
-    target = args.target or args.pos_target or "."
-    action = "verify" if args.verify or target == "verify" else "clean"
-    if target == "verify":
-        target = "."
+    pos_args = list(parsed.args or [])
+    action = "clean"
+    target = parsed.target
+
+    if parsed.verify:
+        action = "verify"
+
+    # Разбираем позиционные аргументы: 'clean dist/Pinion' или '--verify dist/Pinion' или 'dist/Pinion'
+    for a in list(pos_args):
+        if a.lower() in ("clean", "scrub"):
+            action = "clean"
+            pos_args.remove(a)
+        elif a.lower() in ("verify", "--verify", "check"):
+            action = "verify"
+            pos_args.remove(a)
+
+    if not target:
+        target = pos_args[0] if pos_args else "."
 
     if action == "clean":
         count = clean_target(target)
